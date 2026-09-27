@@ -2,8 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, perf]
   pull_request:
+  workflow_dispatch:
+
+# One run per commit: a push and a pull request for the same commit don't both use runner minutes.
+concurrency:
+  group: ci-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
