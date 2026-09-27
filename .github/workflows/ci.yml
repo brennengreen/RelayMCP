@@ -11,6 +11,7 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -32,6 +33,7 @@ jobs:
           - {os: macos-latest, python: "3.9"}     # macOS's own /usr/bin/python3 is 3.9
           - {os: windows-latest, python: "3.12"}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -42,6 +44,7 @@ jobs:
 
   windows-kit:
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -61,9 +64,12 @@ jobs:
           $expected = "the CI runner$([char]0x2019)s PC"
           if ($HostLabel -ne $expected) { throw "host label mangled: [$HostLabel]" }
           'parsed OK; host label intact'
-      - name: Install the device runtime from the kit and build its MCP server
+      - name: Install the device runtime from the kit (as the handheld does)
+        timeout-minutes: 10
         run: |
           Expand-Archive "$env:RUNNER_TEMP\kit\relaymcp-device.zip" "$env:RUNNER_TEMP\device"
           uv venv --python 3.12 "$env:RUNNER_TEMP\devenv"
           uv pip install --python "$env:RUNNER_TEMP\devenv\Scripts\python.exe" "$env:RUNNER_TEMP\device"
-          & "$env:RUNNER_TEMP\devenv\Scripts\python.exe" scripts/ci_device_smoke.py
+      - name: Import the device modules and build the hardware MCP server
+        timeout-minutes: 5
+        run: '& "$env:RUNNER_TEMP\devenv\Scripts\python.exe" -u scripts/ci_device_smoke.py'
