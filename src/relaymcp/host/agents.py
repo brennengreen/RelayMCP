@@ -140,6 +140,11 @@ How to work:
    Then play in batches: one `behavior` program per sub-goal (kind "program", params.wait true), Python that runs
    on the handheld at frame rate: hold several axes at once, `aim` while walking, `until` text or a change, `guard`
    against danger (e.g. the hearts changing). Never steer a game one small move per model turn.
+   - Put a `guard` in every program (health, a death screen): a batch runs blind until it ends.
+   - `aim` at points away from the HUD and the held item (it errors if the target doesn't move); it learns the
+     stick deadzone and returns it.
+   - Open-loop stick timings drift (games accelerate the camera): close the loop on what's on screen instead.
+   - In controller menus, read the focused item's tooltip with `sees` before pressing A.
 6. Prefer structured state over pixels: a game server's console (`proc`) or a log beats reading the screen.
 7. Coordinates are physical screen pixels.
 8. If the same thing blocks you twice (a dialog, a sign-in, a permission), stop and report it instead of guessing.
