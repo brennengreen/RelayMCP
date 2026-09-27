@@ -110,8 +110,8 @@ def build_server(port: int) -> FastMCP:
     # ------------------------------------------------------------------------------------------ overview
     @tool()
     async def handheld_status() -> dict:
-        """Snapshot of the handheld: screen, battery/charging, brightness, volume, display mode, power mode,
-        connected controllers, virtual gamepad, and keep-awake state. Good first call."""
+        """Battery, screen, brightness, volume, display/power mode, controllers, virtual pad, keep-awake. Good first
+        call."""
         out: dict[str, Any] = {"server_version": __version__}
         out.update(system.overview_status())
         for key, pool, fn in (("brightness", INPUT, system.brightness), ("display", INPUT, system.display_mode),
@@ -136,9 +136,8 @@ def build_server(port: int) -> FastMCP:
     @tool()
     async def screenshot(region: list[int] | None = None, window: str = "", max_side: int = 960, quality: int = 70,
                          only_if_changed: bool = False) -> Any:
-        """Fast screenshot: small JPEG (~700 tokens), foreground window, cursor. region=[left,top,right,bottom] (screen
-        px) zooms in; window crops to one. to_screen maps image to screen coordinates. only_if_changed: no image if
-        unchanged since the last one."""
+        """Fast screenshot: small JPEG (~700 tokens), foreground window, cursor. region = [l, t, r, b] in screen px
+        zooms in; window crops to one; to_screen maps image to screen px. only_if_changed: no image if unchanged."""
         if window:
             info = await _run(SCREEN, focus.find_window, window)
             if not info:
@@ -184,17 +183,17 @@ def build_server(port: int) -> FastMCP:
 
     @tool()
     async def observe(find: str = "", region: list[int] | None = None, image: bool = False, max_lines: int = 60) -> Any:
-        """The screen as text, cheaper than a screenshot: foreground window + OCR lines as [text, x, y], x,y = the
-        line's center in screen px (tap/click there). find = only lines matching it. image adds a small screenshot."""
+        """The screen as text (cheaper than a screenshot): foreground + OCR lines [text, x, y], x,y = the line's
+        center in screen px (tap there). find = matching lines only; image adds a small screenshot."""
         return with_image(*await observe_impl(find, region, image, max_lines))
 
     @tool()
     async def act(steps: list[dict], observe: str = "") -> Any:
-        """Do several things in one call, in order, stopping at the first failure. Steps (one key each, coordinates
-        in screen px): {"press": ["a"], "ms": 120} gamepad buttons; {"pad": [gamepad_sequence steps]};
-        {"tap": [x, y]}; {"tap_text": "Play"} (OCR); {"swipe": [x1, y1, x2, y2], "ms": 300}; {"key": ["enter"]};
-        {"type": "text"}; {"focus": "Minecraft"}; {"wait": 500} ms; {"wait_text": "Connected", "timeout": 10} (or
-        "gone": true). observe = "text" or "image" to see the screen afterwards in the same result."""
+        """Several steps in one call, in order; stops at the first failure. Steps (one key each; screen px):
+        {"press": ["a"], "ms": 120}; {"pad": [gamepad_sequence steps]}; {"tap": [x, y]}; {"tap_text": "Play"};
+        {"swipe": [x1, y1, x2, y2], "ms": 300}; {"key": ["enter"]}; {"type": "text"}; {"focus": "Minecraft"};
+        {"wait": 500}; {"wait_text": "Connected", "timeout": 10} (or "gone": true). observe = "text" | "image"
+        returns the screen afterwards."""
         if len(steps) > 40:
             raise ValueError("at most 40 steps per call")
         t_start, notes, failed = time.monotonic(), [], None
@@ -273,8 +272,8 @@ def build_server(port: int) -> FastMCP:
     # ------------------------------------------------------------------------------------------ gamepad
     @tool()
     async def gamepad_press(buttons: list[str], hold_ms: int = 120, repeat: int = 1, interval_ms: int = 150) -> dict:
-        """Press virtual Xbox controller buttons together, hold_ms, release; optionally repeat.
-        Buttons: a b x y lb rb lt rt back(view) start(menu) guide ls rs dpad_up dpad_down dpad_left dpad_right."""
+        """Press virtual controller buttons together for hold_ms, optionally repeat. Buttons: a b x y lb rb lt rt
+        back(view) start(menu) guide ls rs dpad_up dpad_down dpad_left dpad_right."""
         steps = []
         for i in range(max(1, min(int(repeat), 50))):
             steps.append({"buttons": buttons, "ms": hold_ms})
@@ -285,23 +284,23 @@ def build_server(port: int) -> FastMCP:
     @tool()
     async def gamepad_hold(duration_ms: int = 500, buttons: list[str] | None = None, left_stick: list[float] | None = None,
                            right_stick: list[float] | None = None, left_trigger: float = 0.0, right_trigger: float = 0.0) -> dict:
-        """Hold a controller state for duration_ms, then return to neutral. Sticks are [x, y] from -1 to 1
-        (y=1 is up/forward); triggers 0-1. Example: walk forward 2s = left_stick [0, 1], duration_ms 2000."""
+        """Hold a controller state for duration_ms, then neutral. Sticks [x, y] in -1..1 (y=1 up/forward), triggers
+        0-1. Walk forward 2 s: left_stick [0, 1], duration_ms 2000."""
         step = {"buttons": buttons or [], "left_stick": left_stick, "right_stick": right_stick,
                 "left_trigger": left_trigger, "right_trigger": right_trigger, "ms": duration_ms}
         return await _run(INPUT, _focused(gamepad.PAD.run_steps), [step])
 
     @tool()
     async def gamepad_sequence(steps: list[dict]) -> dict:
-        """Run timed controller steps in order (max 60s total). Each step replaces the previous state:
-        {"buttons": [...], "left_stick": [x,y], "right_stick": [x,y], "left_trigger": 0-1, "right_trigger": 0-1, "ms": 200}.
-        A step with only "ms" is a neutral pause. Ends in neutral."""
+        """Timed controller steps in order (max 60 s), each replacing the previous state: {"buttons": [...],
+        "left_stick": [x,y], "right_stick": [x,y], "left_trigger": 0-1, "right_trigger": 0-1, "ms": 200}; only
+        "ms" = neutral pause. Ends neutral."""
         return await _run(INPUT, _focused(gamepad.PAD.run_steps), steps)
 
     @tool()
     async def gamepad_status() -> dict:
-        """Real and virtual controllers in XInput slots 0-3 (buttons held, sticks, triggers, battery), plus the virtual
-        pad's slot, idle time and the last rumble a game sent to it."""
+        """Controllers in XInput slots 0-3 (buttons, sticks, triggers, battery), and the virtual pad's slot, idle
+        time and last rumble from the game."""
         return {"slots": gamepad.xinput_states(),
                 "virtual_gamepad": {"connected": gamepad.PAD.connected(), "xinput_slot": gamepad.PAD.index(),
                                     "idle_seconds": gamepad.PAD.idle_seconds(), "last_rumble_from_game": gamepad.PAD.last_rumble,
@@ -317,10 +316,9 @@ def build_server(port: int) -> FastMCP:
 
     @tool()
     async def gamepad_connect(keep_plugged: bool = True) -> dict:
-        """Plug the virtual controller in ahead of time (e.g. right after launching a game) so the first press lands:
-        waits until Windows sees it, closes Armoury Crate's notice and gives focus back. keep_plugged=True keeps it
-        connected until gamepad_unplug (it otherwise unplugs after idle time, never while a fullscreen game or the
-        focus_window target is in front)."""
+        """Plug the virtual controller in ahead of time so the first press lands (waits until Windows sees it,
+        closes Armoury Crate's notice, restores focus). keep_plugged=True: connected until gamepad_unplug; else
+        it unplugs when idle (never while a game is in front)."""
         return await _run(INPUT, _focused(gamepad.PAD.connect), keep_plugged)
 
     @tool()
@@ -330,10 +328,9 @@ def build_server(port: int) -> FastMCP:
 
     @tool()
     async def focus_window(target: str = "", remember: bool = True) -> dict:
-        """Bring a window to the front and verify it really is (gets around Windows' foreground lock, unlike app
-        switching that only reports success). target: window title or process name, e.g. "Minecraft". remember=True
-        makes it the input target: input tools then refocus it if something steals focus, and their results say
-        whether it was in front. Empty target = what has focus now; target="none" forgets the input target."""
+        """Bring a window to the front and verify it really is (past Windows' foreground lock). target = title or
+        process, e.g. "Minecraft"; remember=True makes it the input target (input tools refocus it). Empty target
+        = what has focus now; "none" clears the target."""
         def run() -> dict:
             if not target:
                 t = focus.target()
@@ -351,8 +348,8 @@ def build_server(port: int) -> FastMCP:
 
     @tool()
     async def controller_rumble(left: float = 0.6, right: float = 0.6, duration_ms: int = 300, slot: int = 0) -> dict:
-        """Vibrate a physical controller (slot 0 = the handheld's built-in controller, in gamepad mode). Left = strong
-        low-frequency motor, right = light high-frequency motor, 0-1."""
+        """Vibrate a physical controller (slot 0 = built-in, in gamepad mode): left = strong low motor, right =
+        light high motor, 0-1."""
         return await _run(INPUT, gamepad.rumble, left, right, duration_ms, slot)
 
     # ------------------------------------------------------------------------------------------ touch
@@ -369,29 +366,29 @@ def build_server(port: int) -> FastMCP:
     @tool()
     async def touch_swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300, hold_start_ms: int = 0,
                           hold_end_ms: int = 0) -> dict:
-        """Swipe/drag one finger from (x1, y1) to (x2, y2). hold_start_ms > ~500 makes it a drag-and-drop;
-        hold_end_ms keeps the finger down at the end (e.g. hold a virtual joystick)."""
+        """Swipe/drag one finger from (x1, y1) to (x2, y2). hold_start_ms > ~500 = drag-and-drop; hold_end_ms keeps
+        the finger down at the end."""
         return await _run(INPUT, _focused(win_input.touch_swipe), x1, y1, x2, y2, duration_ms, hold_start_ms, hold_end_ms)
 
     @tool()
     async def touch_pinch(x: int, y: int, start_spread: int = 400, end_spread: int = 150, duration_ms: int = 500,
                           angle_deg: float = 0) -> dict:
-        """Two-finger pinch centered on (x, y). spread = pixels between the fingers; end > start zooms in,
-        end < start zooms out. angle_deg rotates the finger axis (0 = horizontal)."""
+        """Two-finger pinch at (x, y): spread = px between fingers, end > start zooms in; angle_deg rotates the
+        finger axis."""
         return await _run(INPUT, _focused(win_input.touch_pinch), x, y, start_spread, end_spread, duration_ms, angle_deg)
 
     @tool()
     async def touch_gesture(fingers: list[list[list[int]]], duration_ms: int = 500) -> dict:
-        """Custom multi-touch: up to 10 fingers, each a list of [x, y] points visited evenly over duration_ms,
-        all down and up together. Two-finger swipe up: [[[800,700],[800,300]], [[1000,700],[1000,300]]]."""
+        """Custom multi-touch: up to 10 fingers, each a list of [x, y] points visited evenly over duration_ms.
+        Two-finger swipe up: [[[800,700],[800,300]],[[1000,700],[1000,300]]]."""
         return await _run(INPUT, _focused(win_input.touch_path_gesture), fingers, duration_ms)
 
     # ------------------------------------------------------------------------------------------ keyboard / mouse
     @tool()
     async def key_press(keys: list[str], hold_ms: int = 50, repeat: int = 1, interval_ms: int = 100) -> dict:
-        """Press keys together as hardware scan codes (works in games), hold, release: ["ctrl","shift","esc"],
-        ["w"] + hold_ms 2000 = walk 2 s. Names: letters, digits, f1-f24, space, enter, esc, tab, shift, ctrl, alt, win,
-        up/down/left/right, home, end, pageup, pagedown, insert, delete, backspace, numpad0-9, volume keys, punctuation."""
+        """Press keys together as scan codes (work in games), hold, release: ["ctrl","shift","esc"]; ["w"] + hold_ms
+        2000 walks 2 s. Names: letters, digits, f1-f24, space, enter, esc, tab, shift, ctrl, alt, win, up, down,
+        left, right, home, end, pageup, pagedown, insert, delete, backspace, numpad0-9, volume keys, punctuation."""
         return await _run(INPUT, _focused(win_input.key_press), keys, hold_ms, repeat, interval_ms)
 
     @tool()
@@ -437,8 +434,7 @@ def build_server(port: int) -> FastMCP:
     @tool()
     async def mic_record(seconds: float = 5.0, transcribe: bool = False, model: str = "base.en",
                          vocabulary: str | None = None) -> dict:
-        """Record the mic for N seconds (max 120) to a WAV: peak/RMS level (is it working or muted?), optionally
-        transcribed. Needs Windows microphone access (see audio_devices)."""
+        """Record the mic N seconds (max 120) to a WAV: peak/RMS level (working or muted?), optionally transcribed."""
         result, samples = await _run(COM, audio.record_microphone, seconds)
         if transcribe:
             result["transcript"] = await _run(STT, speech.transcribe, samples, audio.RATE, model, None, vocabulary)
@@ -447,8 +443,7 @@ def build_server(port: int) -> FastMCP:
     @tool()
     async def speaker_capture(seconds: float = 5.0, transcribe: bool = False, model: str = "base.en",
                               vocabulary: str | None = None) -> dict:
-        """Record what the handheld plays (system audio loopback) for N seconds: check that a game makes sound,
-        measure loudness, or transcribe speech."""
+        """Record what the handheld plays (loopback) for N seconds: loudness, or transcribe speech."""
         result, samples = await _run(COM, audio.record_speakers, seconds)
         if transcribe:
             result["transcript"] = await _run(STT, speech.transcribe, samples, audio.RATE, model, None, vocabulary)
@@ -465,9 +460,8 @@ def build_server(port: int) -> FastMCP:
     @tool()
     async def speak(text: str, voice: str | None = None, rate: int = 0, volume: int = 100, save_wav: bool = False,
                     engine: str = "auto") -> dict:
-        """Speak text on the handheld (natural neural voice). engine: auto | neural | sapi. voice: af_heart
-        (default), am_michael, bf_emma... or a Windows voice (list_voices). rate -10..10, volume 0-100. save_wav=True
-        renders a WAV instead. voice_assistant(action="stop") cuts it off."""
+        """Speak text aloud (neural voice). voice: af_heart (default), am_michael, bf_emma... or a Windows voice
+        (list_voices); engine auto|neural|sapi; rate -10..10; volume 0-100; save_wav renders a WAV instead."""
         speed = 1.0 + max(-10, min(int(rate), 10)) * 0.05
         if save_wav:
             path = str(audio._new_path("tts"))
@@ -485,8 +479,8 @@ def build_server(port: int) -> FastMCP:
     @tool()
     async def listen(seconds: float = 5.0, model: str = "base.en", language: str | None = None,
                      vocabulary: str | None = None) -> dict:
-        """Record the mic for N seconds and transcribe it locally (Whisper). model: tiny.en | base.en (default) |
-        small.en (most accurate); others with language. vocabulary: expected names, e.g. "Minecraft, Creeper"."""
+        """Record the mic N seconds and transcribe locally (Whisper). model: tiny.en | base.en (default) | small.en;
+        vocabulary: expected words, e.g. "Minecraft, Creeper"."""
         result, samples = await _run(COM, audio.record_microphone, seconds)
         result["transcript"] = await _run(STT, speech.transcribe, samples, audio.RATE, model, language, vocabulary)
         return result
@@ -515,8 +509,8 @@ def build_server(port: int) -> FastMCP:
 
     @tool()
     async def power_mode(set_to: str | None = None) -> dict:
-        """Get or set the Windows power mode: best_power_efficiency | balanced | best_performance.
-        (Armoury Crate's Silent/Performance/Turbo TDP modes are separate and need Armoury Crate.)"""
+        """Get or set the Windows power mode: best_power_efficiency | balanced | best_performance (not Armoury
+        Crate's TDP modes)."""
         if set_to:
             return await _run(INPUT, system.set_power_mode, set_to)
         return await _run(INPUT, system.power_mode)
@@ -528,8 +522,8 @@ def build_server(port: int) -> FastMCP:
 
     @tool()
     async def keep_awake(minutes: float = 60) -> dict:
-        """Keep the handheld and its screen awake for N minutes (0 cancels), e.g. before long unattended work.
-        Home only; it also stays awake 10 minutes after any tool call."""
+        """Keep the handheld awake N minutes (0 cancels) for long unattended work. Home only; tool calls also keep
+        it awake 10 min."""
         return await _run(INPUT, system.keep_awake, minutes)
 
     # ------------------------------------------------------------------------------------------ voice prompts
@@ -544,9 +538,9 @@ def build_server(port: int) -> FastMCP:
 
     @tool()
     async def voice_assistant(action: str = "status", text: str | None = None) -> dict:
-        """Push-to-talk voice prompts (hold View + Menu, Ctrl+Alt+Shift+F12, or 'Ask Copilot'). action: status |
-        listen (start now) | ask (send `text` as if spoken; for testing) | stop (listening or speaking) |
-        allow_virtual_chord (2 min, testing). Don't call from inside a voice request."""
+        """Push-to-talk voice prompts (hold View + Menu). action: status | listen (start now) | ask (send `text` as
+        if spoken, for testing) | stop | allow_virtual_chord (2 min, testing). Don't call from inside a voice
+        request."""
         a = action.lower()
         if a == "status":
             return await _run(STT, voice.ASSISTANT.status)
@@ -566,8 +560,9 @@ def build_server(port: int) -> FastMCP:
             return {"virtual_chord_allowed_for_s": 120}
         raise ValueError("action must be status, listen, ask, stop or allow_virtual_chord")
 
-    for t in mcp._tool_manager.list_tools():  # leaner definitions in every tools/list (see _lean_schema)
+    for t in mcp._tool_manager.list_tools():  # leaner definitions in every tools/list (see lean.py)
         t.parameters = lean_schema(t.parameters)
+        t.description = " ".join((t.description or "").split())  # docstrings carry their indentation otherwise
     return mcp
 
 
