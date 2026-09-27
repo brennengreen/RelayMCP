@@ -88,8 +88,9 @@ async def _run(pool: ThreadPoolExecutor, fn, *args, **kwargs) -> Any:
 
 INSTRUCTIONS = """Hardware tools for the user's Windows gaming handheld (ROG Ally-class: touch screen, built-in Xbox-style
 controller, speakers, mic). Pair with the `{screen}` server (screen control): look there, act here.
-- Coordinates are physical pixels, the same as `{screen}` screenshots. `screenshot` here is faster and ~3x cheaper;
-  its `to_screen` says how its image coordinates map to screen pixels.
+- Fastest loop: observe (screen text + tap points) -> act (several steps in one call, e.g. tap_text + wait_text).
+  screenshot here is faster and ~3x cheaper than `{screen}`'s; its to_screen maps image to screen pixels.
+- Coordinates are physical screen pixels, the same as `{screen}` screenshots.
 - Input only reaches the window in front. After launching a game, call focus_window("<game>") once: input tools keep it
   in front, and each result's `foreground` says where input went (plus a warning if it was probably lost).
 - The gamepad is a VIRTUAL Xbox controller (games see a second controller). gamepad_connect before playing; it stays
