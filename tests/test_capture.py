@@ -123,3 +123,42 @@ def test_content_lists_pass_through_lean_result():
         return blocks
 
     assert asyncio.run(lean_result(tool)()) is blocks
+
+
+class _R:
+    def __init__(self, x, y, w, h):
+        self.x, self.y, self.width, self.height = x, y, w, h
+
+
+class _W:
+    def __init__(self, rect):
+        self.bounding_rect = rect
+
+
+class _L:
+    def __init__(self, text, rects):
+        self.text, self.words = text, [_W(r) for r in rects]
+
+
+def test_ocr_lines_and_find():
+    from relaymcp.device import ocr
+    lines = ocr.lines_from([_L("Launch Mission", [_R(10, 20, 80, 30), _R(95, 22, 90, 28)]), _L("", []),
+                            _L("Settings", [_R(10, 80, 70, 25)])], left=100, top=50)
+    assert lines == [{"text": "Launch Mission", "box": [110, 70, 285, 100]},
+                     {"text": "Settings", "box": [110, 130, 180, 155]}]
+    assert ocr.center(lines[0]["box"]) == [197, 85]
+    assert ocr.find(lines, "launch")["text"] == "Launch Mission"
+    assert ocr.find(lines, "SETTINGS")["text"] == "Settings"
+    assert ocr.find(lines, "mission")["text"] == "Launch Mission"
+    assert ocr.find(lines, "nothing") is None and ocr.find(lines, "  ") is None
+    exact = ocr.find([{"text": "Play Online", "box": [0] * 4}, {"text": "Play", "box": [1] * 4}], "play")
+    assert exact["text"] == "Play"
+
+
+def test_ocr_crop_bgra():
+    np = pytest.importorskip("numpy")
+    from relaymcp.device import ocr
+    f = _frame(w=64, h=32, box=(8, 4, 16, 12))
+    data, w, h, left, top = ocr.crop_bgra(f, (8, 4, 16, 12))
+    assert (w, h, left, top) == (8, 8, 8, 4) and len(data) == 8 * 8 * 4
+    assert np.frombuffer(data, np.uint8).reshape(8, 8, 4)[0, 0].tolist() == [0, 0, 255, 0]

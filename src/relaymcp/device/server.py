@@ -36,7 +36,7 @@ from mcp.types import ImageContent, TextContent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import __version__, audio, capture, focus, gamepad, speech, system, tts, voice, win_input
+from . import __version__, audio, capture, focus, gamepad, ocr, speech, system, tts, voice, win_input
 from .lean import compact, lean_result, lean_schema
 from .paths import USER_DIR, VOICE_HEADER, device_settings
 
@@ -52,7 +52,7 @@ INPUT = ThreadPoolExecutor(max_workers=1, thread_name_prefix="input")          #
 COM = ThreadPoolExecutor(max_workers=1, thread_name_prefix="com", initializer=_com_init)  # capture, volume, keyboard UI
 PLAY = ThreadPoolExecutor(max_workers=1, thread_name_prefix="play", initializer=_com_init)  # speech/tones (overlaps capture)
 STT = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stt", initializer=_com_init)  # whisper (CPU heavy)
-SCREEN = ThreadPoolExecutor(max_workers=1, thread_name_prefix="screen")  # screen capture (owns the DXGI duplication)
+SCREEN = ThreadPoolExecutor(max_workers=1, thread_name_prefix="screen", initializer=_com_init)  # capture + OCR (owns DXGI)
 GRABBER = capture.Grabber()
 
 
@@ -150,6 +150,125 @@ def build_server(port: int) -> FastMCP:
         if shot["jpeg"] is None:
             return [text]
         return [ImageContent(type="image", data=base64.b64encode(shot["jpeg"]).decode(), mimeType="image/jpeg"), text]
+
+    def read_text(region=None) -> dict:
+        """Grab and OCR (on SCREEN): {"lines", "frame", "box", "ms"}."""
+        t0 = time.monotonic()
+        frame = GRABBER.grab()
+        box = capture.clamp_region(region, frame.left, frame.top, frame.width, frame.height)
+        return {"lines": ocr.recognize(frame, box), "frame": frame, "box": box, "ms": round((time.monotonic() - t0) * 1000)}
+
+    async def observe_impl(find: str = "", region=None, image: bool = False, max_lines: int = 60) -> tuple[dict, Any]:
+        """(compact result, image content or None)."""
+        seen = await _run(SCREEN, read_text, region)
+        lines = seen["lines"]
+        if find:
+            best = ocr.find(lines, find)
+            lines = [best] + [ln for ln in lines if ln is not best and find.lower() in ln["text"].lower()] if best else []
+        out: dict[str, Any] = {"foreground": focus.short(focus.foreground()),
+                               "text": [[ln["text"], *ocr.center(ln["box"])] for ln in lines[:max_lines]], "ms": seen["ms"]}
+        if len(lines) > max_lines:
+            out["more_lines"] = len(lines) - max_lines
+        if not lines:
+            out["note"] = f"no text matching {find!r}" if find else "no text found (a game scene?); use screenshot to look"
+        if not image:
+            return out, None
+        jpeg, meta = await _run(SCREEN, capture.encode, seen["frame"], seen["box"])
+        out["to_screen"] = meta["to_screen"]
+        return out, ImageContent(type="image", data=base64.b64encode(jpeg).decode(), mimeType="image/jpeg")
+
+    def with_image(result: dict, img) -> Any:
+        if img is None:
+            return result
+        return [img, TextContent(type="text", text=json.dumps(compact(result), separators=(",", ":"), ensure_ascii=False))]
+
+    @tool()
+    async def observe(find: str = "", region: list[int] | None = None, image: bool = False, max_lines: int = 60) -> Any:
+        """The screen as text, cheaper than a screenshot: foreground window + OCR lines as [text, x, y], x,y = the
+        line's center in screen px (tap/click there). find = only lines matching it. image adds a small screenshot."""
+        return with_image(*await observe_impl(find, region, image, max_lines))
+
+    @tool()
+    async def act(steps: list[dict], observe: str = "") -> Any:
+        """Do several things in one call, in order, stopping at the first failure. Steps (one key each, coordinates
+        in screen px): {"press": ["a"], "ms": 120} gamepad buttons; {"pad": [gamepad_sequence steps]};
+        {"tap": [x, y]}; {"tap_text": "Play"} (OCR); {"swipe": [x1, y1, x2, y2], "ms": 300}; {"key": ["enter"]};
+        {"type": "text"}; {"focus": "Minecraft"}; {"wait": 500} ms; {"wait_text": "Connected", "timeout": 10} (or
+        "gone": true). observe = "text" or "image" to see the screen afterwards in the same result."""
+        if len(steps) > 40:
+            raise ValueError("at most 40 steps per call")
+        t_start, notes, failed = time.monotonic(), [], None
+        pre = await _run(INPUT, focus.before_input)
+        for i, step in enumerate(steps):
+            if time.monotonic() - t_start > 90:
+                failed = {"step": i, "error": "act ran out of time (90 s)"}
+                break
+            try:
+                note = await act_step(step)
+                if note:
+                    notes.append(f"{i}: {note}")
+            except Exception as e:
+                failed = {"step": i, "error": str(e)}
+                break
+        done = len(steps) if failed is None else failed["step"]
+        out: dict[str, Any] = {"done": f"{done}/{len(steps)}", "notes": notes or None, "failed": failed,
+                               "ms": round((time.monotonic() - t_start) * 1000)}
+        out = await _run(INPUT, focus.annotate, out, pre)
+        img = None
+        if observe in ("text", "image"):
+            out["observe"], img = await observe_impl(image=observe == "image")
+        return with_image(out, img)
+
+    async def act_step(step: dict) -> str | None:
+        """Run one act step; returns a short note worth reporting (or None)."""
+        kind = next((k for k in step if k not in ("ms", "timeout", "gone", "hold_ms")), None)
+        arg, ms = step.get(kind), step.get("ms")
+        if kind == "press":
+            await _run(INPUT, gamepad.PAD.run_steps, [{"buttons": arg if isinstance(arg, list) else [arg], "ms": ms or 120}])
+        elif kind == "pad":
+            await _run(INPUT, gamepad.PAD.run_steps, arg)
+        elif kind == "tap":
+            await _run(INPUT, win_input.touch_tap, int(arg[0]), int(arg[1]), 1, step.get("hold_ms", 60))
+        elif kind == "tap_text":
+            seen = await _run(SCREEN, read_text)
+            hit = ocr.find(seen["lines"], str(arg))
+            if not hit:
+                raise LookupError(f"no text matching {arg!r} on screen")
+            x, y = ocr.center(hit["box"])
+            await _run(INPUT, win_input.touch_tap, x, y, 1, step.get("hold_ms", 60))
+            return f"tapped {hit['text']!r} at [{x},{y}]"
+        elif kind == "swipe":
+            x1, y1, x2, y2 = (int(v) for v in arg)
+            await _run(INPUT, win_input.touch_swipe, x1, y1, x2, y2, ms or 300, 0, 0)
+        elif kind == "key":
+            await _run(INPUT, win_input.key_press, arg if isinstance(arg, list) else [arg], ms or 50, 1, 100)
+        elif kind == "type":
+            await _run(INPUT, win_input.type_text, str(arg), 5)
+        elif kind == "focus":
+            def bring() -> dict:
+                result = focus.focus_window(str(arg))
+                if result.get("ok"):
+                    focus.set_target(str(arg))
+                return result
+            result = await _run(INPUT, bring)
+            if not result.get("ok"):
+                raise RuntimeError(f"couldn't bring {arg!r} to the front ({result.get('foreground') or 'unknown'} is)")
+        elif kind == "wait":
+            await asyncio.sleep(min(float(arg), 30000) / 1000)
+        elif kind == "wait_text":
+            timeout, gone = min(float(step.get("timeout", 10)), 60), bool(step.get("gone"))
+            deadline = time.monotonic() + timeout
+            while True:
+                seen = await _run(SCREEN, read_text)
+                hit = ocr.find(seen["lines"], str(arg))
+                if bool(hit) != gone:
+                    return f"{arg!r} {'gone' if gone else 'visible'}" + (f" at {ocr.center(hit['box'])}" if hit else "")
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"{arg!r} {'still visible' if gone else 'not seen'} after {timeout:g} s")
+                await asyncio.sleep(0.25)
+        else:
+            raise ValueError(f"unknown step {step!r}")
+        return None
 
     # ------------------------------------------------------------------------------------------ gamepad
     @tool()
