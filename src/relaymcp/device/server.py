@@ -36,7 +36,7 @@ from mcp.types import ImageContent, TextContent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import __version__, audio, capture, focus, gamepad, ocr, speech, system, tts, voice, win_input
+from . import __version__, audio, capture, focus, gamepad, lean, ocr, speech, system, tts, updates, voice, win_input
 from .lean import compact, lean_result, lean_schema
 from .paths import USER_DIR, VOICE_HEADER, device_settings
 
@@ -91,8 +91,9 @@ controller, speakers, mic). Pair with the `{screen}` server (screen control): lo
 - Fastest loop: observe (screen text + tap points) -> act (several steps in one call, e.g. tap_text + wait_text).
   screenshot here is faster and ~3x cheaper than `{screen}`'s; its to_screen maps image to screen pixels.
 - Coordinates are physical screen pixels, the same as `{screen}` screenshots.
-- Input only reaches the window in front. After launching a game, call focus_window("<game>") once: input tools keep it
-  in front, and each result's `foreground` says where input went (plus a warning if it was probably lost).
+- Input only reaches the window in front. After launching a game, call focus_window("<game>") once (not `{screen}`'s
+  App switch, which can claim success when it failed): input tools keep it in front, and each result's `foreground`
+  says where input went (plus a warning if it was probably lost).
 - The gamepad is a VIRTUAL Xbox controller (games see a second controller). gamepad_connect before playing; it stays
   plugged while a game is in front. Armoury Crate's "external controller" notice is closed for you (nothing disabled).
 - key_* send scan codes (work in games); mouse_look turns game cameras; touch_* inject real multi-touch.
@@ -100,7 +101,7 @@ controller, speakers, mic). Pair with the `{screen}` server (screen control): lo
 - Voice prompts from the handheld (hold View + Menu) arrive as separate agent sessions."""
 
 
-def build_server(port: int) -> FastMCP:
+def build_server(port: int, record_tools: bool = False) -> FastMCP:
     name = device_settings()["name"]
     mcp = FastMCP(f"{name}-handheld", instructions=INSTRUCTIONS.format(screen=name), host="127.0.0.1", port=port,
                   stateless_http=True)
@@ -113,7 +114,7 @@ def build_server(port: int) -> FastMCP:
     async def handheld_status() -> dict:
         """Battery, screen, brightness, volume, display/power mode, controllers, virtual pad, keep-awake. Good first
         call."""
-        out: dict[str, Any] = {"server_version": __version__}
+        out: dict[str, Any] = {"server_version": __version__, "tools": updates.NOTICE.summary()}
         out.update(system.overview_status())
         for key, pool, fn in (("brightness", INPUT, system.brightness), ("display", INPUT, system.display_mode),
                               ("power_mode", INPUT, system.power_mode), ("speaker", COM, functools.partial(audio.volume_state, "speaker")),
@@ -569,6 +570,10 @@ def build_server(port: int) -> FastMCP:
     for t in mcp._tool_manager.list_tools():  # leaner definitions in every tools/list (see lean.py)
         t.parameters = lean_schema(t.parameters)
         t.description = " ".join((t.description or "").split())  # docstrings carry their indentation otherwise
+    if record_tools:
+        names = [t.name for t in mcp._tool_manager.list_tools()]
+        updates.NOTICE = updates.Notice(updates.record(names, __version__, USER_DIR / "tools-seen.json"))
+        lean.NOTE_HOOK = updates.NOTICE.take
     return mcp
 
 
@@ -621,7 +626,7 @@ def main() -> None:
     except Exception as e:
         log.warning("voice triggers unavailable: %s", e)
     try:
-        build_server(args.port).run(transport="streamable-http")
+        build_server(args.port, record_tools=True).run(transport="streamable-http")
     finally:
         try:
             gamepad.PAD.disconnect()

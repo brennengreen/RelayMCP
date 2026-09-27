@@ -15,11 +15,18 @@ def compact(obj):
     return obj
 
 
+NOTE_HOOK = None  # set by the server: returns a short note to attach to a result now (see updates.py), or None
+
+
 def lean_result(fn):
     """Tool results as minified JSON text: the SDK would pretty-print dicts (indent=2), costing ~30% more tokens."""
     @functools.wraps(fn)
     async def wrapper(*args, **kwargs):
         result = await fn(*args, **kwargs)
+        if isinstance(result, dict) and NOTE_HOOK is not None:
+            note = NOTE_HOOK()
+            if note:
+                result = {**result, "relaymcp_update": note}
         if isinstance(result, (dict, list)) and not is_content(result):
             return json.dumps(compact(result), separators=(",", ":"), ensure_ascii=False, default=str)
         return result

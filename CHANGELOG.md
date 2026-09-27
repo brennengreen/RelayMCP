@@ -32,6 +32,9 @@ Input reliability, from real use driving Minecraft Bedrock on a ROG Ally.
 - **No tool-search round trip:** Copilot hides MCP tool schemas behind a search tool, which cost every voice prompt
   an extra model call. Voice runs and the `handheld` agent keep the handheld's tool schemas in view; other Copilot
   sessions are unchanged.
+- **Agents hear about updates:** MCP clients only load tools when a session starts, so after an update, results
+  briefly carry a `relaymcp_update` note naming the new tools and saying to start a new session. `handheld_status`
+  reports the tool count and a tool-set hash.
 - **Updates wait for the handheld to be free:** `relaymcp deploy` and `scripts/rollout.sh` hold off while a tool call
   happened in the last minute, a keep-awake lease or `relaymcp busy` mark is active, or a command runs over SSH
   (`deploy --force` overrides). New `relaymcp busy [minutes|off]` marks the handheld in use.
