@@ -20,8 +20,9 @@ import time
 from ctypes import wintypes
 
 # Windows that pop up and take focus by themselves. ExternalControllerHelper is Armoury Crate's "external controller
-# connected" notice, which appears when the virtual gamepad plugs in.
-FOCUS_STEALERS = {"externalcontrollerhelper.exe"}
+# connected" notice, which appears when the virtual gamepad plugs in. AsHotplugCtrl (ASUS Hotplug Controller) keeps an
+# invisible 0x0 window that can take focus and hold it: synthetic input can't take focus back from it.
+FOCUS_STEALERS = {"externalcontrollerhelper.exe", "ashotplugctrl.exe"}
 SHELL_PROCESSES = {"explorer.exe", "shellexperiencehost.exe", "startmenuexperiencehost.exe", "searchhost.exe",
                    "searchapp.exe", "lockapp.exe", "textinputhost.exe", "shellhost.exe"}
 DESKTOP_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"}
@@ -69,13 +70,24 @@ def short(info: dict | None, target: dict | None = None) -> dict | None:
     return out
 
 
+def invisible(fg: dict | None) -> bool:
+    """A window nobody can see (zero area, or hidden) holds focus: input sent now goes nowhere."""
+    if not fg:
+        return False
+    rect = fg.get("rect") or [0, 0, 1, 1]
+    return fg.get("visible") is False or rect[2] - rect[0] <= 0 or rect[3] - rect[1] <= 0
+
+
 def warning_for(fg: dict | None, target: dict | None) -> str | None:
     """Why input probably didn't land, or None."""
     if not fg or fg.get("desktop"):
         return "nothing has focus (the desktop is in front); input probably didn't reach an app"
     proc = (fg.get("process") or "").lower()
-    if proc in FOCUS_STEALERS:
+    if proc == "externalcontrollerhelper.exe":
         return "Armoury Crate's controller notice has focus, so input went there instead of the game"
+    if proc in FOCUS_STEALERS or invisible(fg):
+        return (f"{app_name(fg.get('app') or proc)} (an invisible window) has focus, so input went nowhere. Windows "
+                "won't let synthetic input take focus back from it: a real finger tap on the game fixes it")
     if fg.get("hung"):
         return f"{app_name(fg.get('app') or proc)} isn't responding"
     if target and fg.get("hwnd") != target.get("hwnd"):
@@ -212,7 +224,7 @@ def window_info(hwnd: int | None) -> dict | None:
     info = {"hwnd": int(hwnd), "title": _text(u.GetWindowTextW, hwnd, 512), "class": cls, "pid": pid, "tid": tid,
             "process": proc, "app": proc, "rect": [r.left, r.top, r.right, r.bottom],
             "minimized": bool(u.IsIconic(hwnd)), "hung": bool(u.IsHungAppWindow(hwnd)),
-            "desktop": cls in DESKTOP_CLASSES}
+            "visible": bool(u.IsWindowVisible(hwnd)), "desktop": cls in DESKTOP_CLASSES}
     info["fullscreen"] = bool(full) and not info["desktop"]
     if proc.lower() == "applicationframehost.exe":
         info["app"] = _uwp_app(hwnd) or proc
@@ -330,9 +342,13 @@ def focus_window(target: str | int, wait_s: float = 0.4) -> dict:
         if _wait_front(hwnd, wait_s):
             return {"ok": True, "method": name, "foreground": short(foreground())}
     fg = foreground()
-    return {"ok": False, "method": "none worked", "foreground": short(fg),
-            "warning": f"Windows kept {app_name((fg or {}).get('app')) or 'another window'} in front (foreground "
-                       "lock). A tap on the target window usually gets it in front."}
+    who = app_name((fg or {}).get("app")) or "another window"
+    if fg and ((fg.get("process") or "").lower() in FOCUS_STEALERS or invisible(fg)):
+        hint = (f"{who} is an invisible window holding focus, and Windows won't let synthetic input take it back. A "
+                f"real finger tap on '{info.get('title') or target}' fixes it; ask the user if nobody is at the handheld")
+    else:
+        hint = f"Windows kept {who} in front (foreground lock). A tap on the target window usually gets it in front."
+    return {"ok": False, "method": "none worked", "foreground": short(fg), "warning": hint}
 
 
 # ---------------------------------------------------------------------------------------------------- input target

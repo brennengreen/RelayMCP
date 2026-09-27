@@ -48,3 +48,17 @@ def test_lean_schema_and_results():
     async def tool():
         return {"ok": True, "gone": None, "nested": {"x": 1.5}}
     assert asyncio.run(lean_result(tool)()) == '{"ok":true,"nested":{"x":1.5}}'
+
+
+def test_invisible_focus_holders_are_named():
+    from relaymcp.device.focus import invisible, warning_for
+    hotplug = {"hwnd": 9, "process": "AsHotplugCtrl.exe", "app": "AsHotplugCtrl.exe", "rect": [0, 0, 0, 0], "visible": True}
+    assert invisible(hotplug)
+    w = warning_for(hotplug, None)
+    assert w and "AsHotplugCtrl" in w and "invisible" in w and "finger tap" in w
+    hidden = {"hwnd": 8, "process": "helper.exe", "app": "helper.exe", "rect": [0, 0, 400, 300], "visible": False}
+    assert invisible(hidden) and "invisible" in warning_for(hidden, None)
+    game = {"hwnd": 1, "process": "Minecraft.Windows.exe", "app": "Minecraft.Windows.exe", "rect": [0, 0, 1920, 1080],
+            "visible": True}
+    assert not invisible(game) and warning_for(game, {"hwnd": 1}) is None
+    assert not invisible(None)
