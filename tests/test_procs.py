@@ -108,3 +108,18 @@ def test_wait_returns_what_arrived_meanwhile(console):
     assert out["matched"].startswith("There are 2") and out["output"] == ["There are 2 players online:"]
     later = procs.run(m, "wait", "srv", pattern="Steve", timeout=2)
     assert later["output"] == ["Steve, Alex"]  # lines after the match are still there for the next call
+
+
+def test_saves_at_the_same_moment_leave_one_whole_state_file(console):
+    import threading
+
+    m, cmd, tmp = console
+    procs.run(m, "start", "srv", cmd, pattern="started")
+    threads = [threading.Thread(target=lambda: [m._save() for _ in range(40)]) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    state = json.loads((tmp / "procs.json").read_text())
+    assert [s["name"] for s in state["running"]] == ["srv"]
+    assert not (tmp / "procs.json.tmp").exists()

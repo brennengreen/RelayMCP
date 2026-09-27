@@ -183,16 +183,30 @@ class Manager:
         self.sessions: dict[str, Session] = {}
         self.state_file = state_file
         self._lock = threading.Lock()
+        self._save_lock = threading.Lock()
 
     def _save(self) -> None:
+        """Write the state file. A session's reader thread saves when its process exits, often at the same moment as
+        the stop call does, so saves take turns and replace the file whole (two overlapping writes had left one
+        JSON document followed by the tail of the other)."""
         if not self.state_file:
             return
-        running = [s.info() for s in list(self.sessions.values()) if s.running()]
-        try:
-            self.state_file.parent.mkdir(parents=True, exist_ok=True)
-            self.state_file.write_text(json.dumps({"updated": time.time(), "running": running}), encoding="utf-8")
-        except OSError:
-            pass
+        with self._save_lock:
+            running = [s.info() for s in list(self.sessions.values()) if s.running()]
+            data = json.dumps({"updated": time.time(), "running": running})
+            tmp = self.state_file.with_name(self.state_file.name + ".tmp")
+            try:
+                self.state_file.parent.mkdir(parents=True, exist_ok=True)
+                tmp.write_text(data, encoding="utf-8")
+                for attempt in range(5):
+                    try:
+                        os.replace(tmp, self.state_file)
+                        return
+                    except PermissionError:  # Windows: a reader has the file open for a moment
+                        time.sleep(0.02 * (attempt + 1))
+                self.state_file.write_text(data, encoding="utf-8")
+            except OSError:
+                pass
 
     def reset_state(self) -> None:
         """At server start: sessions from a previous run are gone (the job ended them), so say so."""
