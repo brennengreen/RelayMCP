@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import sys
 import time
 import uuid
 from ctypes import wintypes
@@ -134,8 +135,11 @@ if _ole32 is not None:
 def wmi(namespace: str = "root\\WMI"):
     """A WMI connection over COM (scripting API, late-bound): ~10-50 ms per query instead of ~1.5 s for starting
     PowerShell. Works on any thread; COM is initialized there if it isn't already (in whatever mode it has)."""
-    import comtypes.client  # first: importing comtypes initializes COM on this thread itself (and raises on conflict)
-    _ole32.CoInitializeEx(None, 0)  # other threads: S_OK, S_FALSE and RPC_E_CHANGED_MODE all leave COM usable
+    hr = _ole32.CoInitializeEx(None, 0) & 0xFFFFFFFF  # S_OK, S_FALSE and RPC_E_CHANGED_MODE all leave COM usable
+    if "comtypes" not in sys.modules and not hasattr(sys, "coinit_flags"):
+        # comtypes initializes COM when first imported (STA by default) and raises if this thread already chose MTA
+        sys.coinit_flags = 2 if hr == 0x80010106 else 0  # match this thread's apartment
+    import comtypes.client
     locator = comtypes.client.CreateObject("WbemScripting.SWbemLocator", dynamic=True)
     return locator.ConnectServer(".", namespace)
 
