@@ -134,7 +134,8 @@ def similarity(query: str, text: str) -> float:
 
 def find(lines: list[dict], query: str, fuzzy: float = 0.8) -> dict | None:
     """The best line for query: exact match, then a line starting with it, then one containing it (case-insensitive),
-    then, for game fonts OCR misreads, the most similar line (at least `fuzzy` similar; 0 turns that off)."""
+    then one cut off partway through it, then, for game fonts OCR misreads, the most similar line (at least `fuzzy`
+    similar; 0 turns that off)."""
     q = normalize(query)
     if not q:
         return None
@@ -142,6 +143,8 @@ def find(lines: list[dict], query: str, fuzzy: float = 0.8) -> dict | None:
     for i, line in enumerate(lines):
         t = normalize(line["text"])
         score = 3 if t == q else 2 if t.startswith(q) else 1 if q in t else 0
+        if not score and len(t) >= 5 and q.startswith(t[:-1]) and len(t) - 1 >= 0.6 * len(q):
+            score = 0.5  # cut off at an edge, last letter half drawn: "Wooden Picl" for "Wooden Pickaxe" (a tooltip)
         if score:
             ranked.append((-score, len(t), i, line))
         elif fuzzy and len(q) >= 4:

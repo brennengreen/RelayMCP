@@ -52,7 +52,8 @@ KINDS = {
                'sees("Mine", region) -> [x, y] or None (OCR, ~50 ms for a small region); color([r,g,b], region, tol=40) '
                '-> fraction. aim(x, y, within=24, timeout=3, until=None) turns the right stick until what is at (x, y) '
                'sits at the screen center (the crosshair), keeping the held left stick and buttons (walk while '
-               'aiming); until = keep steering until fn() is truthy -> {"on_target", "error_px", "match"}. '
+               'aiming); until = keep steering until fn() is truthy -> {"on_target", "error_px", "match", '
+               '"min_deflection" (the stick deadzone it learned; pass it back next time)}. '
                't = track(x, y, size=120): follow what is at (x, y) yourself: t.find() -> (x, y, score) in the '
                'latest frame. shift(a, b) -> (dx, dy, peak): how far the view moved between two frames of the same '
                'region (phase correlation; crop away the HUD), e.g. to calibrate camera turns. '
@@ -198,6 +199,32 @@ def deflection(error_px: float, full_px: float, gain: float, within: float, nudg
         return 0.0
     d = max(-1.0, min(1.0, error_px / full_px * gain * 2))
     return d if abs(d) >= nudge else nudge * (1 if d > 0 else -1)
+
+
+class Steer:
+    """Screen-px error -> stick deflection, learning the game's deadzone on the way: when the target doesn't move for
+    a few frames while the stick is deflected, the smallest deflection goes up (Minecraft ignores anything below
+    ~0.4; aiming there with a 0.22 floor stalled)."""
+
+    def __init__(self, full_px: float, gain: float, within: float, nudge: float):
+        self.full_px, self.gain, self.within, self.nudge = full_px, gain, within, nudge
+        self.last: tuple[float, float] | None = None
+        self.stuck, self.deflected = 0, False
+
+    def __call__(self, tx: float, ty: float, ex: float, ey: float) -> tuple[float, float]:
+        moved = self.last is None or abs(tx - self.last[0]) + abs(ty - self.last[1]) > 3
+        self.stuck = self.stuck + 1 if self.deflected and not moved else 0
+        if self.stuck >= 4 and self.nudge < 0.8:
+            self.nudge, self.stuck = min(0.8, self.nudge + 0.06), 0
+        self.last = (tx, ty)
+        dx = deflection(ex, self.full_px, self.gain, self.within, self.nudge)
+        dy = -deflection(ey, self.full_px, self.gain, self.within, self.nudge)
+        self.deflected = bool(dx or dy)
+        return dx, dy
+
+    def still(self) -> None:
+        """The stick went back to center (on target, or the target was lost)."""
+        self.deflected, self.stuck = False, 0
 
 
 class Run:
@@ -480,6 +507,7 @@ class Runtime:
         scale, nudge = float(p.get("full_deflection_px", 500)), float(p.get("min_deflection", 0.22))
         min_score = float(p.get("min_score", 0.45))
         on_target, lost = 0, 0
+        steer = Steer(scale, gain, within, nudge)
         run.used.add("mouse" if output == "mouse" else "stick")
         for _ in self._ticks(run, p.get("hz", 30)):
             frame, _ = self._frame(run, None)
@@ -488,6 +516,7 @@ class Runtime:
             if score < min_score:
                 lost += 1
                 run.stats["frames_without_target"] = lost
+                steer.still()
                 if output != "mouse":
                     self.out.stick(output, 0.0, 0.0)
                 continue
@@ -496,6 +525,7 @@ class Runtime:
             run.stats.update(error_px=round(err, 1), target=[int(tx), int(ty)])
             if err <= within:
                 on_target += 1
+                steer.still()
                 if output != "mouse":
                     self.out.stick(output, 0.0, 0.0)
                 if hold and on_target >= hold and not p.get("follow", False):
@@ -507,7 +537,8 @@ class Runtime:
             if output == "mouse":
                 self.out.mouse(int(round(np.clip(ex * gain * 0.5, -200, 200))), int(round(np.clip(ey * gain * 0.5, -200, 200))))
             else:
-                self.out.stick(output, deflection(ex, scale, gain, within, nudge), -deflection(ey, scale, gain, within, nudge))
+                self.out.stick(output, *steer(tx, ty, ex, ey))
+                run.stats["min_deflection"] = round(steer.nudge, 2)
             run.stats["actions"] += 1
 
     def _run_program(self, run: Run, p: dict) -> None:
@@ -857,6 +888,7 @@ class Program:
             size: int = 120, gain: float = 0.8, min_deflection: float = 0.22, full_deflection_px: float = 500,
             min_score: float = 0.45, hz: float = 30) -> dict:
         aimer = Aimer(self.frame(), (x, y), size)
+        steer = Steer(full_deflection_px, gain, within, min_deflection)
         end = time.perf_counter() + float(timeout)
         period_ms = 1000 / max(1.0, min(float(hz), 120.0))
         on_target, out = 0, {"on_target": False, "error_px": None, "match": 0.0}
@@ -872,10 +904,12 @@ class Program:
                     out.update(error_px=round(err, 1), target=[int(tx), int(ty)])
                     if err <= within:
                         on_target += 1
+                        steer.still()
                     else:
                         on_target = 0
-                        rs = [deflection(ex, full_deflection_px, gain, within, min_deflection),
-                              -deflection(ey, full_deflection_px, gain, within, min_deflection)]
+                        rs = list(steer(tx, ty, ex, ey))
+                else:
+                    steer.still()
                 out["on_target"] = on_target > 0
                 self._apply({**self.state, "right_stick": rs})
                 if until is not None:
@@ -890,6 +924,7 @@ class Program:
                 self.wait(period_ms)
         finally:
             self._apply(self.state)
+        out["min_deflection"] = round(steer.nudge, 2)  # what this game needed: pass it next time
         return out
 
 

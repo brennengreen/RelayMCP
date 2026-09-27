@@ -600,3 +600,18 @@ def test_flat_sky_never_outscores_the_real_match():
     img[20:80, 20:80] = rng.integers(0, 255, (60, 60)).astype(np.float32)
     x, y, score = behave.match_template(img, img[30:60, 30:60].copy())
     assert (x, y) == (30, 30) and 0.99 < score <= 1.0, (x, y, score)
+
+
+class DeadzoneWorld(PanWorld):
+    """Like a game with a big stick deadzone: deflections under 0.45 don't turn the camera at all."""
+
+    def stick(self, side, x, y):
+        super().stick(side, x if abs(x) >= 0.45 else 0.0, y)
+
+
+def test_aim_learns_a_deadzone_it_was_not_told_about():
+    world = DeadzoneWorld()
+    start = world.x
+    status, _, _ = run_program("r = aim(1500, 540, timeout=8)\nresult = r", max_s=10, world=world)
+    assert status["state"] == "done" and status["result"]["on_target"], status
+    assert abs((world.x - start) - 540) < 40 and status["result"]["min_deflection"] >= 0.45
