@@ -68,3 +68,16 @@ def test_ramp_eases_the_stick_in(pad):
     assert len(ramp) >= 5 and ramp[0] < 0.3 and ramp == sorted(ramp)  # rises gradually to full
     assert pad._pad.updates[-2][1]["left"] == (1.0, 0.0)  # the next step jumps (no ramp asked)
     assert pad._pad.updates[-1][1]["left"] == (0.0, 0.0)
+
+
+def test_recorded_changes_become_replayable_steps():
+    ev = lambda t, **k: {"t_ms": t, "slot": 0, "buttons": [], "left_stick": [0, 0], "right_stick": [0, 0],  # noqa: E731
+                         "left_trigger": 0, "right_trigger": 0, **k}
+    events = [ev(0, buttons=["a"]), ev(120), ev(125, left_stick=[0.03, 0.05]),       # jitter inside the deadzone
+              ev(400, left_stick=[0, 1]), ev(405, left_stick=[0.01, 0.99]),          # a 5 ms blip merges
+              ev(900, right_trigger=1.0, buttons=["right_shoulder"]), ev(1000),
+              {**ev(1000), "slot": 1, "buttons": ["b"]}]                              # another controller: ignored
+    steps = gamepad.to_steps(events, slot=0)
+    assert steps == [{"buttons": ["a"], "ms": 120}, {"ms": 280}, {"left_stick": [0.0, 1.0], "ms": 500},
+                     {"buttons": ["right_shoulder"], "right_trigger": 1.0, "ms": 100}, {"ms": 100}]
+    assert gamepad.to_steps([], slot=0) == []

@@ -471,6 +471,47 @@ def xinput_watch(seconds: float, slot: int | None = None) -> dict:
     return {"seconds": seconds, "changes": len(events), "events": events[:400]}
 
 
+def to_steps(events: list[dict], deadzone: float = 0.1, min_ms: int = 0, tail_ms: int = 100,
+             slot: int | None = None, grid: float = 0.05) -> list[dict]:
+    """Turn recorded controller changes (xinput_watch events: full states with t_ms) into gamepad_sequence steps
+    that replay them: sticks inside the deadzone count as centered and snap to a small grid, so jitter merges into
+    one step; steps shorter than min_ms (none by default: a quick tap is real input) fold into the step before."""
+    evs = [e for e in events if slot is None or e.get("slot") == slot]
+    if not evs:
+        return []
+
+    def state(e: dict) -> dict:
+        def snap(v: float) -> float:
+            return round(round(v / grid) * grid, 2) + 0.0  # + 0.0 turns -0.0 into 0.0
+
+        def stick(v):
+            x, y = (float(v[0]), float(v[1])) if v else (0.0, 0.0)
+            return [0.0, 0.0] if max(abs(x), abs(y)) < deadzone else [snap(x), snap(y)]
+        out: dict = {"buttons": sorted(e.get("buttons") or [])}
+        for key in ("left_stick", "right_stick"):
+            v = stick(e.get(key))
+            if v != [0.0, 0.0]:
+                out[key] = v
+        for key in ("left_trigger", "right_trigger"):
+            v = snap(float(e.get(key) or 0))
+            if v >= deadzone:
+                out[key] = v
+        return out
+
+    steps: list[dict] = []
+    for i, e in enumerate(evs):
+        ms = (evs[i + 1]["t_ms"] - e["t_ms"]) if i + 1 < len(evs) else tail_ms
+        st = state(e)
+        if steps and ({k: v for k, v in steps[-1].items() if k != "ms"} == st or ms < min_ms):
+            steps[-1]["ms"] += ms
+            continue
+        steps.append({**st, "ms": max(1, int(ms))})
+    for st in steps:
+        if not st["buttons"]:
+            del st["buttons"]
+    return steps
+
+
 def rumble(left: float = 0.5, right: float = 0.5, duration_ms: int = 300, slot: int = 0) -> dict:
     """Vibrate a physical controller (slot 0 is normally the Ally's built-in controller in gamepad mode)."""
     duration_ms = max(0, min(int(duration_ms), 5000))

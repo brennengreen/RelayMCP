@@ -382,9 +382,14 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
                 "foreground": focus.short(focus.foreground())}
 
     @tool()
-    async def gamepad_watch(seconds: float = 5.0, slot: int | None = None) -> dict:
-        """Record controller input changes for a few seconds (e.g. what the user presses, or verify the virtual pad)."""
-        return await _run(STT, gamepad.xinput_watch, seconds, slot)
+    async def gamepad_watch(seconds: float = 5.0, slot: int | None = None, as_steps: bool = False) -> dict:
+        """Record controller input changes for a few seconds (what the user presses, or check the virtual pad).
+        as_steps = return them as gamepad_sequence steps (slot 0 unless given) to replay a move you were shown."""
+        out = await _run(STT, gamepad.xinput_watch, seconds, slot)
+        if as_steps:
+            steps = gamepad.to_steps(out["events"], slot=slot if slot is not None else 0)
+            return {"seconds": out["seconds"], "steps": steps, "total_ms": sum(st["ms"] for st in steps)}
+        return out
 
     @tool()
     async def gamepad_connect(keep_plugged: bool = True) -> dict:

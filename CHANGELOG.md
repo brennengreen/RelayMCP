@@ -38,6 +38,8 @@ Input reliability, from real use driving Minecraft Bedrock on a ROG Ally.
 - **No tool-search round trip:** Copilot hides MCP tool schemas behind a search tool, which cost every voice prompt
   an extra model call. Voice runs and the `handheld` agent keep the handheld's tool schemas in view; other Copilot
   sessions are unchanged.
+- **Teach by showing:** `gamepad_watch(as_steps=true)` records what you do on the controller and returns it as
+  `gamepad_sequence` steps, so an agent can replay a move it was shown.
 - **Gamepad timing:** sequence steps are scheduled against deadlines with a 1 ms timer, so they don't drift and each
   lands within about a millisecond (Windows' default timer made each step up to 15 ms late). New `ramp_ms` eases
   sticks and triggers into a step.
