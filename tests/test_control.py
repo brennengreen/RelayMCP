@@ -519,3 +519,15 @@ def test_grid_angle_sees_no_grid_in_isotropic_noise():
     img = np.apply_along_axis(lambda c: np.convolve(c, k, "same"), 0, img)  # blobs, no direction preferred
     _deg, strength = control.grid_angle((img - img.min()) / np.ptp(img) * 255)
     assert strength < 0.2, strength
+
+
+def test_yawing_while_looking_straight_down_turns_the_right_way():
+    """Minecraft's pitch limit is exactly -90: a yaw there is pure roll in the picture, and the yaw part the sign came
+    from is noise. Told the pitch (after holding the stick into the limit), turns go the right way every time."""
+    sim = CameraSim(limit=90.0, pitch=-90.0, deadzone=0.0, expo=1.0)
+    cam = control.Camera(io_for(sim), true_profile(sim))
+    cam.set_pitch(-90.0)
+    for want in (30.0, -45.0, 12.0, -20.0):
+        start = sim.turned
+        out = cam.turn(yaw=want)
+        assert abs((sim.turned - start) - want) < 2.0, (want, sim.turned - start, out)

@@ -286,12 +286,17 @@ def grid_angle(img, mask=None, smooth: int = 4) -> tuple[float, float]:
     return math.degrees(math.atan2(zi, zr) / 4), math.hypot(zr, zi) / total
 
 
-def world_turn(p) -> tuple[float, float]:
+def world_turn(p, theta: float | None = None) -> tuple[float, float]:
     """(yaw right, pitch up) radians from a camera rotation vector, for cameras that turn about the world's vertical
     axis and tilt without rolling (first-person games, gimbals): yawing while tilted rolls the picture, so yaw is the
-    size of the yaw-and-roll part (whatever the tilt), with the yaw part's sign."""
+    size of the yaw-and-roll part (whatever the tilt), with the yaw part's sign. Looking nearly straight up or down a
+    yaw is almost all roll and its yaw part is noise; then the camera's pitch theta (radians), if known, gives the
+    sign (yaw = wy cos(theta) - wz sin(theta))."""
     wx, wy, wz = (float(v) for v in p)
-    return math.copysign(math.hypot(wy, wz), wy), wx
+    size = math.hypot(wy, wz)
+    if theta is not None and abs(wz) > abs(wy):
+        return math.copysign(size, wy * math.cos(theta) - wz * math.sin(theta)), wx
+    return math.copysign(size, wy), wx
 
 
 class Odometry:
@@ -366,11 +371,11 @@ class Odometry:
 
     @property
     def yaw(self) -> float:
-        return self.base_yaw + world_turn(self.p)[0]
+        return self.base_yaw + world_turn(self.p, self.theta)[0]
 
     @property
     def pitch(self) -> float:
-        return self.base_pitch + world_turn(self.p)[1]
+        return self.base_pitch + world_turn(self.p, self.theta)[1]
 
     @property
     def x(self) -> float:
@@ -468,13 +473,14 @@ class Odometry:
             if gap > 1e-4:
                 self.p_rate = 0.5 * self.p_rate + 0.5 * (p - self.p) / max(gap, 1e-3)
             self.p, self.lost, self._t_meas = p, 0, now
-            if abs(self.p[1]) > 0.03:  # yawing: the roll it shows gives the tilt
+            if abs(self.p[1]) > 0.03 and abs(self.p[1]) > abs(self.p[2]):  # yawing: the roll it shows gives the
+                # tilt (not near straight up or down, where the yaw part vanishes and the estimate flips sign)
                 est = -math.atan(self.p[2] / self.p[1])
                 self.theta = est if self.theta is None else 0.7 * self.theta + 0.3 * est
         w = self.size[0]
         if self.lost > 3 or math.hypot(self.p[0], self.p[1]) * self.f > self.REKEY * w or abs(self.p[2]) > 0.08:
             self.breaks += self.lost > 3
-            dyaw, dpitch = world_turn(self.p)
+            dyaw, dpitch = world_turn(self.p, self.theta)
             if self.segments is not None:
                 self.segments.append((self.p_rows, self.p.copy(), self.f))
             self.p_rows = []
@@ -1000,7 +1006,15 @@ class Camera:
     def odometry(self) -> Odometry:
         frame = self.io.frame()
         ov = self.overlay if self.overlay is not None and self.overlay.k == scale_for(frame.shape[1]) else None
-        return Odometry(frame, ov, focal_px=self.profile.get("focal_px"))
+        odo = Odometry(frame, ov, focal_px=self.profile.get("focal_px"))
+        if self._tilt is not None:
+            odo.theta = math.radians(self._tilt)  # where it looks now: signs yaws seen straight up or down
+        return odo
+
+    def set_pitch(self, degrees: float) -> None:
+        """Tell the camera its pitch now (degrees, up +), e.g. after holding the stick into a pitch limit (Minecraft's
+        is exactly -90 / +90). Turns keep it up to date."""
+        self._tilt = float(degrees)
 
     def _want(self, err: float, speed: float, tol: float) -> float:
         """The turn rate (deg/s) to ask for with `err` degrees to go, turning at `speed` now."""
@@ -1094,6 +1108,8 @@ class Camera:
         finally:
             io.stick(0.0, 0.0)
         got_y, got_p = -odo.x / self.ppd, odo.y / self.ppd
+        if self._tilt is not None:
+            self._tilt = max(-90.0, min(90.0, self._tilt + got_p))
         out = {"yaw": round(got_y, 1), "pitch": round(got_p, 1),
                "error": round(max(abs(yaw - got_y), 0.0 if at_limit else abs(pitch - got_p)), 1)}
         if at_limit:
@@ -1106,6 +1122,7 @@ class Camera:
         """The camera's pitch now (degrees, up +), from how the picture rolls during a small yaw wiggle there and
         back; None if it can't tell (a flat view)."""
         odo = self.odometry()
+        odo.theta = None  # measured afresh
         rate = max(1.5 * self.curve.min_rate, min(60.0, 0.3 * self.curve.max_rate))
         d = self.curve.deflection(rate)
         seconds = min(0.3, 6.0 / abs(self.curve.rate(d)) + self.accel)

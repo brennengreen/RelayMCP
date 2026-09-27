@@ -75,7 +75,9 @@ KINDS = {
                'odometry; level(pitch=0); look_at(x, y, refine=True): put a screen point under the crosshair (refine: then '
                'check the picture near the middle and correct); scan(score_fn, '
                'degrees=360): turn round calling score_fn(frame), end facing the best view -> {"heading", "score"}; '
-               'look_rate(yaw_dps, pitch_dps): hold a turn rate (walk and turn); camera: the profile summary. '
+               'look_rate(yaw_dps, pitch_dps): hold a turn rate (walk and turn); camera: the profile summary; '
+               'set_pitch(deg): the pitch now, if known (after holding the stick into a limit), so turns looking '
+               'straight down or up read right. '
                'Chunks: params.after = a run id queues this program to start the moment that run finishes (plan the '
                'next chunk while one plays; cancelled if that one fails or is stopped); params.replace = a run id '
                'stops that run and starts this one at once, keeping what it holds (no snap to neutral).',
@@ -1125,7 +1127,8 @@ class Program:
                 "level": lambda pitch=0.0: self.cam().level(pitch),
                 "look_at": lambda x, y, **kw: self.cam().look_at(x, y, **kw),
                 "scan": lambda score, degrees=360.0: self.cam().scan(score, degrees),
-                "look_rate": self.look_rate, "camera": self._summary()}
+                "look_rate": self.look_rate, "camera": self._summary(),
+                "set_pitch": lambda degrees: self.cam().set_pitch(degrees)}
 
     def skill(self, name: str, **inputs):
         """Run a saved skill here (same controller state and guards) and return its result."""
@@ -1334,7 +1337,7 @@ class Program:
 
 Program.NAMES = {"elapsed", "frame", "diff", "text", "sees", "color", "track", "shift", "log", "W", "H", "CX", "CY",
                  "np", "math", "time", "numbers", "pixel_text", "grid_angle", "pad", "press", "seq", "release", "wait", "until", "aim", "guard", "skill",
-                 "turn", "level", "look_at", "scan", "look_rate", "camera"}
+                 "turn", "level", "look_at", "scan", "look_rate", "camera", "set_pitch"}
 
 
 def center_of(box) -> tuple[float, float]:

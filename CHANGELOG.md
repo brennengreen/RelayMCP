@@ -78,6 +78,10 @@ handheld itself.
   plugged in, and the game got no input at all (turn mode's resume press and every stick move went to the overlay's
   menu, where a game's presses would change the handheld's settings). It's closed with the pad's B right after
   plugging in and before agent input, and a program stops if it opens mid-run (as if you took over).
+- **Turning while looking straight down or up:** Minecraft's pitch limit is exactly -90/+90, where a yaw is pure roll
+  in the picture and the small yaw part its direction came from is noise (in the simulator a 30-degree turn spun 810
+  degrees). Programs call `set_pitch(deg)` after holding the stick into a limit, the camera keeps its pitch up to date
+  through turns, and the gyro takes a yaw's direction from it.
 - **Instruments read exactly:** programs get `numbers(region)` and `pixel_text(region)`, which read text drawn in a
   game's pixel font glyph by glyph (Windows OCR read Minecraft's "Position: -11, 100, 0" as "-11, 13B," every time),
   and `grid_angle(region)`, a compass for grid worlds: looking straight down, the texture's straight edges give the
