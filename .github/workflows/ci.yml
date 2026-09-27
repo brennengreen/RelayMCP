@@ -55,9 +55,12 @@ jobs:
           $errs = $null
           [void][System.Management.Automation.Language.Parser]::ParseFile("$env:RUNNER_TEMP\kit\Relay-Setup.ps1", [ref]$null, [ref]$errs)
           if ($errs) { $errs | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }
-          $text = Get-Content "$env:RUNNER_TEMP\kit\Relay-Setup.ps1" -Raw
-          if ($text -notmatch "runner\u2019s PC" -and $text -notmatch 'runner.s PC') { throw 'host label lost in encoding' }
-          'parsed OK'
+          # Evaluate the host label exactly as the handheld will (BOM-marked UTF-8, typographic apostrophe escaped).
+          $line = Get-Content "$env:RUNNER_TEMP\kit\Relay-Setup.ps1" | Where-Object { $_ -match '^\$HostLabel\s*=' } | Select-Object -First 1
+          Invoke-Expression $line
+          $expected = "the CI runner$([char]0x2019)s PC"
+          if ($HostLabel -ne $expected) { throw "host label mangled: [$HostLabel]" }
+          'parsed OK; host label intact'
       - name: Install the device runtime from the kit and build its MCP server
         run: |
           Expand-Archive "$env:RUNNER_TEMP\kit\relaymcp-device.zip" "$env:RUNNER_TEMP\device"
