@@ -36,7 +36,8 @@ from mcp.types import ImageContent, TextContent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import __version__, audio, capture, focus, gamepad, lean, ocr, procs, pshost, speech, system, tts, updates, voice, win_input
+from . import (__version__, audio, behave, capture, focus, gamepad, lean, ocr, procs, pshost, speech, system, tts,
+               updates, voice, win_input)
 from .lean import compact, lean_result, lean_schema
 from .paths import USER_DIR, VOICE_HEADER, device_settings
 
@@ -57,6 +58,41 @@ GRABBER = capture.Grabber()
 PROC = ThreadPoolExecutor(max_workers=4, thread_name_prefix="proc")  # process sessions (reads and waits block)
 PROCS = procs.Manager(USER_DIR / "procs.json")
 PS = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ps")  # the persistent PowerShell session, one call at a time
+
+
+class _BehaviorOutputs:
+    """What behaviors may do: short presses, mouse moves, clicks at the cursor, stick positions; and release it all."""
+
+    def key(self, keys):
+        win_input.key_press(keys, 40, 1, 0)
+
+    def pad(self, buttons):
+        gamepad.PAD.run_steps([{"buttons": buttons, "ms": 60}])
+
+    def click(self):
+        x, y = capture.cursor_pos() or (None, None)
+        if x is not None:
+            win_input.mouse_click(x, y)
+
+    def mouse(self, dx, dy):
+        win_input.mouse_move_relative(dx, dy, 0)
+
+    def stick(self, side, x, y):
+        gamepad.PAD.stick(side, x, y)
+
+    def release(self):
+        win_input.release_all_keys()
+        gamepad.PAD.neutral()
+
+
+BEHAVIORS = behave.Runtime(
+    grab=lambda region: SCREEN.submit(GRABBER.grab_array, region).result(timeout=5),
+    outputs=_BehaviorOutputs(),
+    takeover=lambda: gamepad.physical_active(),
+    read_text=lambda region: SCREEN.submit(lambda: ocr.recognize(GRABBER.grab(), capture.clamp_region(
+        region, 0, 0, *win_input.screen_size()) if region else None)).result(timeout=10),
+    cursor=lambda: capture.cursor_pos(),
+)
 
 
 def _in_worker(pool: ThreadPoolExecutor, fn, *args, **kwargs):
@@ -280,20 +316,28 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
             raise ValueError(f"unknown step {step!r}")
         return None
 
+    # ------------------------------------------------------------------------------------------ real-time behaviors
+    @tool()
+    async def behavior(action: str, kind: str = "", params: dict | None = None, id: str = "", since: int = 0,
+                       max_s: float = 30.0) -> dict:
+        """Real-time loops on the handheld (react in tens of ms, no model round trips). action: start (kind, params,
+        max_s) -> id | status (id, since) | stop (id or all) | kinds (their params): react, track, press_until,
+        watch. A real controller moving stops them."""
+        return await _run(PROC, behave.run_tool, BEHAVIORS, action, kind, params, id, since, max_s)
+
     # ------------------------------------------------------------------------------------------ processes
     @tool()
     async def powershell(script: str, timeout: float = 60.0, reset: bool = False) -> dict:
-        """PowerShell in a persistent desktop-session runspace: variables and functions persist, ~50 ms per call,
-        DPI-aware (Win32 coordinates = screen px), errors as plain "ERROR:" lines. reset = start fresh."""
+        """PowerShell in a persistent desktop-session runspace: state persists, ~50 ms per call, DPI-aware, errors
+        as plain "ERROR:" lines. reset = start fresh."""
         return await _run(PS, pshost.HOST.run, script, timeout, reset)
 
     @tool()
     async def proc(action: str, name: str = "", command: str = "", cwd: str = "", text: str = "", pattern: str = "",
                    timeout: float = 10.0, cursor: int | None = None, max_lines: int = 60) -> dict:
-        """Long-running processes you talk to (e.g. a game server console), no window, desktop session. action:
-        start (name, command, cwd; pattern = wait for a ready line) | send (name, text = a line for its stdin; returns
-        the reply, or waits for pattern) | read (new output since the last read) | wait (pattern regex, timeout s) |
-        stop (text = graceful command, e.g. "stop") | list. Updates wait while one runs."""
+        """Long-running consoles (e.g. a game server), no window. action: start (name, command, cwd; pattern = wait
+        for a ready line) | send (text = a stdin line; returns the reply, or waits for pattern) | read (new
+        output) | wait (pattern, timeout) | stop (text = graceful command) | list. Updates wait while one runs."""
         return await _run(PROC, procs.run, PROCS, action, name, command, cwd, text, pattern, timeout, cursor, max_lines)
 
     # ------------------------------------------------------------------------------------------ gamepad
@@ -656,6 +700,7 @@ def main() -> None:
         try:
             PROCS.stop_all()  # don't leave orphaned consoles behind
             pshost.HOST.stop()
+            BEHAVIORS.stop()
         except Exception:
             pass
         log.info("RelayMCP hardware server stopped")

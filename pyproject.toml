@@ -48,7 +48,7 @@ device = [
 ]
 # Faster voice prompts: a warm Copilot runtime instead of starting `copilot -p` for every prompt (Python 3.11+).
 voice = ["github-copilot-sdk>=1.0.14,<2; python_version >= '3.11'"]
-dev = ["pytest>=7", "ruff>=0.6", "pillow>=10.3"]
+dev = ["pytest>=7", "ruff>=0.6", "pillow>=10.3", "numpy>=1.26"]
 
 [project.scripts]
 relaymcp = "relaymcp.host.cli:main"

@@ -88,6 +88,7 @@ class Grabber:
         self._dxgi_failed_at: float | None = None
         self._last: Frame | None = None
         self._sent: dict[str, str] = {}   # request key -> digest of the last image returned for it
+        self._arrays: dict = {}            # region -> (array, capture time) for behaviors
 
     # --- backends ---------------------------------------------------------------------------------------------------
 
@@ -181,6 +182,25 @@ class Grabber:
                 self._dxgi_failed_at = now
                 self.release()
         return self._grab_gdi()
+
+    def grab_array(self, region=None):
+        """(BGRA numpy array of the screen or a region, time.perf_counter when it was captured) for behaviors. An
+        unchanged screen returns the previous image with its original capture time."""
+        import numpy as np
+        frame = self.grab()
+        key = tuple(region) if region else None
+        if not frame.new and key in self._arrays:
+            return self._arrays[key]
+        arr = frame.data if hasattr(frame.data, "shape") else np.frombuffer(frame.data, np.uint8)
+        arr = arr.reshape(frame.height, frame.width, 4)
+        if key:
+            box = clamp_region(region, frame.left, frame.top, frame.width, frame.height)
+            arr = arr[box[1] - frame.top:box[3] - frame.top, box[0] - frame.left:box[2] - frame.left]
+        captured = time.perf_counter() - (time.monotonic() - frame.at)
+        if len(self._arrays) > 16:
+            self._arrays.clear()
+        self._arrays[key] = (arr, captured)
+        return arr, captured
 
     # --- what the tool returns --------------------------------------------------------------------------------------
 

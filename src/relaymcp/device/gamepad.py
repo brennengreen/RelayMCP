@@ -291,6 +291,20 @@ class VirtualPad:
         pad.right_trigger_float(value_float=_clamp(rt, 0, 1))
         pad.update()
 
+    def stick(self, side: str, x: float, y: float) -> None:
+        """Hold one stick where it is told (behaviors steer with this); the rest of the pad stays neutral."""
+        with self._lock:
+            self._ensure()
+            left = (x, y) if side == "left_stick" else (0.0, 0.0)
+            right = (x, y) if side == "right_stick" else (0.0, 0.0)
+            self._apply(0, left, right, 0.0, 0.0)
+            self._touch()
+
+    def neutral(self) -> None:
+        with self._lock:
+            if self._pad is not None:
+                self._apply(0, (0, 0), (0, 0), 0, 0)
+
     def run_steps(self, steps: list[dict]) -> dict:
         """Each step: {buttons, left_stick [x,y], right_stick [x,y], left_trigger, right_trigger, ms}. State per step
         replaces the previous one; the pad returns to neutral at the end."""
@@ -326,6 +340,22 @@ class VirtualPad:
 
 
 PAD = VirtualPad()
+
+
+def physical_active(deadzone: int = 9000, trigger: int = 40) -> str | None:
+    """Is someone using a real controller (any slot but the virtual pad's)? Returns which, for "you took over"."""
+    virtual = PAD.index()
+    for i in range(4):
+        if i == virtual:
+            continue
+        st = XINPUT_STATE()
+        if _xinput.XInputGetState(i, ctypes.byref(st)) != 0:
+            continue
+        g = st.Gamepad
+        if g.wButtons or g.bLeftTrigger > trigger or g.bRightTrigger > trigger or \
+                max(abs(g.sThumbLX), abs(g.sThumbLY), abs(g.sThumbRX), abs(g.sThumbRY)) > deadzone:
+            return f"controller in slot {i}"
+    return None
 
 
 # ---------------------------------------------------------------------------------------------------- XInput (physical)
