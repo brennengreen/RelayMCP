@@ -4,15 +4,18 @@ from relaymcp.device import turns
 
 
 class Game:
-    def __init__(self, paused=False, menu_open=False):
+    def __init__(self, paused=False, menu_open=False, start_in_menu="closes"):
         self.paused, self.menu_open, self.presses, self.frames = paused, menu_open, [], 0
-        self.physical = None
+        self.physical, self.start_in_menu, self.regions = None, start_in_menu, []
 
     def press(self, buttons):
         self.presses.append(tuple(buttons))
+        if "b" in buttons:
+            self.menu_open = False
         if "start" in buttons:
-            if self.menu_open:  # like Minecraft's inventory: the first press only closes it
-                self.menu_open = False
+            if self.menu_open:  # some menus close on the first press; Minecraft's crafting screen ignores it
+                if self.start_in_menu == "closes":
+                    self.menu_open = False
             else:
                 self.paused = not self.paused
 
@@ -20,7 +23,8 @@ class Game:
         self.frames += 1
         return ("menu" if self.paused else "world", self.frames)
 
-    def sees(self, text):
+    def sees(self, text, region=None):
+        self.regions.append(region)
         return self.paused and text == "Game is paused"
 
 
@@ -98,3 +102,23 @@ def test_without_a_pause_text_it_toggles_by_assumption(monkeypatch):
     t.begin()
     assert not game.paused
     assert t.configure(None) is None and t.frozen() is None
+
+
+def test_a_menu_that_ignores_the_pause_button_is_closed_first():
+    game = Game(menu_open=True, start_in_menu="ignores")
+    t = turns.Turns(game.press, game.grab, game.sees, lambda: None)
+    t.configure({"button": "start", "text": "Game is paused", "close": "b", "region": [1100, 30, 1560, 110],
+                 "settle_ms": 0})
+    t.begin()
+    t.end()
+    assert game.paused and t.paused and game.presses == [("start",), ("b",), ("start",)]
+    assert "closed a menu" in t.status()["note"]
+    assert game.regions and all(r == [1100, 30, 1560, 110] for r in game.regions)  # only the pause text's box is read
+
+
+def test_without_close_a_menu_that_ignores_pausing_is_reported():
+    game = Game(menu_open=True, start_in_menu="ignores")
+    t = make(game)
+    t.begin()
+    t.end()
+    assert not game.paused and not t.paused and "may still be running" in t.status()["note"]

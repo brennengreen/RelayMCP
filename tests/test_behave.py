@@ -575,3 +575,18 @@ def test_start_and_end_hooks_wrap_every_run():
     status, _, _ = run_program("wait(20)", on_start=lambda run: calls.append("start"),
                                on_end=lambda run: calls.append("end"))
     assert status["state"] == "done" and calls == ["start", "end"]
+
+
+def test_shift_measures_how_far_the_view_moved():
+    frame = _texture(540, 960, block=16, seed=3)
+    moved = np.roll(frame, -120, axis=1)  # the camera turned right: the picture moved 120 px left
+    dx, dy, peak = behave.phase_shift(frame, moved)
+    assert abs(dx + 120) <= 4 and abs(dy) <= 4 and peak > 0.2, (dx, dy, peak)
+    assert behave.phase_shift(frame, frame)[:2] == (0, 0)
+
+
+def test_a_program_can_follow_a_point_with_its_own_tracker():
+    status, _, _ = run_program("t = track(1500, 540)\nx, y, score = t.find()\nresult = [round(x), round(y), score > 0.9]")
+    assert status["state"] == "done", status
+    x, y, confident = status["result"]
+    assert abs(x - 1500) <= 8 and abs(y - 540) <= 8 and confident

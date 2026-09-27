@@ -92,14 +92,16 @@ class _BehaviorOutputs:
             gamepad.PAD.neutral()
 
 
-def _on_screen(text: str) -> bool:
-    return ocr.find(ocr.recognize(GRABBER.grab(), None), text) is not None
+def _on_screen(text: str, region=None) -> bool:
+    frame = GRABBER.grab()
+    box = capture.clamp_region(region, frame.left, frame.top, frame.width, frame.height) if region else None
+    return ocr.find(ocr.recognize(frame, box), text) is not None
 
 
 TURNS = turns.Turns(  # turn-based play (focus_window pause): the game runs only while the agent's input runs
     press=lambda buttons: gamepad.PAD.run_steps([{"buttons": buttons, "ms": 100}]),
     grab=lambda: SCREEN.submit(GRABBER.grab).result(timeout=5),
-    sees=lambda text: SCREEN.submit(_on_screen, text).result(timeout=10),
+    sees=lambda text, region=None: SCREEN.submit(_on_screen, text, region).result(timeout=10),
     in_use=lambda: gamepad.physical_active(),
 )
 

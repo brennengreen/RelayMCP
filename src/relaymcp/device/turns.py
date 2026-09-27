@@ -27,10 +27,15 @@ def _buttons(value) -> list[str]:
 
 
 class Turns:
-    """press(buttons) sends a gamepad press; grab() returns the current frame; sees(text) -> is it on screen;
-    in_use() -> who is using a real controller (then the game isn't paused under their hands), or None."""
+    """press(buttons) sends a gamepad press; grab() returns the current frame; sees(text, region) -> is it on screen
+    (region None = anywhere); in_use() -> who is using a real controller (then the game isn't paused under their
+    hands), or None.
 
-    def __init__(self, press: Callable[[list[str]], Any], grab: Callable[[], Any], sees: Callable[[str], bool],
+    Profile: button (pauses), resume (default: button), text (shows while paused), region (where that text shows:
+    faster checks), close (closes a menu in which the pause button does nothing, e.g. "b" for Minecraft's crafting
+    screen; without it a second pause press is tried), settle_ms (let the last input play out before pausing)."""
+
+    def __init__(self, press: Callable[[list[str]], Any], grab: Callable[[], Any], sees: Callable[..., bool],
                  in_use: Callable[[], Any] = lambda: None):
         self._press, self._grab, self._sees, self._in_use = press, grab, sees, in_use
         self._lock = threading.RLock()
@@ -47,19 +52,26 @@ class Turns:
                 button = profile.get("button")
                 if not button:
                     raise ValueError('pause needs "button": the game\'s pause button, e.g. "start"')
+                region = profile.get("region")
+                if region is not None and (len(region) != 4 or region[2] <= region[0] or region[3] <= region[1]):
+                    raise ValueError("pause region must be [left, top, right, bottom]")
                 self.profile = {"button": button, "resume": profile.get("resume") or button,
-                                "text": str(profile.get("text") or ""),
+                                "text": str(profile.get("text") or ""), "region": region,
+                                "close": profile.get("close") or None,
                                 "settle_ms": max(0, min(int(profile.get("settle_ms", 300)), 3000))}
-                self.paused = bool(self.profile["text"]) and bool(self._sees(self.profile["text"]))
+                self.paused = bool(self.profile["text"]) and self._shows()
                 self.frame, self.note = None, None
             else:
                 self.profile, self.paused, self.frame, self.note = None, False, None, None
             return self.status()
 
+    def _shows(self) -> bool:
+        return bool(self._sees(self.profile["text"], self.profile.get("region")))
+
     def status(self) -> dict | None:
         if not self.profile:
             return None
-        out: dict[str, Any] = {"pause": self.profile, "paused": self.paused}
+        out: dict[str, Any] = {"pause": {k: v for k, v in self.profile.items() if v is not None}, "paused": self.paused}
         if self.note:
             out["note"] = self.note
         return out
@@ -93,13 +105,13 @@ class Turns:
 
     def _resume(self) -> None:
         text = self.profile["text"]
-        paused = bool(self._sees(text)) if text else self.paused
+        paused = self._shows() if text else self.paused
         if not paused:
             self.paused, self.note = False, None
             return
         self._press(_buttons(self.profile["resume"]))
         if text:
-            if not self._wait(lambda: not self._sees(text)):
+            if not self._wait(lambda: not self._shows()):
                 self.note = f"pressed {self.profile['resume']} but {text!r} still shows: the game may still be paused"
                 return
             time.sleep(FADE_S)
@@ -114,18 +126,24 @@ class Turns:
         if who:
             self.note = f"left running: {who} is in use"
             return
-        text, button = self.profile["text"], self.profile["button"]
+        text, button, close = self.profile["text"], self.profile["button"], self.profile.get("close")
         time.sleep(self.profile["settle_ms"] / 1000)  # let the last input play out, so the frozen frame shows its result
         frame = self._grab()
-        presses = 2 if text else 1  # a second press when the first only closed a menu (games that don't pause in menus)
-        for _ in range(presses):
-            self._press(_buttons(button))
-            if not text:
+        self._press(_buttons(button))
+        if not text:
+            time.sleep(SETTLE_S)
+        elif not self._wait(self._shows):
+            # A menu in which the pause button does nothing (or which it only closed): close it, then pause.
+            if close:
+                self._press(_buttons(close))
                 time.sleep(SETTLE_S)
-                break
-            if self._wait(lambda: self._sees(text)):
-                break
-        else:
-            self.note = f"pressed {button} {presses} times but {text!r} didn't show: the game may still be running"
+                frame = self._grab()
+            self._press(_buttons(button))
+            if not self._wait(self._shows):
+                self.note = (f"pressed {button}" + (f", {close}," if close else "") + f" and {button} again but "
+                             f"{text!r} didn't show: the game may still be running")
+                return
+            self.note = f"closed a menu to pause ({close})" if close else None
+            self.frame, self.paused_at, self.paused = frame, time.monotonic(), True
             return
         self.frame, self.paused_at, self.paused, self.note = frame, time.monotonic(), True, None

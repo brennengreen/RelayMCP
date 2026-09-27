@@ -53,6 +53,9 @@ KINDS = {
                '-> fraction. aim(x, y, within=24, timeout=3, until=None) turns the right stick until what is at (x, y) '
                'sits at the screen center (the crosshair), keeping the held left stick and buttons (walk while '
                'aiming); until = keep steering until fn() is truthy -> {"on_target", "error_px", "match"}. '
+               't = track(x, y, size=120): follow what is at (x, y) yourself: t.find() -> (x, y, score) in the '
+               'latest frame. shift(a, b) -> (dx, dy, peak): how far the view moved between two frames of the same '
+               'region (phase correlation; crop away the HUD), e.g. to calibrate camera turns. '
                'guard(fn, "hurt"): checked during every wait, stops the program when fn() is truthy. log(msg, **data) '
                '-> an event; result = {...} is returned. Also W, H, CX, CY, np, math. Everything held is released '
                'when it ends; a stop request, max_s or a real controller moving ends it.',
@@ -119,6 +122,24 @@ def match_template(img, tmpl) -> tuple[int, int, float]:
     ncc = corr / (np.sqrt(np.maximum(var, 1e-6)) * tnorm)
     y, x = divmod(int(np.argmax(ncc)), ncc.shape[1])
     return x, y, float(ncc[y, x])
+
+
+def phase_shift(a, b, k: int = 4) -> tuple[int, int, float]:
+    """How far the picture moved from frame a to frame b (same size), in screen px, by phase correlation at 1/k scale:
+    (dx, dy, peak); a peak near 0 means no clear answer. Static overlays (a HUD) pull toward (0, 0): crop them away."""
+    np = _np()
+    ga, gb = gray_small(a, k), gray_small(b, k)
+    if ga.shape != gb.shape:
+        raise ValueError("shift needs two frames of the same size")
+    win = np.outer(np.hanning(ga.shape[0]), np.hanning(ga.shape[1]))
+    fa, fb = np.fft.fft2((ga - ga.mean()) * win), np.fft.fft2((gb - gb.mean()) * win)
+    cross = fb * np.conj(fa)
+    r = np.fft.ifft2(cross / (np.abs(cross) + 1e-6)).real
+    y, x = np.unravel_index(int(np.argmax(r)), r.shape)
+    h, w = r.shape
+    x = x - w if x > w // 2 else x
+    y = y - h if y > h // 2 else y
+    return int(x * k), int(y * k), round(float(r.max()), 3)
 
 
 def matches(when: dict, frame, previous) -> tuple[bool, dict]:
@@ -703,7 +724,8 @@ class Program:
         import math
         return {"pad": self.pad, "press": self.press, "seq": self.seq, "release": self.release, "wait": self.wait,
                 "until": self.until, "elapsed": self.elapsed, "frame": self.frame, "diff": difference,
-                "text": self.text, "sees": self.sees, "color": self.color, "aim": self.aim, "guard": self.guard,
+                "text": self.text, "sees": self.sees, "color": self.color, "aim": self.aim, "track": self.track,
+                "shift": phase_shift, "guard": self.guard,
                 "log": self.log, "W": self.w, "H": self.h, "CX": self.w // 2, "CY": self.h // 2, "np": _np(),
                 "math": math, "time": time}
 
@@ -814,6 +836,14 @@ class Program:
 
     def color(self, rgb, region=None, tol: int = 40) -> float:
         return float(color_mask(self.frame(region), rgb, tol).mean())
+
+    def track(self, x: float, y: float, size: int = 120):
+        program, aimer = self, Aimer(self.frame(), (x, y), size)
+
+        class Tracker:
+            def find(self):
+                return aimer.find(program.frame())
+        return Tracker()
 
     def aim(self, x: float, y: float, within: float = 24, timeout: float = 3.0, until: Callable | None = None,
             size: int = 120, gain: float = 0.8, min_deflection: float = 0.22, full_deflection_px: float = 500,
