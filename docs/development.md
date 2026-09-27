@@ -65,6 +65,8 @@ relaymcp bench             # latency (ping, status, screenshot, SSH) and tokens 
 ```
 
 `relaymcp bench` saves each run under `~/.relaymcp/state/bench/` and prints the change since the previous run.
+`python scripts/validate_device.py` checks every newer tool on the handheld without sending input (run it after
+`scripts/rollout.sh`).
 `python scripts/analyze_session.py ~/.copilot/session-state/<id>/events.jsonl [--since HH:MM --until HH:MM]` splits a
 Copilot session's time into model thinking and device calls, counts screenshots and premium requests, and reads
 Copilot's local session store for every model call's time to first token against the context size.
