@@ -1,0 +1,79 @@
+[project]
+name = "relaymcp"
+dynamic = ["version"]
+description = "Remote agentic control for handheld PCs: MCP tooling for remote control, computer use, voice and automation on ROG Ally-class devices from macOS, Linux or Windows."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Brennen Green" }]
+requires-python = ">=3.9"
+keywords = ["mcp", "model-context-protocol", "rog-ally", "handheld", "computer-use", "copilot", "ai-agent", "windows"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Hardware",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# The controlling computer needs nothing beyond the standard library (and OpenSSH).
+dependencies = []
+
+[project.optional-dependencies]
+# The handheld's runtime (Windows, Python 3.12). You don't install this yourself: `relaymcp kit` packages the code
+# and the handheld's setup installs it with uv.
+device = [
+    "mcp>=1.12,<2",
+    "anyio>=4",
+    "vgamepad>=0.1.0",
+    "soundcard>=0.4.3",
+    "numpy>=1.26",
+    "comtypes>=1.4",
+    "pycaw>=20240210",
+    "psutil>=5.9",
+    "faster-whisper>=1.1",
+    "kokoro-onnx>=0.4,<0.7",
+]
+dev = ["pytest>=7", "ruff>=0.6"]
+
+[project.scripts]
+relaymcp = "relaymcp.host.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/brennengreen/RelayMCP"
+Documentation = "https://github.com/brennengreen/RelayMCP/tree/main/docs"
+Issues = "https://github.com/brennengreen/RelayMCP/issues"
+Changelog = "https://github.com/brennengreen/RelayMCP/blob/main/CHANGELOG.md"
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/relaymcp/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/relaymcp"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "docs", "assets", "README.md", "LICENSE", "CHANGELOG.md"]
+
+[tool.ruff]
+line-length = 125
+target-version = "py39"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]
+ignore = ["E501", "B008", "B905"]
+
+[tool.ruff.lint.per-file-ignores]
+# COM must be configured (sys.coinit_flags, soundcard) before anything else imports comtypes.
+"src/relaymcp/device/server.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

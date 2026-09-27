@@ -1,0 +1,67 @@
+"""Regenerate docs/tools.md from a running RelayMCP hardware server (and the Windows-MCP server) via the tunnel.
+
+    python scripts/gen_tools_doc.py            # uses the ports from ~/.relaymcp/config.json
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from relaymcp.host import config  # noqa: E402
+
+OUT = Path(__file__).resolve().parents[1] / "docs" / "tools.md"
+
+
+def tools(url: str) -> list[dict]:
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).encode()
+    req = urllib.request.Request(url, body, {"Content-Type": "application/json",
+                                            "Accept": "application/json, text/event-stream"})
+    raw = urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=30).read().decode()
+    msg = next(json.loads(line[6:]) for line in raw.splitlines() if line.startswith("data: "))
+    return msg["result"]["tools"]
+
+
+def params(tool: dict) -> str:
+    props = (tool.get("inputSchema") or {}).get("properties") or {}
+    required = set((tool.get("inputSchema") or {}).get("required") or [])
+    out = []
+    for name, spec in props.items():
+        default = "" if name in required or "default" not in spec else f"={json.dumps(spec['default'])}"
+        out.append(f"`{name}{default}`")
+    return ", ".join(out) or "none"
+
+
+def main() -> None:
+    cfg = config.load()
+    ports = cfg["device"]["ports"]
+    hw = tools(f"http://127.0.0.1:{ports['hardware']}/mcp")
+    screen = tools(f"http://127.0.0.1:{ports['screen']}/mcp")
+    lines = [
+        "# MCP tools",
+        "",
+        "RelayMCP exposes two MCP servers on the controlling computer (names use your device name; `ally` below):",
+        "",
+        f"- **`ally-handheld`** - RelayMCP's hardware server ({len(hw)} tools, listed below)",
+        f"- **`ally`** - [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) for screen control / computer use "
+        f"({len(screen)} tools: {', '.join('`' + t['name'] + '`' for t in screen)})",
+        "",
+        "_Generated from a live server by `scripts/gen_tools_doc.py`._",
+        "",
+        "## Hardware server (`<device>-handheld`)",
+        "",
+        "| Tool | Parameters | What it does |",
+        "|---|---|---|",
+    ]
+    for t in hw:
+        desc = " ".join((t.get("description") or "").split()).replace("|", "\\|")
+        lines.append(f"| `{t['name']}` | {params(t)} | {desc} |")
+    OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"wrote {OUT} ({len(hw)} hardware tools, {len(screen)} screen tools)")
+
+
+if __name__ == "__main__":
+    main()

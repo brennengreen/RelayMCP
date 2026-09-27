@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uvx ruff check src tests scripts
+      - name: Parse the setup script template (PowerShell)
+        shell: pwsh
+        run: |
+          $errs = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/src/relaymcp/device/setup/Relay-Setup.ps1", [ref]$null, [ref]$errs)
+          if ($errs) { $errs | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, python: "3.9"}
+          - {os: ubuntu-latest, python: "3.12"}
+          - {os: macos-latest, python: "3.9"}     # macOS's own /usr/bin/python3 is 3.9
+          - {os: windows-latest, python: "3.12"}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv venv --python ${{ matrix.python }}
+      - run: uv pip install -e ".[dev]"
+      - run: uv run --no-sync pytest
+      - run: uv run --no-sync relaymcp --help
+
+  windows-kit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv venv --python 3.12
+      - run: uv pip install -e .
+      - name: Build a real kit
+        run: uv run --no-sync python scripts/ci_kit_smoke.py "$env:RUNNER_TEMP\kit"
+      - name: Parse the rendered Relay-Setup.ps1 with Windows PowerShell 5.1 (the handheld's shell)
+        shell: powershell
+        run: |
+          $errs = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$env:RUNNER_TEMP\kit\Relay-Setup.ps1", [ref]$null, [ref]$errs)
+          if ($errs) { $errs | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }
+          $text = Get-Content "$env:RUNNER_TEMP\kit\Relay-Setup.ps1" -Raw
+          if ($text -notmatch "runner\u2019s PC" -and $text -notmatch 'runner.s PC') { throw 'host label lost in encoding' }
+          'parsed OK'
+      - name: Install the device runtime from the kit and build its MCP server
+        run: |
+          Expand-Archive "$env:RUNNER_TEMP\kit\relaymcp-device.zip" "$env:RUNNER_TEMP\device"
+          uv venv --python 3.12 "$env:RUNNER_TEMP\devenv"
+          uv pip install --python "$env:RUNNER_TEMP\devenv\Scripts\python.exe" "$env:RUNNER_TEMP\device"
+          & "$env:RUNNER_TEMP\devenv\Scripts\python.exe" scripts/ci_device_smoke.py
