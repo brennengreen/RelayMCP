@@ -24,10 +24,18 @@ you ▸ copilot -p "Open Minecraft on my Ally, and once it's on the title screen
 
 - 🖥️ **Computer use.** Screenshots, UI-tree snapshots, clicks, typing, app launching, PowerShell, files and the
   registry, via [Windows-MCP](https://github.com/CursorTouch/Windows-MCP).
-- 🎮 **Handheld hardware** ([35 tools](docs/tools.md)):
-  - a virtual Xbox controller (games see it), plus reading the real one and rumble
+- 🎮 **Handheld hardware** ([43 tools](docs/tools.md)):
+  - a virtual Xbox controller (games see it) with millisecond-accurate sequences, plus reading the real one and rumble
   - real multi-touch (tap, swipe, pinch), scan-code keys that work in games, mouse-look
   - speakers, microphone, system-audio capture, brightness, resolution/refresh rate, power mode, battery and CPU load
+- ⚡ **Built for agents that are fast and frugal:**
+  - `observe` reads the screen as text with tap points (~150 tokens), and `screenshot` returns a small JPEG in
+    ~70 ms (~730 tokens, a third of a full-size PNG)
+  - `act` does a whole sub-goal in one call ("focus the game, tap *Play*, wait for *Servers*")
+  - `behavior` runs reflex loops on the handheld itself: react to the screen in ~35 ms, track a target, or walk a
+    menu to an item by its text, with no model round trips
+  - `proc` talks to long-running consoles (a game server), and `powershell` keeps a warm session (~50 ms per call)
+  - input results say which window really had focus, and focus stolen by pop-ups is put back
 - 🗣️ **Voice prompts.** Hold **View + Menu** (or tap *Ask Copilot*) and speak. The handheld transcribes locally
   (Whisper), your agent does the work, and the reply is spoken in a natural neural voice (Kokoro, also local).
 - 🏠 **Home-only by design.** Everything switches on only on your home network, recognized by your router's hardware
