@@ -282,6 +282,14 @@ def test_calibration_identifies_an_unknown_plant():
     ov = control.Overlay.from_json(prof["overlay"])
     assert ov.mask[222:262, 380:470].mean() > 0.9
     assert abs(sim.pitch) < 2.0, sim.pitch  # left looking level
+    # open loop measured (the simulator's first-order lag turns exactly rate x time held)
+    ol = look.get("open_loop") or {}
+    assert set(ol) == {"yaw", "pitch"}, (ol, [e for e in events if e[0] == "open loop"])
+    for axis in ol.values():  # (the scale also corrects the curve's interpolation at the deflection used)
+        assert 0.85 <= axis["scale"] <= 1.15 and abs(axis["lag_s"]) < 0.04, ol
+    y0, p0 = sim.turned, sim.pitch
+    control.Camera(io, prof).turn_open(yaw=50.0, pitch=-20.0)
+    assert abs((sim.turned - y0) - 50.0) < 1.5 and abs((sim.pitch - p0) + 20.0) < 1.5, (sim.turned - y0, sim.pitch - p0)
 
 
 def test_profiles_are_stored_per_app(tmp_path):
@@ -569,7 +577,8 @@ def test_a_stalled_picture_away_from_a_limit_is_not_a_limit():
 def test_open_loop_turns_land_from_the_curve_alone():
     sim = CameraSim(deadzone=0.3, expo=2.0, y_gain=0.67, hud=False)
     prof = true_profile(sim)
-    prof["look"]["coast_s"] = prof["look"]["accel_s"]  # the simulator's lag is symmetric: coasting gives back the ramp
+    # the simulator's first-order lag gives the whole ramp back when coasting: no net lag
+    prof["look"]["coast_s"] = sim.latency_s + sim.accel_s / 2
     cam = control.Camera(io_for(sim), prof)
     for yaw, pitch in ((40.0, 0.0), (-25.0, 0.0), (0.0, 30.0), (12.0, -18.0)):
         y0, p0 = sim.turned, sim.pitch
@@ -603,3 +612,42 @@ def test_pushing_away_from_a_pitch_limit_is_never_the_limit():
     t0[0] = time.perf_counter()
     out = cam.turn(pitch=50)
     assert "pitch_limit" not in out and abs(sim.pitch + 40) < 2.0, (out, sim.pitch)
+
+
+def test_open_loop_turns_use_the_measured_gain_and_lag():
+    """Minecraft on the Ally: the steady-rate gain for pitch was measured 4.5% low, and the lag the step response
+    implied was 42 ms off; the numbers calibration's open-loop check measures correct both."""
+    sim = CameraSim(deadzone=0.3, expo=2.0, y_gain=0.67, hud=False)
+    prof = true_profile(sim)
+    prof["look"]["y_gain"] = 0.64
+    prof["look"]["coast_s"] = sim.latency_s + 0.1  # implies a lag of 0.1 - accel/2 = 0.04 s; the true one is 0
+    prof["look"]["open_loop"] = {"yaw": {"scale": 1.0, "lag_s": 0.0}, "pitch": {"scale": round(0.67 / 0.64, 4),
+                                                                              "lag_s": 0.0}}
+    cam = control.Camera(io_for(sim), prof)
+    for yaw, pitch in ((35.0, 0.0), (0.0, 30.0), (-8.0, -12.0)):
+        y0, p0 = sim.turned, sim.pitch
+        out = cam.turn_open(yaw=yaw, pitch=pitch)
+        assert abs((sim.turned - y0) - yaw) < 1.0 and abs((sim.pitch - p0) - pitch) < 1.0, (
+            yaw, pitch, sim.turned - y0, sim.pitch - p0, out)
+
+
+def test_the_open_loop_is_re_measured_on_a_saved_profile():
+    """Minecraft-like: a radial stick, pitch clamped at +-90; the saved profile's pitch gain is 4.5% low and its
+    lag is off. Re-measuring from the bottom clamp fixes both without a whole calibration."""
+    sim = CameraSim(deadzone=0.4, max_rate=150.0, expo=1.0, y_gain=0.67, latency_s=0.06, accel_s=0.03, radial=True,
+                    limit=90.0, pitch=-30.0, hud=False)
+    prof = true_profile(sim)
+    prof["look"]["y_gain"] = 0.64
+    prof["look"]["coast_s"] = sim.latency_s + 0.06
+    io = io_for(sim)
+    prof = control.measure_open_loop(io, prof)
+    ol = prof["look"]["open_loop"]
+    assert ol["pitch"]["scale"] == pytest.approx(0.67 / 0.64, abs=0.03) and abs(ol["pitch"]["lag_s"]) < 0.03, ol
+    assert ol["yaw"]["scale"] == pytest.approx(1.0, abs=0.03) and abs(ol["yaw"]["lag_s"]) < 0.03, ol
+    assert abs(sim.pitch) < 3.0, sim.pitch  # left about level
+    cam = control.Camera(io, prof)
+    for yaw, pitch in ((40.0, 0.0), (0.0, -25.0), (0.0, 25.0)):
+        y0, p0 = sim.turned, sim.pitch
+        cam.turn_open(yaw=yaw, pitch=pitch)
+        assert abs((sim.turned - y0) - yaw) < 1.0 and abs((sim.pitch - p0) - pitch) < 1.0, (
+            yaw, pitch, sim.turned - y0, sim.pitch - p0)

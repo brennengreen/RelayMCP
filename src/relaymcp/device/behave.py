@@ -88,7 +88,8 @@ KINDS = {
                  'right stick\'s deadzone and response curve, degrees per pixel (turns all the way round), focal '
                  'length, vertical gain, pitch limit and whether the stick is radial. Saved on the handheld; programs then get '
                  'turn/level/look_at/'
-                 'scan. params: points (deflections to measure), full_turn (true), pitch (true).',
+                 'scan. params: points (deflections to measure), full_turn (true), pitch (true), only ("open_loop": '
+                 're-time how turn_open turns on the saved profile, ~10 s, from the bottom pitch limit).',
     "guard": 'a standing safety check, separate from programs (they come and go, it stays): setup (code run once: '
              'regions, baselines, e.g. RED0 = color([190,30,30], HEARTS)); when (a Python expression over frame, '
              'diff, color, sees, text, elapsed: "color([190,30,30], HEARTS) < 0.5 * RED0"); every_ms (100); then '
@@ -743,6 +744,15 @@ class Runtime:
         io = control.PlantIO(frame=lambda: self._frame(run, None)[0],
                              stick=lambda x, y: self.out.stick("right_stick", x, y), sleep=sleep,
                              log=lambda msg, **data: run.emit(msg, **data))
+        if p.get("only") == "open_loop":
+            profile = self.profiles.load(app)
+            if not profile:
+                raise RuntimeError(f"no camera profile for {app} yet: calibrate it first")
+            profile = control.measure_open_loop(io, profile, pitch=bool(p.get("pitch", True)))
+            self.profiles.save(app, profile)
+            run.stats["profile"] = control.summary(profile)
+            run.reason = f"measured the open loop for {app}"
+            return
         points = tuple(p.get("points") or (0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.85, 1.0))
         profile = control.calibrate(io, points=points, hold_s=float(p.get("hold_s", 0.5)),
                                     full_turn=bool(p.get("full_turn", True)), pitch=bool(p.get("pitch", True)), app=app)

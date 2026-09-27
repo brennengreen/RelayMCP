@@ -112,9 +112,11 @@ unknown *plant* with a camera: nothing below is specific to one game.
    and learns which pixels are HUD, the focal length, the response curve and deadzone (slow to fast), the
    input-to-picture latency, the ramp up and how far it coasts after letting go, pixels per degree (it turns all
    the way round and recognizes where it started, solving the focal length that makes that turn exactly 360
-   degrees; a turn that lost track or missed its start is redone slower), the vertical gain, and whether the stick
-   is radial (the deadzone and curve apply to its length, as in Minecraft) or per-axis. It never drives the
-   camera faster than it
+   degrees; a turn that lost track or missed its start is redone slower), the vertical gain, whether the stick
+   is radial (the deadzone and curve apply to its length, as in Minecraft) or per-axis, and finally what an
+   open-loop turn really does per axis (a deflection held for two lengths of time: the difference gives the true
+   rate, the intercept the lag; steady rates measured over short stretches were 4.5% off for Minecraft's pitch). It
+   never drives the camera faster than it
    can follow: past about 8% of the picture per captured frame, image matching aliases (a big miss reads as a
    small one, consistently: measured +44% at 41 degrees a frame with every frame "tracked"), so the curve, and
    control, stop below that, judged at the frame rate of the moment (a busy handheld captures fewer frames).

@@ -614,7 +614,7 @@ def summary(profile: dict) -> dict:
             "latency_ms": round(1000 * look.get("latency_s", 0)), "accel_ms": round(1000 * look.get("accel_s", 0)),
             "coast_ms": round(1000 * look.get("coast_s", 0)),
             "y_gain": look.get("y_gain"), "overlay": profile.get("overlay_fraction"),
-            "curve": look.get("curve")}
+            "open_loop": look.get("open_loop"), "curve": look.get("curve")}
 
 
 # ---------------------------------------------------------------------------------------------------- plant I/O
@@ -977,7 +977,80 @@ def calibrate(io: PlantIO, points=(0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.8
         io.log("stick", kind=look["stick"], diagonal_px_s=round(vx), radial_px_s=round(radial_px),
                axial_px_s=round(axial_px))
         Camera(io, profile).level()
+    if ppd:
+        # 7. Open loop, measured: what turn_open does (a deflection held for a time), timed twice per axis, the
+        #    difference giving the true rate and the intercept the lag. The response curve and y_gain are steady
+        #    rates from short stretches; on Minecraft open-loop yaw came up 0.042 s x rate short (the lag) and pitch
+        #    4.5% long (the gain).
+        found = _open_loop_check(io, Camera(io, profile), pitch=pitch)
+        if found:
+            look["open_loop"] = found
     return profile
+
+
+def measure_open_loop(io: PlantIO, profile: dict, pitch: bool = True) -> dict:
+    """Calibration's step 7 alone, on a calibrated profile (a few seconds): level from the bottom pitch limit (an exact
+    reference; a tilt estimate is unreliable on a repeating texture), then time the open loop. Returns the profile
+    with look.open_loop updated."""
+    cam = Camera(io, profile)
+    if pitch:
+        _drive_to_limit(io, cam.overlay, -math.copysign(cam.max_d, cam.y_gain), cam.curve.max_rate * cam.ppd)
+        io.sleep(cam.latency + cam.coast)
+        cam.turn_open(pitch=-float(profile.get("pitch_bottom_deg", -90.0)))
+    found = _open_loop_check(io, cam, pitch=pitch)
+    if not found:
+        raise RuntimeError("couldn't time the open loop (the picture couldn't be followed through the holds)")
+    look = dict(profile.get("look") or {})
+    look["open_loop"] = {**(look.get("open_loop") or {}), **found}
+    return {**profile, "look": look}
+
+
+def _open_loop_check(io: PlantIO, cam: "Camera", pitch: bool = True, t1: float = 0.3, t2: float = 0.9) -> dict:
+    """{axis: {scale, lag_s}}: holds of about t1 and t2 seconds each way at the deflection turn_open uses for long
+    turns, followed on the picture to a stop. Pitch goes down first from level (the ground has texture to follow) and
+    stays within 40 degrees of it. An axis whose numbers don't make sense is left out (turn_open's defaults hold)."""
+    found: dict[str, dict] = {}
+    for axis, name in ((0, "yaw"), (1, "pitch")):
+        if axis == 1 and not pitch:
+            continue
+        gain = abs(cam.y_gain) if axis == 1 else 1.0
+        d = min(abs(cam.curve.deflection(0.6 * cam.curve.max_rate)), cam.max_d)
+        model = abs(cam.curve.rate(d)) * gain  # deg/s
+        if model <= 0:
+            continue
+        h_short, h_long = t1, t2
+        if axis == 1:  # within 40 degrees of level
+            h_long = min(t2, 40.0 / model)
+            h_short = min(t1, h_long / 3)
+        pts, net = [], 0.0
+        for secs in (h_short, h_long):
+            for sign in (-1, 1):
+                odo = cam.odometry()
+                x = sign * d
+                sx, sy = (x, 0.0) if axis == 0 else (0.0, x * (1 if cam.y_gain > 0 else -1))
+                t0 = time.perf_counter()
+                io.stick(sx, sy)
+                _trace(io, odo, secs, axis=axis)
+                io.stick(0.0, 0.0)
+                held = time.perf_counter() - t0
+                cam._settle(odo)
+                turned = (-odo.x if axis == 0 else odo.y) / cam.ppd
+                net += turned
+                pts.append((held, abs(turned)))
+        if axis == 1 and abs(net) > 0.5:
+            cam.turn_open(pitch=-net)  # back where it started (the pairs cancel only as well as the holds were timed)
+        (a1, r1), (b1, s1), (a2, r2), (b2, s2) = pts
+        h1, h2, g1, g2 = (a1 + b1) / 2, (a2 + b2) / 2, (r1 + s1) / 2, (r2 + s2) / 2
+        if h2 - h1 < 0.12 or g2 <= g1:
+            io.log("open loop", axis=name, result="no clear difference between the holds")
+            continue
+        rate = (g2 - g1) / (h2 - h1)
+        scale, lag = rate / model, g1 / rate - h1
+        io.log("open loop", axis=name, deflection=round(d, 3), scale=round(scale, 3), lag_ms=round(lag * 1000),
+               held_ms=[round(h1 * 1000), round(h2 * 1000)], turned=[round(g1, 1), round(g2, 1)])
+        if 0.75 <= scale <= 1.35 and -0.15 <= lag <= 0.25:
+            found[name] = {"scale": round(scale, 3), "lag_s": round(lag, 3)}
+    return found
 
 
 # ---------------------------------------------------------------------------------------------------- control
@@ -1000,6 +1073,14 @@ class Camera:
         self.max_d = float(look.get("max_deflection", 1.0))  # faster than this, odometry can't follow
         # how far (in seconds of the current speed) it keeps turning after the stick lets go
         self.coast = float(look.get("coast_s") or (self.latency + self.accel / 3))
+        # open loop, per axis: rotation = rate x scale x (hold + lag). By default the lag is what the step response
+        # implies: the turn starts `latency` late and gives up about half the ramp, then coasts on after letting go
+        # (coast includes the latency). Calibration measures both directly (step 7).
+        lag = max(-0.1, min(0.2, self.coast - self.latency - self.accel / 2))
+        ol = look.get("open_loop") or {}
+        self.open = {axis: (float((ol.get(name) or {}).get("scale", 1.0)) or 1.0,
+                            float((ol.get(name) or {}).get("lag_s", lag)))
+                     for axis, name in ((0, "yaw"), (1, "pitch"))}
         self._tilt: float | None = None  # the last tilt measured (degrees)
         ov = profile.get("overlay")
         self.overlay = Overlay.from_json(ov) if ov else None
@@ -1147,19 +1228,19 @@ class Camera:
 
     def turn_open(self, yaw: float = 0.0, pitch: float = 0.0) -> dict:
         """Turn by yaw and pitch degrees without watching the picture: one axis at a time, a steady deflection held
-        for a time worked out from the calibrated response curve (rotation = rate x (hold + coast - ramp), within
-        ~0.3 degrees on Minecraft over 64 degrees). For scenes the picture can't be followed in (a repeating texture,
-        a static overlay), and from exact references (a pitch limit, a compass)."""
+        for a time worked out from the calibrated response curve and open-loop model (rotation = rate x scale x
+        (hold + lag), per axis; measured on Minecraft to ~0.5 degrees). For scenes the picture can't be followed in
+        (a repeating texture, a static overlay), and from exact references (a pitch limit, a compass)."""
         io = self.io
         out: dict[str, Any] = {"yaw": 0.0, "pitch": 0.0, "open_loop": True, "held_ms": []}
-        lag = max(-0.1, min(0.2, self.coast - self.accel))
         for axis, want in ((1, pitch), (0, yaw)):
             if abs(want) < 0.05:
                 continue
+            scale, lag = self.open[axis]
             gain = abs(self.y_gain) if axis == 1 else 1.0
-            rate = max(1.5 * self.curve.min_rate, min(0.6 * self.curve.max_rate, abs(want) / 0.4 / gain))
+            rate = max(1.5 * self.curve.min_rate, min(0.6 * self.curve.max_rate, abs(want) / 0.4 / gain / scale))
             d = abs(self.curve.deflection(rate))
-            real = abs(self.curve.rate(d)) * gain  # what that deflection turns this axis at (deg/s)
+            real = abs(self.curve.rate(d)) * gain * scale  # what that deflection turns this axis at (deg/s)
             if real <= 0:
                 continue
             hold = max(0.03, abs(want) / real - lag)

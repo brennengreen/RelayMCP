@@ -27,7 +27,8 @@ handheld itself.
   exact and a few tokens instead of reading pixels.
 - **`proc` tool: long-running consoles over MCP** (e.g. a Bedrock Dedicated Server): start one, send it a line and
   get its reply, read only new output, or wait until a line matches, all without screenshots. Updates wait while one
-  runs.
+  runs. Its state file is replaced whole, one save at a time (a process exiting while it was being stopped saved
+  twice at once, and on Windows the writes interleaved into unreadable JSON).
 - **`powershell` tool on the hardware server:** a persistent session (variables and functions carry over, ~50 ms per
   call instead of 1.5–2.5 s), DPI-aware so Win32 coordinates match screenshots, and errors as plain `ERROR:` lines
   instead of CLIXML.
@@ -92,8 +93,15 @@ handheld itself.
   stops and says `tracking_lost` instead of spinning for its whole timeout (on the Ally a 27-degree turn went 32
   degrees the other way). A pitch limit only counts when pushing into it (starting up from Minecraft's -90 clamp
   with a sluggish first moment was taken for "at the limit"). `turn_open(yaw, pitch)` turns from the calibrated curve
-  alone, one axis at a time (rotation = rate x (hold + coast - ramp): within 0.3 degrees of the flat world's horizon
-  over 64 degrees), for scenes the picture can't be followed in and from exact references.
+  alone, one axis at a time, for scenes the picture can't be followed in and from exact references.
+- **Open-loop turns measured, not assumed:** calibration now times what `turn_open` does (a deflection held for two
+  lengths of time per axis, followed on the picture) and stores each axis' true rate and lag (`look.open_loop`);
+  `behavior` kind `calibrate` with `only: "open_loop"` re-times a saved profile in about 10 s. Checked against
+  Minecraft's exact references (its ground grid, the flat world's horizon), open-loop yaw had come up 0.042 s x rate
+  short (the old lag, coast - ramp, left out that the turn starts late too: now coast - latency - ramp/2) and pitch
+  4.5% long (the vertical gain, measured as a steady rate over a short stretch), so a 78-degree aim from the -90
+  clamp overshot 2.5 degrees and a 3x3 house's corners missed their blocks. An earlier check had agreed only because
+  the two errors cancel near a 0.9 s hold.
 - **Programs remember where the camera looks:** the next program's camera starts knowing the pitch the last one
   left it at (turn-based play runs one program per call; yaws seen straight down need it), not after you take over;
   and with the pitch known, a stalled picture only counts as a pitch limit near straight up or down (right after a
