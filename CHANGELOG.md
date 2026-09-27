@@ -46,6 +46,9 @@ Input reliability, from real use driving Minecraft Bedrock on a ROG Ally.
   target), `press_until` (repeat an input until text or a color appears), `watch` (report changes) and `navigate`
   (move through a menu with the d-pad or arrow keys to an item by its text, reading the highlight, then select it). Each has a
   time limit, releases all input when it ends, and stops as soon as a real controller moves.
+- **`state` inbox:** programs on the handheld (a game server script, an add-on) POST JSON to
+  `127.0.0.1:<port>/state/<topic>`; agents read the latest state or wait for a matching event with the `state` tool,
+  exact and a few tokens instead of reading pixels.
 - **`proc` tool: long-running consoles over MCP** (e.g. a Bedrock Dedicated Server): start one, send it a line and
   get its reply, read only new output, or wait until a line matches, all without screenshots. Updates wait while one
   runs.

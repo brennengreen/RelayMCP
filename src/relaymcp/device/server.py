@@ -36,8 +36,8 @@ from mcp.types import ImageContent, TextContent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import (__version__, audio, behave, capture, focus, gamepad, lean, ocr, procs, pshost, speech, system, tts,
-               updates, voice, win_input)
+from . import (__version__, audio, behave, capture, focus, gamepad, inbox, lean, ocr, procs, pshost, speech, system,
+               tts, updates, voice, win_input)
 from .lean import compact, lean_result, lean_schema
 from .paths import USER_DIR, VOICE_HEADER, device_settings
 
@@ -598,6 +598,28 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
         return await _run(INPUT, system.keep_awake, minutes)
 
     # ------------------------------------------------------------------------------------------ voice prompts
+    @mcp.custom_route("/state/{topic}", methods=["POST"])
+    async def state_post(request: Request) -> JSONResponse:
+        if not inbox.allowed(request.headers):
+            return JSONResponse({"error": f"forbidden (send the header {inbox.STATE_HEADER}: 1 to 127.0.0.1)"},
+                                status_code=403)
+        body = await request.body()
+        if len(body) > inbox.MAX_BODY:
+            return JSONResponse({"error": "body over 64 KB"}, status_code=413)
+        try:
+            n = inbox.INBOX.post(request.path_params["topic"], json.loads(body or b"null"))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse({"ok": True, "n": n})
+
+    @tool()
+    async def state(action: str = "read", topic: str = "", since: int = 0, match: str = "", timeout: float = 10.0,
+                    max_items: int = 20) -> dict:
+        """Structured state that programs on the handheld (a game server script, an add-on) POST to
+        127.0.0.1:<this port>/state/<topic> (header X-Relay-State: 1). action: read (latest per topic + events since
+        `since`) | wait (next event on topic containing match, or key=value) | topics."""
+        return await _run(PROC, inbox.run_tool, inbox.INBOX, action, topic, since, match, timeout, max_items)
+
     @mcp.custom_route("/voice/trigger", methods=["POST"])
     async def voice_trigger(request: Request) -> JSONResponse:
         # Only local programs may press the button: the custom header can't be sent cross-site without a CORS
