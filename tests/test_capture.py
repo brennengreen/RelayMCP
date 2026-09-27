@@ -177,3 +177,17 @@ def test_merge_rows_joins_split_phrases_but_not_separate_buttons():
     assert merged[1]["box"] == [388, 352, 634, 389]
     assert ocr.find(merged, "Button pressed")["text"] == "Button pressed"
     assert ocr.merge_rows([]) == []
+
+
+def test_grab_array_never_returns_a_stale_region_when_another_caller_took_the_new_frame(monkeypatch):
+    np = pytest.importorskip("numpy")
+    g = capture.Grabber()
+    first = capture.Frame(np.zeros((10, 10, 4), np.uint8), 10, 10, 0, 0, "test", 1.0, True)
+    second = capture.Frame(np.full((10, 10, 4), 200, np.uint8), 10, 10, 0, 0, "test", 2.0, True)
+    frames = [first, second, capture.Frame(second.data, 10, 10, 0, 0, "test", 3.0, False)]
+    monkeypatch.setattr(g, "grab", lambda: frames.pop(0))
+    a, _ = g.grab_array([0, 0, 4, 4])
+    assert a.max() == 0
+    g.grab()  # an OCR call takes the new frame (200s) first...
+    b, _ = g.grab_array([0, 0, 4, 4])  # ...so this grab reports "no change", but the image did change
+    assert b.max() == 200

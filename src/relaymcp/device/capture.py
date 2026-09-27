@@ -189,8 +189,9 @@ class Grabber:
         import numpy as np
         frame = self.grab()
         key = tuple(region) if region else None
-        if not frame.new and key in self._arrays:
-            return self._arrays[key]
+        cached = self._arrays.get(key)
+        if cached is not None and cached[2] is frame.data:  # the very same screen image (another caller may have
+            return cached[0], cached[1]                     # taken the newer frame first, so don't trust frame.new)
         arr = frame.data if hasattr(frame.data, "shape") else np.frombuffer(frame.data, np.uint8)
         arr = arr.reshape(frame.height, frame.width, 4)
         if key:
@@ -199,7 +200,7 @@ class Grabber:
         captured = time.perf_counter() - (time.monotonic() - frame.at)
         if len(self._arrays) > 16:
             self._arrays.clear()
-        self._arrays[key] = (arr, captured)
+        self._arrays[key] = (arr, captured, frame.data)
         return arr, captured
 
     # --- what the tool returns --------------------------------------------------------------------------------------
