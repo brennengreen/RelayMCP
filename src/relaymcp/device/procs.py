@@ -77,15 +77,17 @@ class Session:
         self.proc.stdin.write(data.encode("utf-8"))
         self.proc.stdin.flush()
 
-    def after(self, cursor: int, max_lines: int) -> tuple[list[str], int, int]:
-        """(lines after cursor, the cursor after them, lines skipped because they're gone or over max_lines)."""
+    def after(self, cursor: int, max_lines: int, upto: int | None = None) -> tuple[list[str], int, int]:
+        """(lines after cursor (up to line `upto`), the cursor after them, lines skipped because they're gone or over
+        max_lines)."""
         with self.cond:
-            fresh = [(n, t) for n, t in self.lines if n > cursor]
-            first = fresh[0][0] if fresh else self.total + 1
-            gone = max(0, first - cursor - 1) if fresh else max(0, self.total - cursor)
+            last = self.total if upto is None else upto
+            fresh = [(n, t) for n, t in self.lines if cursor < n <= last]
+            first = fresh[0][0] if fresh else last + 1
+            gone = max(0, first - cursor - 1) if fresh else max(0, last - cursor)
             over = max(0, len(fresh) - max_lines)
             fresh = fresh[over:]  # keep the newest
-            return [t for _, t in fresh], self.total, gone + over
+            return [t for _, t in fresh], last, gone + over
 
     def wait_for(self, pattern: str, cursor: int, timeout: float) -> tuple[str | None, int]:
         """(the first line after cursor matching pattern, or None on timeout/exit; its line number or the cursor)."""
@@ -135,7 +137,8 @@ class Session:
     def info(self) -> dict:
         return {"name": self.name, "command": self.command[:160], "running": self.running(),
                 "exit_code": self.proc.poll(), "pid": self.proc.pid, "lines": self.total,
-                "started": time.strftime("%H:%M:%S", time.localtime(self.started))}
+                "started": time.strftime("%H:%M:%S", time.localtime(self.started)),
+                "start_epoch": round(self.started)}  # with the pid, tells a live session from a reused pid
 
 
 def _kill_tree(pid: int) -> None:
@@ -158,7 +161,11 @@ def _kill_tree(pid: int) -> None:
             subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, timeout=15,
                            creationflags=CREATE_NO_WINDOW)
         else:
-            os.killpg(os.getpgid(pid), 9)  # the session's own process group (start_new_session)
+            group = os.getpgid(pid)
+            if group != os.getpgid(0):  # never our own group: that would take this program down with it
+                os.killpg(group, 9)
+            else:
+                os.kill(pid, 9)
     except (OSError, subprocess.TimeoutExpired):
         pass
 
@@ -178,6 +185,10 @@ class Manager:
             self.state_file.write_text(json.dumps({"updated": time.time(), "running": running}), encoding="utf-8")
         except OSError:
             pass
+
+    def reset_state(self) -> None:
+        """At server start: sessions from a previous run are gone (the job ended them), so say so."""
+        self._save()
 
     def get(self, name: str) -> Session:
         s = self.sessions.get(name)
@@ -256,9 +267,11 @@ def run(manager: Manager, action: str, name: str = "", command: str = "", cwd: s
             raise ValueError("wait needs a pattern (a regular expression)")
         start = s.read_to if cursor is None else int(cursor)
         line, n = s.wait_for(pattern, start, min(float(timeout), 300))
-        s.read_to = max(s.read_to, n)
-        return {"matched": line, "line": n if line else None, "cursor": s.total, "running": s.running(),
-                "timed_out": line is None and s.running()}
+        # what arrived while waiting (up to the match), so an error printed meanwhile isn't lost
+        lines, end, skipped = s.after(start, max_lines, upto=n if line else None)
+        s.read_to = max(s.read_to, end)
+        return {"matched": line, "line": n if line else None, "output": lines, "cursor": end, "running": s.running(),
+                "timed_out": line is None and s.running(), "skipped": skipped or None}
     if action == "stop":
         code = s.stop(text, min(float(timeout), 60))
         manager._save()

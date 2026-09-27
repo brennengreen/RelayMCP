@@ -88,6 +88,7 @@ class WarmRuntime:
         self._session = None
         self._session_id: str | None = None
         self._failed_at = 0.0
+        self._attempted = False
         self._start_lock = threading.Lock()
 
     # --- plumbing: an event loop on its own thread, shared by every prompt -----------------------------------------
@@ -143,15 +144,19 @@ class WarmRuntime:
 
     def ask(self, cfg: dict, exe: str, text: str, sid: str, fresh: bool, other_servers: list[str],
             timeout: float) -> tuple[str, list[str]]:
-        """(reply, tools used). Raises on any failure (the caller falls back to `copilot -p`)."""
+        """(reply, tools used). Raises SentError once the prompt may have reached the model (the caller must not run
+        it again), and anything else only if it certainly didn't (the caller falls back to `copilot -p`)."""
+        self._attempted = False
         try:
             return self._run(self._ask(cfg, exe, text, sid, fresh, other_servers, timeout), timeout + 30)
-        except Exception:
+        except Exception as e:
             self._failed_at = time.monotonic()
             try:
                 self._run(self._stop_client(), 15)
             except Exception:
                 pass
+            if self._attempted and not isinstance(e, SentError):  # e.g. the outer timeout while it was running
+                raise SentError(str(e) or type(e).__name__) from e
             raise
 
     def stop(self) -> None:
@@ -200,15 +205,15 @@ class WarmRuntime:
             elif isinstance(data, SessionIdleData):
                 done.set()
 
-        unsubscribe, sent = session.on(on_event), False
+        unsubscribe = session.on(on_event)
+        sent = self._attempted = True  # from here on the model may have the prompt, even if send() then fails
         try:
             await session.send(text)
-            sent = True
             try:
                 await asyncio.wait_for(done.wait(), timeout)
             except asyncio.TimeoutError:
                 try:
-                    await session.abort()
+                    await asyncio.wait_for(session.abort(), 10)
                 except Exception:
                     pass
                 raise SentError(f"it took longer than {timeout / 60:g} minutes") from None

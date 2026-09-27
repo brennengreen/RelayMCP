@@ -9,6 +9,7 @@ import re
 import shutil
 import socket
 import subprocess
+import time
 from pathlib import Path
 
 from . import config, devguard
@@ -186,18 +187,42 @@ def master_running(cfg: dict) -> bool:
         return False
 
 
+def control_path(cfg: dict) -> str | None:
+    """Where the shared connection's socket lives (ssh -G expands the ControlPath tokens)."""
+    try:
+        out = subprocess.run([ssh_exe(), "-G", cfg["device"]["name"]], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r"^controlpath (\S+)$", out, re.M)
+    return m.group(1) if m and m.group(1) != "none" else None
+
+
 def start_master(cfg: dict) -> bool:
     """Start the shared connection in its own session, detached from the background service, so restarting the
     service (an update) doesn't cut off the SSH sessions riding on it. It lasts until the handheld goes away."""
     devguard.check("open the real SSH control connection")
     if os.name == "nt":
         return False
+    path = control_path(cfg)
+    if path and os.path.exists(path):  # left over from a master that died without cleaning up
+        try:
+            os.unlink(path)
+        except OSError:
+            return False
     try:
-        return subprocess.run([ssh_exe(), "-o", "ControlMaster=yes", "-o", "ControlPersist=yes", "-o", "BatchMode=yes",
-                               "-N", "-f", cfg["device"]["name"]], capture_output=True, timeout=30,
-                              start_new_session=True, stdin=subprocess.DEVNULL).returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
+        proc = subprocess.Popen([ssh_exe(), "-o", "ControlMaster=yes", "-o", "ControlPersist=no", "-o", "BatchMode=yes",
+                                 "-N", cfg["device"]["name"]], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
         return False
+    for _ in range(50):  # up to ~10 s to connect and start listening
+        if proc.poll() is not None:
+            return False  # it gave up (unreachable, auth failed)
+        if master_running(cfg):
+            return True
+        time.sleep(0.2)
+    proc.kill()  # connected but not sharing: don't leave a stray connection behind
+    return False
 
 
 def ensure_master(cfg: dict) -> bool | None:

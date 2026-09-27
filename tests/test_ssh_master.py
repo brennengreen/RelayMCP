@@ -32,22 +32,60 @@ def test_refresh_only_rewrites_relaymcps_own_file(cfg):
     assert not (config.Path.home() / ".ssh" / "config").exists()
 
 
-def test_master_is_detached_and_close_only_stops_new_sessions(cfg, monkeypatch):
+def test_master_is_detached_confirmed_and_close_only_stops_new_sessions(cfg, monkeypatch, tmp_path):
     from relaymcp.host import sshconf
-    calls = []
+    stale = tmp_path / "cm-stale"
+    stale.write_text("")
+    runs, popens, checks = [], [], iter([False, False, True])
 
     def fake_run(cmd, **kw):
-        calls.append((cmd, kw))
-        return subprocess.CompletedProcess(cmd, 1 if "check" in cmd else 0)
+        runs.append(cmd)
+        if "-G" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"hostname 10.0.0.9\ncontrolpath {stale}\n")
+        if "check" in cmd:
+            return subprocess.CompletedProcess(cmd, 0 if next(checks) else 255)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    class FakeProc:
+        def __init__(self, cmd, **kw):
+            popens.append((cmd, kw))
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            raise AssertionError("must not kill a master that came up")
 
     monkeypatch.setattr(sshconf.subprocess, "run", fake_run)
+    monkeypatch.setattr(sshconf.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(sshconf.time, "sleep", lambda s: None)
     assert sshconf.ensure_master(cfg) is True
-    check, start = calls[0][0], calls[1]
-    assert check[-3:] == ["-O", "check", "ally"]
-    assert "ControlMaster=yes" in start[0] and "ControlPersist=yes" in start[0] and "-f" in start[0]
-    assert start[1]["start_new_session"] is True  # survives the background service restarting
+    assert not stale.exists()  # the dead master's socket was cleared first
+    cmd, kw = popens[0]
+    assert "ControlMaster=yes" in cmd and "-N" in cmd and kw["start_new_session"] is True
     sshconf.close_master(cfg)
-    assert calls[-1][0][-3:] == ["-O", "stop", "ally"]  # not "exit": sessions using it keep running
+    assert runs[-1][-3:] == ["-O", "stop", "ally"]  # not "exit": sessions using it keep running
+
+
+def test_a_master_that_never_listens_is_killed(cfg, monkeypatch):
+    from relaymcp.host import sshconf
+    killed = []
+
+    class FakeProc:
+        def __init__(self, cmd, **kw):
+            pass
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            killed.append(True)
+
+    monkeypatch.setattr(sshconf, "control_path", lambda cfg: None)
+    monkeypatch.setattr(sshconf, "master_running", lambda cfg: False)
+    monkeypatch.setattr(sshconf.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(sshconf.time, "sleep", lambda s: None)
+    assert sshconf.start_master(cfg) is False and killed == [True]
 
 
 def test_dev_mode_never_opens_the_real_connection(cfg, monkeypatch):

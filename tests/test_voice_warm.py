@@ -50,8 +50,11 @@ class FakeSession:
                     h(Ev(data))
         asyncio.get_running_loop().create_task(emit())
 
+    abort_hangs = False
+
     async def abort(self):
-        pass
+        if FakeSession.abort_hangs:
+            await asyncio.sleep(3600)
 
     async def disconnect(self):
         pass
@@ -94,6 +97,7 @@ def sdk(monkeypatch):
     monkeypatch.setitem(sys.modules, "copilot.session_events", events)
     FakeClient.instances.clear()
     FakeSession.fail_send = False
+    FakeSession.abort_hangs = False
     tool = types.SimpleNamespace(name="ally-handheld-handheld_status")
     FakeSession.script = [AssistantMessageData("", [tool]), AssistantMessageData("Your battery is at 90 percent."),
                           SessionIdleData()]
@@ -158,7 +162,7 @@ def test_rejected_settings_are_dropped(sdk, cfg):
 
 def test_failures_before_and_after_sending(sdk, cfg):
     FakeSession.fail_send = True
-    with pytest.raises(ConnectionError):  # never reached the model: safe to retry with copilot -p
+    with pytest.raises(voice_warm.SentError):  # send() failed midway: it may have reached the model, don't re-run
         sdk.ask(cfg, "/bin/copilot", "hi", "sid-1", True, [], 30)
     assert sdk.state() == "failed" and not sdk.usable()
     fresh = voice_warm.WarmRuntime()
@@ -190,3 +194,20 @@ def test_run_prompt_prefers_the_warm_runtime(cfg, monkeypatch):
     monkeypatch.setattr(voice, "copilot_command", lambda *a: pytest.fail("must not re-run a prompt the model had"))
     out = voice.run_prompt(cfg, "set the volume to 40")
     assert not out["ok"] and "overloaded" in out["error"]
+
+
+def test_failures_before_the_prompt_is_sent_can_fall_back(sdk, cfg, monkeypatch):
+    async def broken(*a, **k):
+        raise ConnectionError("runtime didn't start")
+
+    monkeypatch.setattr(sdk, "_ensure_client", broken)
+    with pytest.raises(ConnectionError):  # never reached the model: safe to retry with copilot -p
+        sdk.ask(cfg, "/bin/copilot", "hi", "sid-1", True, [], 30)
+
+
+def test_an_outer_timeout_after_sending_counts_as_sent(sdk, cfg, monkeypatch):
+    FakeSession.script = []  # the model never answers (no idle event)
+    FakeSession.abort_hangs = True
+
+    with pytest.raises(voice_warm.SentError):
+        sdk.ask(cfg, "/bin/copilot", "hi", "sid-1", True, [], 0.3)

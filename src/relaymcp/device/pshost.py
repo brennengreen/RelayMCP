@@ -19,6 +19,7 @@ CREATE_NO_WINDOW = 0x08000000
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")  # terminal control codes some PowerShell versions write
 MAX_SCRIPT = 64 * 1024
 MAX_OUTPUT = 12000
+MAX_LINES = 4000
 
 # Run once when the session starts.
 STARTUP = (
@@ -64,7 +65,8 @@ class PowerShellHost:
         self.proc = subprocess.Popen([self.exe, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
                                       "-OutputFormat", "Text", "-Command", "-"],
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                     creationflags=flags, env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"})
+                                     creationflags=flags, env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
+                                     start_new_session=os.name != "nt")  # its own process group, for stop()
         self.lines = queue.Queue()
         threading.Thread(target=self._pump, args=(self.proc, self.lines), name="pshost", daemon=True).start()
         self.started_at = time.time()
@@ -80,24 +82,30 @@ class PowerShellHost:
         marker = f"<<<RELAYMCP-END {uuid.uuid4().hex}>>>"
         self.proc.stdin.write((call_line(script, marker) + "\n").encode("ascii"))
         self.proc.stdin.flush()
-        out, deadline = [], time.monotonic() + timeout
+        from collections import deque
+        out: deque = deque(maxlen=MAX_LINES)  # a script printing forever keeps only its latest lines
+        deadline = time.monotonic() + timeout
         while True:
+            left = deadline - time.monotonic()
+            if left <= 0:  # checked on every line: a stream of output can't hold the call open
+                raise TimeoutError(f"no result after {timeout:g} s")
             try:
-                line = self.lines.get(timeout=max(0.01, deadline - time.monotonic()))
+                line = self.lines.get(timeout=max(0.01, left))
             except queue.Empty:
-                raise TimeoutError(f"no result after {timeout:g} s") from None
+                continue
             if line is None:
                 raise RuntimeError("the PowerShell session ended")
             if marker in line:
                 before = line.split(marker, 1)[0]
-                return out + [before] if before.strip() else out
+                return list(out) + [before] if before.strip() else list(out)
             out.append(line)
 
     def stop(self) -> None:
         proc, self.proc = self.proc, None
         if proc and proc.poll() is None:
+            from .procs import _kill_tree
+            _kill_tree(proc.pid)  # and anything the script started
             try:
-                proc.kill()
                 proc.wait(timeout=5)
             except Exception:
                 pass

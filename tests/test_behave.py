@@ -61,8 +61,9 @@ class Outputs:
     def stick(self, side, x, y):
         self.w.sticks.append((side, round(x, 2), round(y, 2)))
 
-    def release(self):
+    def release(self, used=()):
         self.w.released += 1
+        self.w.last_used = set(used)
 
 
 @pytest.fixture
@@ -113,8 +114,8 @@ def test_react_on_change_with_cooldown(rt, world):
 
 
 def test_track_moves_the_cursor_onto_a_moving_target(rt, world):
-    rid = rt.start("track", {"color": [255, 0, 0], "tol": 40, "aim": "cursor", "output": "mouse", "gain": 0.7},
-                   max_s=2.5)["id"]
+    rid = rt.start("track", {"color": [255, 0, 0], "tol": 40, "aim": "cursor", "output": "mouse", "gain": 0.7,
+                             "follow": True}, max_s=2.5)["id"]
 
     def move():
         t0 = time.time()
@@ -246,7 +247,7 @@ class MenuOutputs:
     def key(self, keys):
         self.m.press(keys)
 
-    def release(self):
+    def release(self, used=()):
         pass
 
 
@@ -321,3 +322,53 @@ def test_script_timeouts_branch_or_stop(rt, world):
     assert s["state"] == "stopped" and "200 states" in s["reason"]
     s = wait_state(rt, rt.start("script", {"start": "nope", "states": {}}, max_s=2)["id"])
     assert s["state"] == "failed"
+
+
+def test_track_finishes_on_target_unless_following(rt, world):
+    world.target = [60.0, 60.0]  # right next to the cursor
+    s = wait_state(rt, rt.start("track", {"color": [255, 0, 0], "aim": "cursor", "within": 15}, max_s=5)["id"])
+    assert s["state"] == "done" and s["reason"] == "on target" and s["seconds"] < 2
+
+
+def test_slow_intervals_are_honored_and_stop_is_immediate(rt, world):
+    rid = rt.start("press_until", {"do": {"key": ["x"]}, "every_ms": 1500, "until": {"text": "never"},
+                                   "max_presses": 10}, max_s=30)["id"]
+    time.sleep(2.0)
+    assert len(world.keys) == 2  # at 0 s and 1.5 s, not once a second
+    t0 = time.monotonic()
+    rt.stop(rid)
+    assert time.monotonic() - t0 < 1.0 and rt.status(rid)["state"] == "stopped"
+
+
+class TwoLineMenu(Menu):
+    ITEMS = ["Resume", "Quit"]
+
+
+def test_two_line_menus_find_the_real_highlight_and_never_guess():
+    menu = TwoLineMenu()
+    menu.index = 1  # Quit highlighted
+    frame, _ = menu.frame()
+    assert behave.highlighted(menu.lines(), frame)["text"] == "Quit"
+    rt = behave.Runtime(menu.frame, MenuOutputs(menu), read_text=menu.lines)
+    s = wait_state(rt, rt.start("navigate", {"text": "Resume", "confirm": True, "settle_ms": 20}, max_s=5)["id"])
+    assert s["state"] == "done" and menu.selected == "Resume" and menu.presses == ["dpad_up", "a"]
+    flat = np.full((300, 400, 4), 40, np.uint8)
+    assert behave.highlighted(menu.lines(), flat) is None
+    one = [{"text": "Continue", "box": [20, 20, 200, 50]}]
+    lit = flat.copy()
+    lit[15:55, 10:210] = (200, 120, 30, 255)
+    assert behave.highlighted(one, lit)["text"] == "Continue" and behave.highlighted(one, flat) is None
+
+
+def test_every_item_on_a_button_background_still_finds_the_odd_one_out():
+    menu = Menu()
+    menu.index = 2
+
+    def frame(region=None):
+        img = np.full((300, 400, 4), 10, np.uint8)
+        for i in range(len(menu.ITEMS)):
+            y = 20 + 40 * i
+            img[y - 5:y + 35, 10:210] = (90, 90, 90, 255) if i != menu.index else (220, 220, 220, 255)
+        return img, time.perf_counter()
+
+    assert behave.highlighted(menu.lines(), frame()[0])["text"] == "Settings"

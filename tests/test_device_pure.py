@@ -82,3 +82,19 @@ def test_tracker_remembers_the_last_app_window_and_focus_changes():
     changes = t.recent()
     assert [c["app"] for c in changes] == ["Minecraft.Windows", "AsHotplugCtrl", "SearchHost"]
     assert changes[1].get("invisible") is True and "invisible" not in changes[0]
+
+
+def test_a_failed_refocus_is_not_retried_against_the_same_window(monkeypatch):
+    from relaymcp.device import focus
+    calls = []
+    monkeypatch.setattr(focus, "focus_window", lambda hwnd: calls.append(hwnd) or {"ok": False})
+    focus._failed.clear()
+    assert focus._refocus(10, 99) == {"refocused": False} and calls == [10]
+    assert focus._refocus(10, 99) == {"refocused": False} and calls == [10]  # skipped: same stealer, same target
+    assert focus._refocus(11, 99)["refocused"] is False and calls == [10, 11]  # a different target is tried
+    monkeypatch.setattr(focus.time, "monotonic", lambda: 10 ** 9)
+    focus._refocus(11, 99)
+    assert calls == [10, 11, 11]  # tried again once the pause is over
+    monkeypatch.setattr(focus, "focus_window", lambda hwnd: {"ok": True})
+    focus._failed.clear()
+    assert focus._refocus(12, 99) == {"refocused": True}

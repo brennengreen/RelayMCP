@@ -80,9 +80,10 @@ class _BehaviorOutputs:
     def stick(self, side, x, y):
         gamepad.PAD.stick(side, x, y)
 
-    def release(self):
-        win_input.release_all_keys()
-        gamepad.PAD.neutral()
+    def release(self, used=()):
+        # Key taps, pad presses, clicks and mouse moves are momentary; only a stick a behavior steered stays put.
+        if "stick" in used:
+            gamepad.PAD.neutral()
 
 
 BEHAVIORS = behave.Runtime(
@@ -142,7 +143,7 @@ controller, speakers, mic). Pair with the `{screen}` server (screen control): lo
 - Voice prompts from the handheld (hold View + Menu) arrive as separate agent sessions."""
 
 
-def build_server(port: int, record_tools: bool = False) -> FastMCP:
+def build_server(port: int, record_tools: bool = False, upgraded: bool = False) -> FastMCP:
     name = device_settings()["name"]
     mcp = FastMCP(f"{name}-handheld", instructions=INSTRUCTIONS.format(screen=name), host="127.0.0.1", port=port,
                   stateless_http=True)
@@ -662,9 +663,8 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
         t.description = " ".join((t.description or "").split())  # docstrings carry their indentation otherwise
     if record_tools:
         names = [t.name for t in mcp._tool_manager.list_tools()]
-        seen = USER_DIR / "tools-seen.json"
-        upgraded = not seen.exists() and (USER_DIR / "hardware.log").exists()  # an older runtime ran here before
-        updates.NOTICE = updates.Notice(updates.record(names, __version__, seen, upgraded=upgraded))
+        updates.NOTICE = updates.Notice(updates.record(names, __version__, USER_DIR / "tools-seen.json",
+                                                       upgraded=upgraded))
         lean.NOTE_HOOK = updates.NOTICE.take
     return mcp
 
@@ -699,6 +699,9 @@ def main() -> None:
     parser.add_argument("--parent-pid", type=int, help="exit when this process (the agent) ends")
     args = parser.parse_args()
 
+    # An older runtime ran here before (it logged) but never recorded its tools: its clients know 0.1.0's. Decided
+    # before this run's own log file exists.
+    upgraded = not (USER_DIR / "tools-seen.json").exists() and (LOG_DIR / "hardware.log").exists()
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     import faulthandler
     _fault_file = open(LOG_DIR / "hardware.crash.log", "a", encoding="utf-8")
@@ -711,6 +714,7 @@ def main() -> None:
     log.setLevel(logging.INFO)
     win_input.set_dpi_awareness()
     focus.TRACKER.start()
+    PROCS.reset_state()
     log.info("RelayMCP hardware server %s starting on 127.0.0.1:%d", __version__, args.port)
     if args.parent_pid:
         _exit_with_parent(args.parent_pid)
@@ -719,7 +723,7 @@ def main() -> None:
     except Exception as e:
         log.warning("voice triggers unavailable: %s", e)
     try:
-        build_server(args.port, record_tools=True).run(transport="streamable-http")
+        build_server(args.port, record_tools=True, upgraded=upgraded).run(transport="streamable-http")
     finally:
         try:
             gamepad.PAD.disconnect()

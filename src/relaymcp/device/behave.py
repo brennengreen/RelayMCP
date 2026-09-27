@@ -30,7 +30,8 @@ KINDS = {
     "react": 'region [l,t,r,b]; when {"color": [r,g,b], "tol": 40, "min_fraction": 0.2} or {"change": 12}; do {"key": '
              '["space"]} | {"pad": ["a"]} | {"click": true}; repeat (true); cooldown_ms (300); hz (120)',
     "track": 'color [r,g,b], tol (50), region (search area); aim "cursor" or [x,y] (e.g. the crosshair); output "mouse" '
-             '| "right_stick" | "left_stick"; gain (0.6); within px (10); hold_frames (5): done when on target that long',
+             '| "right_stick" | "left_stick"; gain (0.6); within px (10); hold_frames (5): done when on target that long '
+             '(follow: true keeps following until max_s)',
     "press_until": 'do (as react); every_ms (400); until {"text": "Play"} | {"color": [r,g,b], "region": [...]} | '
                    '{"change": 12, "region": [...]}; max_presses (20)',
     "watch": 'region; when (as react); every_ms (100): reports each time it happens',
@@ -98,6 +99,8 @@ class Run:
         self.seq = 0
         self.stop_evt = threading.Event()
         self.stats: dict[str, Any] = {"ticks": 0, "actions": 0}
+        self.used: set[str] = set()  # which outputs this run touched (only those are released when it ends)
+        self.ended: float | None = None
         self._frame_ms: collections.deque = collections.deque(maxlen=240)
         self._lock = threading.Lock()
 
@@ -111,7 +114,7 @@ class Run:
             return [e for e in self.events if e["n"] > n]
 
     def summary(self) -> dict:
-        elapsed = time.perf_counter() - self.started
+        elapsed = (self.ended or time.perf_counter()) - self.started
         ticks = self.stats["ticks"]
         out = {"id": self.id, "kind": self.kind, "state": self.state, "reason": self.reason,
                "seconds": round(elapsed, 1), "ticks": ticks, "hz": round(ticks / elapsed, 1) if elapsed > 0 else 0,
@@ -189,8 +192,9 @@ class Runtime:
         except Exception as e:
             run.state, run.reason = "failed", f"{type(e).__name__}: {e}"
         finally:
+            run.ended = time.perf_counter()
             try:
-                self.out.release()
+                self.out.release(run.used)  # only what this run holds: other runs and the agent's input are theirs
             except Exception:
                 pass
             run.emit("end", state=run.state, reason=run.reason)
@@ -199,7 +203,7 @@ class Runtime:
 
     def _ticks(self, run: Run, hz: float):
         """Yield once per tick until the time limit, a stop request or a takeover."""
-        period = 1.0 / max(1.0, min(float(hz), 240.0))
+        period = 1.0 / max(0.01, min(float(hz), 240.0))  # anything from every 100 s to 240 times a second
         next_t = time.perf_counter()
         deadline = run.started + run.max_s
         while True:
@@ -217,6 +221,9 @@ class Runtime:
             now = time.perf_counter()
             if next_t < now - period:  # fell behind (a slow frame): don't try to catch up in a burst
                 next_t = now
+            left = next_t - now
+            if left > 0.005 and run.stop_evt.wait(left - 0.003):  # long waits wake at once for a stop request
+                continue
             sleep_until(next_t)
 
     def _frame(self, run: Run, region):
@@ -227,10 +234,13 @@ class Runtime:
 
     def _act(self, run: Run, do: dict) -> None:
         if "key" in do:
+            run.used.add("key")
             self.out.key(do["key"] if isinstance(do["key"], list) else [do["key"]])
         elif "pad" in do:
+            run.used.add("pad")
             self.out.pad(do["pad"] if isinstance(do["pad"], list) else [do["pad"]])
         elif do.get("click"):
+            run.used.add("click")
             self.out.click()
         else:
             raise ValueError('do needs "key", "pad" or "click"')
@@ -341,6 +351,7 @@ class Runtime:
                     step = "right" if tx > cx else "left"
             else:
                 step = search  # not on screen yet (a longer list): keep going the way we were told
+            run.used.add("pad" if with_pad else "key")
             (self.out.pad if with_pad else self.out.key)([names[step]])
             run.stats["actions"] += 1
             moves += 1
@@ -423,12 +434,13 @@ class Runtime:
                 on_target += 1
                 if output != "mouse":
                     self.out.stick(output, 0.0, 0.0)
-                if hold and on_target >= hold and p.get("stop_on_target", False):
+                if hold and on_target >= hold and not p.get("follow", False):
                     run.reason = "on target"
                     run.emit("on_target", error_px=round(err, 1))
                     return
                 continue
             on_target = 0
+            run.used.add("mouse" if output == "mouse" else "stick")
             if output == "mouse":
                 dx = max(-max_step, min(max_step, ex * gain))
                 dy = max(-max_step, min(max_step, ey * gain))
@@ -459,26 +471,44 @@ def best_line(lines: list[dict], want: str) -> dict | None:
     return lines[min(ranked)[2]] if ranked else None
 
 
+def _dominant(pixels) -> float:
+    """The most common brightness in a patch (quantized to 16 levels): its background, however much text is on it."""
+    np = _np()
+    if pixels.size == 0:
+        return 0.0
+    q = (pixels.max(axis=-1) // 16).ravel()
+    return float(np.bincount(q, minlength=16).argmax() * 16 + 8)
+
+
 def highlighted(lines: list[dict], frame, region=None, min_contrast: float = 25.0) -> dict | None:
-    """The menu item that stands out: the line whose background brightness differs most from the others'."""
+    """The menu item that stands out, or None when that isn't clear (never guess: navigate confirms on it).
+
+    With three or more items the highlight is the odd one out among the items' backgrounds, and it must stand apart
+    from every other item. With one or two, an item counts only if it differs from the menu's own background."""
     if not lines or frame is None:
         return None
     np = _np()
     ox, oy = (region[0], region[1]) if region else (0, 0)
     h, w = frame.shape[:2]
+    covered = np.zeros((h, w), bool)
     levels = []
     for ln in lines:
         x0, y0, x1, y1 = ln["box"]
-        pad = max(2, int((y1 - y0) * 0.25))
+        pad = max(2, int((y1 - y0) * 0.35))
         a, b = max(0, int(x0 - ox) - pad), min(w, int(x1 - ox) + pad)
         c, d = max(0, int(y0 - oy) - pad), min(h, int(y1 - oy) + pad)
-        patch = frame[c:d, a:b, :3]
-        levels.append(float(np.median(patch.max(axis=2))) if patch.size else 0.0)
-    if len(levels) == 1:
-        return lines[0]
-    typical = float(np.median(levels))
-    i = max(range(len(levels)), key=lambda k: abs(levels[k] - typical))
-    return lines[i] if abs(levels[i] - typical) >= min_contrast else None
+        levels.append(_dominant(frame[c:d, a:b, :3]))
+        covered[c:d, a:b] = True
+    if len(levels) >= 3:
+        typical = float(np.median(levels))
+        devs = sorted(((abs(v - typical), i) for i, v in enumerate(levels)), reverse=True)
+        (top, i), (second, _) = devs[0], devs[1]
+        return lines[i] if top >= min_contrast and top - second >= min_contrast / 2 else None
+    background = _dominant(frame[..., :3][~covered]) if (~covered).any() else None
+    if background is None:
+        return None
+    standing_out = [i for i, v in enumerate(levels) if abs(v - background) >= min_contrast]
+    return lines[standing_out[0]] if len(standing_out) == 1 else None
 
 
 def run_tool(rt: Runtime, action: str, kind: str = "", params: dict | None = None, run_id: str = "",

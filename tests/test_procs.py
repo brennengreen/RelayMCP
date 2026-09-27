@@ -99,3 +99,18 @@ def test_busy_counts_process_sessions():
     from relaymcp.host import busy
     quiet = {"now": "2026-09-26T21:00:00", "idle_s": 900}
     assert busy.reasons({**quiet, "proc_sessions": "bds"}) == ["process sessions running: bds"]
+
+
+def test_wait_returns_what_arrived_meanwhile(console):
+    m, cmd, _ = console
+    procs.run(m, "start", "srv", cmd, pattern="started")
+    procs.run(m, "send", "srv", text="bogus", pattern="Unknown")  # consumed by send
+    m.get("srv").send("oops")                                     # arrives while nobody reads
+    out = procs.run(m, "wait", "srv", pattern="never printed", timeout=0.5)
+    assert out["timed_out"] and out["output"] == ["Unknown command: oops"]
+    assert procs.run(m, "read", "srv")["output"] == []  # returned once, not twice
+    m.get("srv").send("list")
+    out = procs.run(m, "wait", "srv", pattern="players online")
+    assert out["matched"].startswith("There are 2") and out["output"] == ["There are 2 players online:"]
+    later = procs.run(m, "wait", "srv", pattern="Steve", timeout=2)
+    assert later["output"] == ["Steve, Alex"]  # lines after the match are still there for the next call

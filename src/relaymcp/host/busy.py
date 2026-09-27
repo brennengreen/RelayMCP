@@ -30,7 +30,10 @@ $sshd = @($all | Where-Object { $_.Name -eq 'sshd-session.exe' } | ForEach-Objec
 $mine = @(); $p = $PID
 for ($i = 0; $i -lt 16 -and $p; $i++) { $mine += $p; $p = ($all | Where-Object { $_.ProcessId -eq $p } | Select-Object -First 1).ParentProcessId }
 $pf = Join-Path $u 'procs.json'
-$o.proc_sessions = @(if (Test-Path $pf) { try { (Get-Content $pf -Raw | ConvertFrom-Json).running | Where-Object { Get-Process -Id $_.pid -ErrorAction SilentlyContinue } | ForEach-Object { $_.name } } catch { } })
+$o.proc_sessions = @(if (Test-Path $pf) { try { (Get-Content $pf -Raw | ConvertFrom-Json).running | Where-Object {
+    $p = Get-Process -Id $_.pid -ErrorAction SilentlyContinue
+    $p -and $_.start_epoch -and [math]::Abs(([DateTimeOffset]$p.StartTime).ToUnixTimeSeconds() - [double]$_.start_epoch) -lt 10
+} | ForEach-Object { $_.name } } catch { } })
 $o.ssh_commands = @($all | Where-Object { ($sshd -contains $_.ParentProcessId) -and ($_.Name -notin @('sshd-session.exe', 'conhost.exe')) -and ($mine -notcontains $_.ProcessId) } | ForEach-Object { '{0} since {1:HH:mm}' -f $_.Name, $_.CreationDate })
 $o | ConvertTo-Json -Compress
 """

@@ -102,7 +102,8 @@ def test_track_a_moving_target():
     proc, info = _start(TRACK_GAME, "RelayTrackGame")
     left, top, right, bottom = info["rect"]
     started = server.BEHAVIORS.start("track", {"color": [255, 0, 0], "tol": 60, "region": [left, top, right, bottom],
-                                               "aim": "cursor", "output": "mouse", "gain": 0.5}, max_s=10)
+                                               "aim": "cursor", "output": "mouse", "gain": 0.5, "follow": True},
+                                     max_s=10)
     try:
         out = json.loads(proc.stdout.readline() or "{}")
     finally:

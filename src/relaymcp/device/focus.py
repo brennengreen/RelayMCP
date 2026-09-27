@@ -435,19 +435,38 @@ class ForegroundTracker:
 TRACKER = ForegroundTracker()
 
 
+RETRY_AFTER_S = 30.0
+_failed: dict = {}  # the last refocus that didn't work: {"from": foreground hwnd, "to": hwnd, "at": time}
+
+
+def _refocus(to_hwnd: int, fg_hwnd: int | None) -> dict:
+    """Refocus, unless the same move failed moments ago (each try costs ~2 s of input latency, and a window holding
+    the foreground lock keeps winning until someone touches the screen)."""
+    f = _failed
+    if f and f.get("from") == fg_hwnd and f.get("to") == to_hwnd and time.monotonic() - f["at"] < RETRY_AFTER_S:
+        return {"refocused": False}
+    ok = bool(focus_window(to_hwnd).get("ok"))
+    if ok:
+        _failed.clear()
+    else:
+        _failed.update({"from": fg_hwnd, "to": to_hwnd, "at": time.monotonic()})
+    return {"refocused": ok}
+
+
 def before_input() -> dict:
     """Called before sending input: brings the remembered target back to the front if something took focus. With no
     target, a focus stealer (a pop-up or an invisible helper window) gives focus back to the last app window."""
     t = target()
     if t and t["hwnd"]:
-        if foreground_hwnd() == t["hwnd"]:
+        fg = foreground_hwnd()
+        if fg == t["hwnd"]:
             return {}
-        return {"refocused": bool(focus_window(t["hwnd"]).get("ok"))}
+        return _refocus(t["hwnd"], fg)
     fg = foreground()
     last = TRACKER.last_app
     stolen = fg and ((fg.get("process") or "").lower() in FOCUS_STEALERS or invisible(fg))  # not the shell or Start
     if stolen and last and last["hwnd"] != fg.get("hwnd") and window_info(last["hwnd"]):
-        return {"refocused": bool(focus_window(last["hwnd"]).get("ok"))}
+        return _refocus(last["hwnd"], fg.get("hwnd"))
     return {}
 
 

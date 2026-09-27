@@ -309,31 +309,34 @@ def key_press(keys: list[str], hold_ms: int = 50, repeat: int = 1, interval_ms: 
         _key_input(k, False)
     repeat = max(1, min(int(repeat), 100))
     hold_ms = max(0, min(int(hold_ms), 60000))
-    with _key_lock:
-        for i in range(repeat):
-            try:
-                for k in keys:
+    # The lock covers sending and bookkeeping only, never the hold: a 5 s walk mustn't block a quick tap meanwhile.
+    for i in range(repeat):
+        try:
+            for k in keys:
+                with _key_lock:
                     _send([_key_input(k, False)])
                     _keys_down.add(k)
-                    time.sleep(0.01)
-                time.sleep(hold_ms / 1000)
-            finally:
-                for k in reversed(keys):
+                time.sleep(0.01)
+            time.sleep(hold_ms / 1000)
+        finally:
+            for k in reversed(keys):
+                with _key_lock:
                     _send([_key_input(k, True)])
                     _keys_down.discard(k)
-            if i < repeat - 1:
-                time.sleep(max(0, interval_ms) / 1000)
+        if i < repeat - 1:
+            time.sleep(max(0, interval_ms) / 1000)
     return {"keys": keys, "hold_ms": hold_ms, "repeat": repeat}
 
 
 def release_all_keys() -> list[str]:
-    released = sorted(_keys_down)
-    for k in released:
-        try:
-            _send([_key_input(k, True)])
-        except Exception:
-            pass
-    _keys_down.clear()
+    with _key_lock:
+        released = sorted(_keys_down)
+        for k in released:
+            try:
+                _send([_key_input(k, True)])
+            except Exception:
+                pass
+        _keys_down.clear()
     return released
 
 

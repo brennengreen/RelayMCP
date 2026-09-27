@@ -55,3 +55,16 @@ def test_reset_and_limits(ps):
         ps.run("x" * (pshost.MAX_SCRIPT + 1))
     text, clipped = pshost.clip([f"line {i}" for i in range(5000)], limit=1000)
     assert clipped and "..." in text and len(text) < 1100 and text.endswith("line 4999")
+
+
+def test_endless_output_still_times_out_and_the_next_call_works():
+    import time as _t
+    host = pshost.PowerShellHost(EXE)
+    try:
+        t0 = _t.monotonic()
+        with pytest.raises(RuntimeError, match="reset"):
+            host.run("while ($true) { 'x' }", timeout=2)
+        assert _t.monotonic() - t0 < 10
+        assert host.run("'alive'", timeout=30)["output"] == "alive"
+    finally:
+        host.stop()
