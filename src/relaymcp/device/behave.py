@@ -101,14 +101,20 @@ def gray_small(frame, k: int = 4):
 
 
 def match_template(img, tmpl) -> tuple[int, int, float]:
-    """(x, y, score) of the best normalized cross-correlation match of tmpl (top-left corner) in img, via FFT."""
+    """(x, y, score) of the best normalized cross-correlation match of tmpl (top-left corner) in img, via FFT. Score is
+    -1..1; flat windows (open sky, a plain wall) can't match a textured patch and score 0. Sums are float64: in
+    float32 their rounding error swamped a flat window's tiny variance, and sky "matched" with scores in the
+    thousands (found aiming at a tree in Minecraft)."""
     np = _np()
+    img = np.asarray(img, np.float64)
+    t = np.asarray(tmpl, np.float64)
     ih, iw = img.shape
-    th, tw = tmpl.shape
+    th, tw = t.shape
     if th > ih or tw > iw:
         raise ValueError("template larger than the image")
-    t = tmpl - tmpl.mean()
-    tnorm = float(np.sqrt((t * t).sum())) + 1e-6
+    t = t - t.mean()
+    energy = float((t * t).sum())
+    tnorm = float(np.sqrt(energy)) + 1e-9
     corr = np.fft.irfft2(np.fft.rfft2(img) * np.fft.rfft2(t[::-1, ::-1], s=img.shape), s=img.shape)[th - 1:, tw - 1:]
     pad = np.pad(img, ((1, 0), (1, 0)))
     s1 = pad.cumsum(0).cumsum(1)
@@ -119,7 +125,9 @@ def match_template(img, tmpl) -> tuple[int, int, float]:
 
     n = th * tw
     var = box(s2) - box(s1) ** 2 / n
-    ncc = corr / (np.sqrt(np.maximum(var, 1e-6)) * tnorm)
+    textured = var > max(1e-6, 0.01 * energy)  # a window needs some of the patch's contrast to be a candidate
+    ncc = np.where(textured, corr / (np.sqrt(np.maximum(var, 1e-9)) * tnorm), 0.0)
+    ncc = np.clip(ncc, -1.0, 1.0)
     y, x = divmod(int(np.argmax(ncc)), ncc.shape[1])
     return x, y, float(ncc[y, x])
 

@@ -590,3 +590,13 @@ def test_a_program_can_follow_a_point_with_its_own_tracker():
     assert status["state"] == "done", status
     x, y, confident = status["result"]
     assert abs(x - 1500) <= 8 and abs(y - 540) <= 8 and confident
+
+
+def test_flat_sky_never_outscores_the_real_match():
+    """Aiming at a tree in Minecraft steered into the sky: bright, nearly flat sky made float32 running sums lose a
+    window's tiny variance, and those windows scored in the thousands."""
+    rng = np.random.default_rng(2)
+    img = (250 + rng.normal(0, 0.3, (270, 480))).astype(np.float32)
+    img[20:80, 20:80] = rng.integers(0, 255, (60, 60)).astype(np.float32)
+    x, y, score = behave.match_template(img, img[30:60, 30:60].copy())
+    assert (x, y) == (30, 30) and 0.99 < score <= 1.0, (x, y, score)

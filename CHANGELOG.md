@@ -54,7 +54,9 @@ handheld itself.
     (calibrate camera turns), `sees` text in a region, `frame`/`diff`/`color`, `guard` stops on danger, `log`,
     `result`). `params.wait: true` returns when it ends, so one call plays one sub-goal. Loops that never wait
     are interrupted at the time limit.
-- **Found by playing Minecraft:** text matching tolerates stylized game fonts (Minecraft's "Resume" reads as
+- **Found by playing Minecraft:** template matching (aim, track at) no longer locks onto open sky: its running sums
+  are float64 and flat windows can't match (float32 rounding had bright, nearly flat sky scoring in the thousands).
+  Text matching tolerates stylized game fonts (Minecraft's "Resume" reads as
   "fiesume" to OCR, "Quit" as "auit"); `track` can aim at whatever is at a screen point (template matching, e.g. a
   tree seen in a screenshot) and turns the camera until it's under the crosshair; behaviors can keep a controller
   state held (`{"hold": {"right_trigger": 1}}`) until something happens, e.g. mine until the block breaks. A newly
