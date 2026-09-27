@@ -125,30 +125,42 @@ def _top_processes(n: int = 5) -> list[dict]:
 
 # ---------------------------------------------------------------------------------------------------- brightness
 
+_ole32 = ctypes.WinDLL("ole32") if hasattr(ctypes, "WinDLL") else None
+if _ole32 is not None:
+    _ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+    _ole32.CoInitializeEx.restype = ctypes.c_long  # a plain HRESULT: an already-initialized thread isn't an error
+
+
 def wmi(namespace: str = "root\\WMI"):
     """A WMI connection over COM (scripting API, late-bound): ~10-50 ms per query instead of ~1.5 s for starting
-    PowerShell. Works on any thread (initializes COM there if needed)."""
-    ctypes.windll.ole32.CoInitializeEx(None, 0)  # COINIT_MULTITHREADED; S_FALSE/RPC_E_CHANGED_MODE are fine
+    PowerShell. Works on any thread; COM is initialized there if it isn't already (in whatever mode it has)."""
+    _ole32.CoInitializeEx(None, 0)  # S_OK, S_FALSE and RPC_E_CHANGED_MODE all leave COM usable on this thread
     import comtypes.client
     locator = comtypes.client.CreateObject("WbemScripting.SWbemLocator", dynamic=True)
     return locator.ConnectServer(".", namespace)
 
 
 def wmi_first(query: str, namespace: str = "root\\WMI"):
-    """The first object a WQL query returns, or None."""
-    objs = wmi(namespace).ExecQuery(query)
-    return objs.ItemIndex(0) if objs.Count else None
+    """The first object a WQL query returns, or None (also when the class doesn't exist on this machine)."""
+    svc = wmi(namespace)
+    try:
+        objs = svc.ExecQuery(query)
+        return objs.ItemIndex(0) if objs.Count else None
+    except Exception:
+        return None
+
+
+NO_BRIGHTNESS = {"brightness_percent": None, "note": "this display has no software brightness control"}
 
 
 def brightness() -> dict:
     try:
         obj = wmi_first("SELECT CurrentBrightness FROM WmiMonitorBrightness")
-        if obj is None:
-            return {"brightness_percent": None, "note": "this display has no software brightness control"}
-        return {"brightness_percent": int(obj.CurrentBrightness)}
-    except Exception:  # COM/WMI trouble: the slow but proven path
-        out = _powershell("(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness | Select-Object -First 1).CurrentBrightness")
-        return {"brightness_percent": int(out)}
+    except Exception:  # COM/WMI itself unavailable: the slow but proven path
+        out = _powershell("(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness -ErrorAction SilentlyContinue | "
+                          "Select-Object -First 1).CurrentBrightness")
+        return {"brightness_percent": int(out)} if out.strip().isdigit() else dict(NO_BRIGHTNESS)
+    return {"brightness_percent": int(obj.CurrentBrightness)} if obj is not None else dict(NO_BRIGHTNESS)
 
 
 def set_brightness(percent: int) -> dict:
@@ -156,11 +168,14 @@ def set_brightness(percent: int) -> dict:
     before = brightness()["brightness_percent"]
     try:
         methods = wmi_first("SELECT * FROM WmiMonitorBrightnessMethods")
-        if methods is None:
-            raise RuntimeError("this display has no software brightness control")
+    except Exception:
+        methods = False  # COM/WMI unavailable: use PowerShell below
+    if methods is None:
+        raise RuntimeError("this display has no software brightness control")
+    try:
+        if methods is False:
+            raise RuntimeError
         methods.WmiSetBrightness(0, percent)  # Timeout, Brightness
-    except RuntimeError:
-        raise
     except Exception:
         _powershell(
             "Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods | Select-Object -First 1 | "

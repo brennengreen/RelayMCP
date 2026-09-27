@@ -30,3 +30,21 @@ def test_pad_unplug_policy():
     assert not should_unplug(1800, 1800, pinned=True, game_in_front=False)   # kept plugged
     assert not should_unplug(10, 1800, pinned=False, game_in_front=False)
     assert not should_unplug(10 ** 6, None, pinned=False, game_in_front=False)  # 0 minutes = never
+
+
+def test_lean_schema_and_results():
+    import asyncio
+    from relaymcp.device.lean import compact, lean_result, lean_schema
+    schema = {"type": "object", "title": "gamepad_holdArguments", "required": ["duration_ms"], "properties": {
+        "duration_ms": {"type": "integer", "title": "Duration Ms", "default": 500},
+        "buttons": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}], "default": None,
+                    "title": "Buttons"}}}
+    lean = lean_schema(schema)
+    assert "title" not in str(lean) and lean["required"] == ["duration_ms"]
+    assert lean["properties"]["buttons"] == {"type": "array", "items": {"type": "string"}}
+    assert lean["properties"]["duration_ms"] == {"type": "integer", "default": 500}
+    assert compact({"a": None, "b": [{"c": None, "d": 1}]}) == {"b": [{"d": 1}]}
+
+    async def tool():
+        return {"ok": True, "gone": None, "nested": {"x": 1.5}}
+    assert asyncio.run(lean_result(tool)()) == '{"ok":true,"nested":{"x":1.5}}'
