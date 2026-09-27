@@ -42,5 +42,18 @@ def test_copilot_command_limits_tools(relay_home, monkeypatch):
     cmd = voice.copilot_command(cfg, "copilot", "hi", "sid", fresh=True)
     assert ["--allow-tool", "ally"] == cmd[cmd.index("--allow-tool"):cmd.index("--allow-tool") + 2]
     assert "--allow-all" not in cmd and cmd.count("--disable-mcp-server") == 2
+    i = cmd.index("--available-tools")
+    assert cmd[i + 1:i + 3] == ["ally", "ally-handheld"] and "--disable-builtin-mcps" in cmd
+    assert cmd[cmd.index("--model") + 1] == "gpt-5.4-mini" and "--no-custom-instructions" in cmd
     cfg["voice"]["permissions"] = "full"
-    assert "--allow-all" in voice.copilot_command(cfg, "copilot", "hi", "sid", fresh=False)
+    full = voice.copilot_command(cfg, "copilot", "hi", "sid", fresh=False)
+    assert "--allow-all" in full and "--available-tools" not in full and "--disable-builtin-mcps" not in full
+
+
+def test_retry_drops_rejected_options():
+    from relaymcp.host.voice import retry_command
+    cmd = ["copilot", "-p", "x", "--model", "claude-haiku-4.5", "--reasoning-effort", "low", "-s"]
+    assert retry_command(cmd, 'Error: Model "claude-haiku-4.5" does not support reasoning effort') == \
+        ["copilot", "-p", "x", "--model", "claude-haiku-4.5", "-s"]
+    assert retry_command(cmd, "Error: model gpt-9 is not available") == ["copilot", "-p", "x", "-s"]
+    assert retry_command(cmd, "network unreachable") is None

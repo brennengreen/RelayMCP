@@ -42,8 +42,8 @@ DEFAULTS: dict[str, Any] = {
         "agent": "copilot",          # copilot | custom (see docs/voice.md)
         "custom_command": None,      # for agent=custom: ["my-agent", "--prompt", "{prompt}"]
         "permissions": "handheld",   # handheld = only the device's tools; full = everything on this computer too
-        "model": None,
-        "reasoning_effort": None,
+        "model": "gpt-5.4-mini",     # fast; falls back to the agent's default if unavailable
+        "reasoning_effort": "low",   # dropped automatically for models that don't support it
         "timeout_minutes": 10,
         "new_conversation_after_minutes": 20,
         "notify": True,

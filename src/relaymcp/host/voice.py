@@ -102,12 +102,14 @@ def copilot_command(cfg: dict, exe: str, prompt: str, sid: str, fresh: bool) -> 
     workdir = Path(os.path.expanduser(v.get("workdir") or config.VOICE_WORKDIR))
     workdir.mkdir(parents=True, exist_ok=True)
     cmd = [exe, "-p", preamble(cfg, full) + prompt, "--output-format", "json", "--stream", "off",
-           "--session-id", sid, "-C", str(workdir)]
+           "--session-id", sid, "-C", str(workdir), "--no-custom-instructions"]
     if fresh:
         cmd += ["-n", f"{name} voice " + time.strftime("%b %d %H:%M")]
     if full:
         cmd += ["--allow-all"]
     else:
+        # Only the handheld's tools: a much smaller prompt (no GitHub MCP, no built-in tools), so replies come faster.
+        cmd += ["--disable-builtin-mcps", "--available-tools", *own]
         for server in own:
             cmd += ["--allow-tool", server]
         for server in other_copilot_servers(own):
@@ -117,6 +119,32 @@ def copilot_command(cfg: dict, exe: str, prompt: str, sid: str, fresh: bool) -> 
     if v.get("reasoning_effort"):
         cmd += ["--reasoning-effort", str(v["reasoning_effort"])]
     return cmd
+
+
+def without_option(cmd: list[str], flag: str) -> list[str]:
+    """cmd without `flag` and its value."""
+    out, skip = [], False
+    for part in cmd:
+        if skip:
+            skip = False
+            continue
+        if part == flag:
+            skip = True
+            continue
+        out.append(part)
+    return out
+
+
+def retry_command(cmd: list[str], error: str) -> list[str] | None:
+    """A variant of cmd without the option the CLI rejected (a model that isn't available, or one that doesn't take a
+    reasoning effort), or None if the error is something else."""
+    e = error.lower()
+    if "--reasoning-effort" in cmd and "reasoning" in e:
+        return without_option(cmd, "--reasoning-effort")
+    if "--model" in cmd and "model" in e and any(w in e for w in ("not available", "not found", "unknown", "invalid",
+                                                                   "not supported", "unsupported", "no access")):
+        return without_option(without_option(cmd, "--model"), "--reasoning-effort")
+    return None
 
 
 def parse_copilot_output(out: str) -> tuple[str, list[str], int | None]:
@@ -163,19 +191,26 @@ def run_prompt(cfg: dict, text: str) -> dict:
     env = dict(os.environ, PATH=os.pathsep.join([*EXTRA_PATH, os.environ.get("PATH", "")]))
     t0 = time.monotonic()
     kwargs: dict = {"start_new_session": True} if os.name != "nt" else {"creationflags": 0x08000000}
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, **kwargs)
     timeout_min = float(v.get("timeout_minutes") or 10)
-    try:
-        out, err = proc.communicate(timeout=timeout_min * 60)
-    except subprocess.TimeoutExpired:
-        _kill_tree(proc)
-        return {"ok": False, "error": f"it took longer than {timeout_min:g} minutes", "session": sid}
+    custom = v.get("agent", "copilot") == "custom"
+    for _attempt in range(3):
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, **kwargs)
+        try:
+            out, err = proc.communicate(timeout=timeout_min * 60)
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc)
+            return {"ok": False, "error": f"it took longer than {timeout_min:g} minutes", "session": sid}
+        if custom:
+            reply, tools, exit_code = out.strip(), [], proc.returncode
+        else:
+            reply, tools, exit_code = parse_copilot_output(out)
+            exit_code = proc.returncode if exit_code is None else exit_code
+        retry = None if custom or reply or exit_code == 0 else retry_command(cmd, (err or "") + (out or ""))
+        if not retry:
+            break
+        log.info("retrying without an option the agent rejected: %s", (err or out).strip().splitlines()[-1:])
+        cmd = retry
     seconds = round(time.monotonic() - t0, 1)
-    if v.get("agent", "copilot") == "custom":
-        reply, tools, exit_code = out.strip(), [], proc.returncode
-    else:
-        reply, tools, exit_code = parse_copilot_output(out)
-        exit_code = proc.returncode if exit_code is None else exit_code
     if exit_code != 0 and not reply:
         detail = (err or out).strip().splitlines()[-1:] or [f"exit code {exit_code}"]
         return {"ok": False, "error": detail[0][:200], "session": sid, "seconds": seconds}

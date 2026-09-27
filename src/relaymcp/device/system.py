@@ -125,18 +125,47 @@ def _top_processes(n: int = 5) -> list[dict]:
 
 # ---------------------------------------------------------------------------------------------------- brightness
 
+def wmi(namespace: str = "root\\WMI"):
+    """A WMI connection over COM (scripting API, late-bound): ~10-50 ms per query instead of ~1.5 s for starting
+    PowerShell. Works on any thread (initializes COM there if needed)."""
+    ctypes.windll.ole32.CoInitializeEx(None, 0)  # COINIT_MULTITHREADED; S_FALSE/RPC_E_CHANGED_MODE are fine
+    import comtypes.client
+    locator = comtypes.client.CreateObject("WbemScripting.SWbemLocator", dynamic=True)
+    return locator.ConnectServer(".", namespace)
+
+
+def wmi_first(query: str, namespace: str = "root\\WMI"):
+    """The first object a WQL query returns, or None."""
+    objs = wmi(namespace).ExecQuery(query)
+    return objs.ItemIndex(0) if objs.Count else None
+
+
 def brightness() -> dict:
-    out = _powershell("(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness | Select-Object -First 1).CurrentBrightness")
-    return {"brightness_percent": int(out)}
+    try:
+        obj = wmi_first("SELECT CurrentBrightness FROM WmiMonitorBrightness")
+        if obj is None:
+            return {"brightness_percent": None, "note": "this display has no software brightness control"}
+        return {"brightness_percent": int(obj.CurrentBrightness)}
+    except Exception:  # COM/WMI trouble: the slow but proven path
+        out = _powershell("(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness | Select-Object -First 1).CurrentBrightness")
+        return {"brightness_percent": int(out)}
 
 
 def set_brightness(percent: int) -> dict:
     percent = max(0, min(int(percent), 100))
     before = brightness()["brightness_percent"]
-    _powershell(
-        "Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods | Select-Object -First 1 | "
-        f"Invoke-CimMethod -MethodName WmiSetBrightness -Arguments @{{ Timeout = [uint32]0; Brightness = [byte]{percent} }} | Out-Null"
-    )
+    try:
+        methods = wmi_first("SELECT * FROM WmiMonitorBrightnessMethods")
+        if methods is None:
+            raise RuntimeError("this display has no software brightness control")
+        methods.WmiSetBrightness(0, percent)  # Timeout, Brightness
+    except RuntimeError:
+        raise
+    except Exception:
+        _powershell(
+            "Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods | Select-Object -First 1 | "
+            f"Invoke-CimMethod -MethodName WmiSetBrightness -Arguments @{{ Timeout = [uint32]0; Brightness = [byte]{percent} }} | Out-Null"
+        )
     time.sleep(0.3)
     return {"before": before, "after": brightness()["brightness_percent"]}
 

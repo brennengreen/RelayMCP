@@ -153,7 +153,11 @@ class VirtualPad:
                 raise RuntimeError(f"Virtual gamepad unavailable (is the ViGEmBus driver installed?): {e}") from e
             before = focus.foreground_hwnd()  # the game, usually; put back in front after Armoury Crate's notice
             self._vg = vg
-            self._pad = vg.VX360Gamepad()
+            try:
+                self._pad = vg.VX360Gamepad()
+            except Exception as e:  # e.g. "The virtual device could not connect to ViGEmBus."
+                raise RuntimeError(f"couldn't plug in the virtual controller ({e}). The ViGEmBus driver isn't running; "
+                                   "tap 'Repair RelayMCP' on the handheld or restart it.") from e
             self.plugged_at = time.monotonic()
             try:
                 self._pad.register_notification(callback_function=self._on_notification)
