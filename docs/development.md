@@ -65,8 +65,23 @@ relaymcp bench             # latency (ping, status, screenshot, SSH) and tokens 
 ```
 
 `relaymcp bench` saves each run under `~/.relaymcp/state/bench/` and prints the change since the previous run.
-`python scripts/analyze_session.py <session-id>` splits a Copilot session's time into model thinking and device
-calls, and counts screenshots and premium requests.
+`python scripts/analyze_session.py ~/.copilot/session-state/<id>/events.jsonl [--since HH:MM --until HH:MM]` splits a
+Copilot session's time into model thinking and device calls, counts screenshots and premium requests, and reads
+Copilot's local session store for every model call's time to first token against the context size.
+
+### The end-to-end benchmark
+
+Tool latency is only part of the story: in real sessions 70-90% of the wall time is the model, and its time to
+first token grows with the context (5 s under 100k tokens, 12 s past 450k in one measured session). So the benchmark
+that matters is a whole task, measured in model calls and minutes:
+
+> Cold-launch Minecraft Bedrock, join the test server, summon an iron golem, hit it, and confirm it turns hostile.
+
+Baseline (2026-09-26, Opus at max reasoning, screenshots and single inputs): about 16 minutes and 49 model calls.
+Target: 3-5 model calls and 1-2 minutes, from `act` batches (one call per sub-goal), `observe` instead of
+screenshots, the `proc` console for server-side checks, and the `handheld` agent (a fast model with a small
+context). Run the task, note the start and end times, then compare with
+`scripts/analyze_session.py <events.jsonl> --since <start> --until <end>`.
 
 SSH sessions of Windows administrators are elevated, so `deploy --full` can run the setup script unattended.
 Changes to the hardware server's tools show up in your MCP client after it reconnects. Regenerate the tool reference

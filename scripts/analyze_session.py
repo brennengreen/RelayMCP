@@ -1,9 +1,13 @@
 """Where did the time and tokens go in an agent session that drove the handheld?
 
     python scripts/analyze_session.py ~/.copilot/session-state/<session-id>/events.jsonl [--prefix ally]
+        [--since 18:29 --until 18:46]
 
 Splits each device step into model thinking vs. device call, summarizes device tools (latency, output size, images),
-and reports premium requests. Use it before/after a change to see whether real sessions got faster and leaner.
+and reports premium requests. From Copilot's local session store it adds every model call's time to first token and
+duration against the context size, the part of a session's wall time spent in the model, and how many model calls a
+task took. --since/--until (local HH:MM on the session's first day) measure one episode, e.g. a benchmark task.
+Use it before/after a change to see whether real sessions got faster and leaner.
 """
 
 from __future__ import annotations
@@ -26,13 +30,58 @@ def _p90(values: list[float]) -> float:
     return v[min(len(v) - 1, max(0, math.ceil(len(v) * 0.9) - 1))] if v else 0.0
 
 
-def analyze(path: str, prefixes: tuple[str, ...] = ("ally",)) -> dict:
+CONTEXT_BUCKETS = ((100_000, "<100k"), (250_000, "100-250k"), (450_000, "250-450k"), (float("inf"), ">450k"))
+
+
+def model_calls(db: str, session_id: str, since: float | None = None, until: float | None = None) -> dict:
+    """Per-model-call timing from Copilot's session store (read-only): calls, model time, time to first token by
+    context size."""
+    import sqlite3
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        rows = con.execute("SELECT created_at, model, input_tokens, duration_ms, time_to_first_token_ms, reasoning_effort "
+                           "FROM assistant_usage_events WHERE session_id = ? ORDER BY id", (session_id,)).fetchall()
+    except sqlite3.Error as e:
+        return {"error": f"couldn't read {db}: {e}"}
+    calls = []
+    for created, model, tokens, dur, ttft, effort in rows:
+        try:  # SQLite's datetime('now') is UTC
+            t = datetime.fromisoformat(created.replace(" ", "T")).replace(tzinfo=__import__("datetime").timezone.utc).timestamp()
+        except (TypeError, ValueError):
+            t = None
+        if (since and t and t < since) or (until and t and t > until):
+            continue
+        calls.append({"t": t, "model": model, "tokens": tokens or 0, "dur": (dur or 0) / 1000, "ttft": (ttft or 0) / 1000,
+                      "effort": effort})
+    if not calls:
+        return {"calls": 0}
+    by_bucket = collections.defaultdict(list)
+    for c in calls:
+        label = next(name for limit, name in CONTEXT_BUCKETS if c["tokens"] < limit)
+        by_bucket[label].append(c["ttft"])
+    return {
+        "calls": len(calls),
+        "model_min": round(sum(c["dur"] for c in calls) / 60, 1),
+        "call_s_median": round(st.median(c["dur"] for c in calls), 1),
+        "ttft_s_median": round(st.median(c["ttft"] for c in calls), 1),
+        "ttft_by_context": {name: {"n": len(by_bucket[name]), "median_s": round(st.median(by_bucket[name]), 1)}
+                            for _, name in CONTEXT_BUCKETS if by_bucket.get(name)},
+        "context_tokens_max": max(c["tokens"] for c in calls),
+        "models": sorted({f"{c['model']}/{c['effort'] or '-'}" for c in calls}),
+    }
+
+
+def analyze(path: str, prefixes: tuple[str, ...] = ("ally",), since: float | None = None,
+            until: float | None = None) -> dict:
     starts, done, asks = {}, {}, []
     usage, models, assets = None, [], []
     for line in open(path, "rb"):
         try:
             e = json.loads(line)
         except ValueError:
+            continue
+        t = _ts(e)
+        if t and ((since and t < since) or (until and t > until)):
             continue
         kind, d = e.get("type"), e.get("data") or {}
         if kind == "assistant.message":
@@ -82,13 +131,46 @@ def analyze(path: str, prefixes: tuple[str, ...] = ("ally",)) -> dict:
     }
 
 
+def episode_window(events_path: str, since: str | None, until: str | None) -> tuple[float | None, float | None]:
+    """--since/--until (local HH:MM) as timestamps on the day the session started; the whole session if not given."""
+    first = last = None
+    for line in open(events_path, "rb"):
+        try:
+            t = _ts(json.loads(line))
+        except ValueError:
+            continue
+        if t:
+            first = t if first is None else first
+            last = t
+    if first is None:
+        return None, None
+    day = datetime.fromtimestamp(first)
+
+    def at(hhmm: str) -> float:
+        h, m = (int(x) for x in hhmm.split(":"))
+        return day.replace(hour=h, minute=m, second=0, microsecond=0).timestamp()
+
+    return (at(since) if since else first), (at(until) if until else last)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("events", help="path to a session's events.jsonl")
     parser.add_argument("--prefix", action="append", help="device tool name prefix (default: ally)")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--db", default=str(__import__("pathlib").Path.home() / ".copilot" / "session-store.db"),
+                        help="Copilot's session store (for per-call model timing)")
+    parser.add_argument("--since", help="local HH:MM: only measure from here (one episode)")
+    parser.add_argument("--until", help="local HH:MM: only measure up to here")
     args = parser.parse_args()
-    report = analyze(args.events, tuple(args.prefix or ["ally"]))
+    window = episode_window(args.events, args.since, args.until)
+    report = analyze(args.events, tuple(args.prefix or ["ally"]), *(window if args.since or args.until else (None, None)))
+    session_id = __import__("pathlib").Path(args.events).resolve().parent.name
+    report["model_calls"] = model_calls(args.db, session_id, *window)
+    wall = (window[1] - window[0]) / 60 if all(window) else None
+    if wall and report["model_calls"].get("calls"):
+        report["model_calls"]["wall_min"] = round(wall, 1)
+        report["model_calls"]["model_share"] = f"{min(100, round(report['model_calls']['model_min'] / wall * 100))}%"
     if args.json:
         print(json.dumps(report, indent=1))
         return
@@ -96,6 +178,14 @@ def main() -> None:
           f"{report['model_s_median']} s model (p90 {report['model_s_p90']}) + {report['device_s_median']} s device")
     print(f"models: {', '.join(report['models']) or '?'}  premium requests: {report.get('premium_requests', '?')}  "
           f"images logged: {report['images_logged']} (avg {report['image_kb_avg']} KB)")
+    m = report["model_calls"]
+    if m.get("calls"):
+        share = f", {m['model_share']} of {m['wall_min']} min wall time" if m.get("model_share") else ""
+        print(f"model calls: {m['calls']} ({m['model_min']} min in the model{share}); median call {m['call_s_median']} s, "
+              f"first token {m['ttft_s_median']} s; largest context {m['context_tokens_max']:,} tokens")
+        print("  first token by context: " + ", ".join(f"{k} {v['median_s']} s (n={v['n']})" for k, v in m["ttft_by_context"].items()))
+    elif m.get("error"):
+        print(f"model calls: {m['error']}")
     print(f"{'tool':34} {'n':>4} {'med_s':>6} {'p90_s':>6} {'chars':>6} {'img':>4}")
     for name, t in report["tools"].items():
         print(f"{name[:34]:34} {t['n']:4} {t['median_s']:6.2f} {t['p90_s']:6.2f} {t['median_chars']:6} {t['images']:4}")
