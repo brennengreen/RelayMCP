@@ -104,15 +104,50 @@ def recognize(frame, box=None) -> list[dict]:
     return merge_rows(lines_from(result.lines, left, top))
 
 
-def find(lines: list[dict], query: str) -> dict | None:
-    """The best line for query: exact match, then a line starting with it, then one containing it (case-insensitive)."""
-    q = " ".join(query.lower().split())
+# Letters OCR confuses in blocky game fonts (Minecraft's R reads as "fi", Q as "a"). Both sides are mapped the same
+# way before comparing, so a genuine "fi" or "q" still matches itself.
+CONFUSIONS = (("fi", "r"), ("q", "a"), ("rn", "m"), ("vv", "w"), ("0", "o"), ("1", "l"), ("|", "l"), ("—", "-"),
+              ("’", "'"))
+
+
+def normalize(text: str) -> str:
+    t = " ".join(text.lower().split())
+    for a, b in CONFUSIONS:
+        t = t.replace(a, b)
+    return t
+
+
+def similarity(query: str, text: str) -> float:
+    """How well text contains query, 0-1, tolerating OCR slips in stylized game fonts ("fiesume" for "Resume",
+    "auit" for "Quit"): the best match of query against any same-length stretch of text."""
+    from difflib import SequenceMatcher
+    q, t = query, text
+    if not q or not t:
+        return 0.0
+    if len(t) <= len(q) + 2:
+        return SequenceMatcher(None, q, t).ratio()
+    best = 0.0
+    for start in range(0, len(t) - len(q) + 1):
+        best = max(best, SequenceMatcher(None, q, t[start:start + len(q) + 1]).ratio())
+    return best
+
+
+def find(lines: list[dict], query: str, fuzzy: float = 0.8) -> dict | None:
+    """The best line for query: exact match, then a line starting with it, then one containing it (case-insensitive),
+    then, for game fonts OCR misreads, the most similar line (at least `fuzzy` similar; 0 turns that off)."""
+    q = normalize(query)
     if not q:
         return None
-    ranked = []
+    ranked, close = [], []
     for i, line in enumerate(lines):
-        t = " ".join(line["text"].lower().split())
+        t = normalize(line["text"])
         score = 3 if t == q else 2 if t.startswith(q) else 1 if q in t else 0
         if score:
             ranked.append((-score, len(t), i, line))
-    return min(ranked)[3] if ranked else None
+        elif fuzzy and len(q) >= 4:
+            sim = similarity(q, t)
+            if sim >= fuzzy:
+                close.append((-sim, len(t), i, line))
+    if ranked:
+        return min(ranked)[3]
+    return min(close)[3] if close else None

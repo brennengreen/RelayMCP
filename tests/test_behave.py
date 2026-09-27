@@ -393,3 +393,99 @@ def test_script_repeats_on_schedule(rt, world):
     s = wait_state(rt, rt.start("script", {"states": {"a": {"do": {"key": ["x"]}, "every_ms": 100, "ms": 1000}}},
                                 max_s=5)["id"])
     assert s["state"] == "done" and 9 <= len(world.keys) <= 11, len(world.keys)
+
+
+def _texture(h, w, block=24, seed=1):
+    rng = np.random.default_rng(seed)
+    cells = rng.integers(0, 255, size=(h // block + 1, w // block + 1), dtype=np.uint8)
+    img = np.kron(cells, np.ones((block, block), np.uint8))[:h, :w]
+    return np.dstack([img, (img * 7) % 255, (img * 3) % 255, np.full_like(img, 255)])
+
+
+def test_match_template_finds_a_patch_again():
+    frame = _texture(1080, 1920)
+    img = behave.gray_small(frame)
+    tmpl = img[100:130, 200:230]
+    x, y, score = behave.match_template(img, tmpl)
+    assert (x, y) == (200, 100) and score > 0.99
+    shifted = behave.gray_small(np.roll(frame, 160, axis=1))  # the view turned by 160 px
+    x2, y2, score2 = behave.match_template(shifted, tmpl)
+    assert (x2, y2) == (240, 100) and score2 > 0.99
+
+
+class PanWorld:
+    """A camera over a wide panorama: the right stick turns it (px/s at full deflection), frames are 1920x1080."""
+
+    def __init__(self):
+        self.pano = _texture(1080, 6000, seed=7)
+        self.x, self.v, self.t = 2000.0, 0.0, time.perf_counter()
+        self.sticks, self.lock = [], threading.Lock()
+
+    def _advance(self):
+        now = time.perf_counter()
+        self.x += self.v * (now - self.t) * 900
+        self.t = now
+
+    def frame(self, region=None):
+        with self.lock:
+            self._advance()
+            x = int(self.x)
+            return self.pano[:, x:x + 1920].copy(), time.perf_counter()
+
+    def stick(self, side, x, y):
+        with self.lock:
+            self._advance()
+            self.v = x
+            self.sticks.append((round(x, 2), round(y, 2)))
+
+
+class PanOutputs:
+    def __init__(self, w):
+        self.w = w
+
+    def stick(self, side, x, y):
+        self.w.stick(side, x, y)
+
+    def release(self, used=()):
+        self.w.stick("right_stick", 0.0, 0.0)
+
+
+def test_track_at_a_point_turns_until_it_is_under_the_crosshair():
+    world = PanWorld()
+    rt = behave.Runtime(world.frame, PanOutputs(world))
+    start_x = world.x
+    s = wait_state(rt, rt.start("track", {"at": [1500, 540], "within": 24}, max_s=8)["id"], 12)
+    assert s["state"] == "done" and s["reason"] == "on target", s
+    turned = world.x - start_x
+    assert abs(turned - 540) < 40, turned  # the thing 540 px right of center is now in the middle
+    assert world.sticks[0][0] > 0 and world.v == 0.0  # turned right, then let go
+
+
+def test_track_at_refuses_flat_areas():
+    flat = np.full((1080, 1920, 4), 90, np.uint8)
+    rt = behave.Runtime(lambda region=None: (flat, time.perf_counter()), PanOutputs(PanWorld()))
+    s = wait_state(rt, rt.start("track", {"at": [900, 500]}, max_s=2)["id"])
+    assert s["state"] == "failed" and "nothing distinctive" in s["reason"]
+
+
+def test_press_until_can_hold_a_state_until_the_block_breaks():
+    held = {"since": None, "state": None}
+
+    def frame(region=None):
+        img = np.full((120, 120, 4), 60, np.uint8)
+        if held["since"] and time.perf_counter() - held["since"] > 0.4:
+            img[:] = 200  # the block broke: the crosshair area looks completely different
+        return img, time.perf_counter()
+
+    class Out:
+        def hold(self, state):
+            if held["state"] != state:
+                held.update(since=time.perf_counter(), state=state)
+
+        def release(self, used=()):
+            held.update(since=None, state="released")
+
+    rt = behave.Runtime(frame, Out())
+    s = wait_state(rt, rt.start("press_until", {"do": {"hold": {"right_trigger": 1.0}}, "every_ms": 50,
+                                                "until": {"change": 30, "region": [0, 0, 120, 120]}}, max_s=5)["id"])
+    assert s["state"] == "done" and held["state"] == "released", s

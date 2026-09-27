@@ -300,6 +300,18 @@ class VirtualPad:
             self._apply(0, left, right, 0.0, 0.0)
             self._touch()
 
+    def hold(self, state: dict) -> None:
+        """Keep a controller state ({"buttons", "left_stick", "right_stick", "left_trigger", "right_trigger"}) until
+        told otherwise (neutral(), a sequence, or another hold)."""
+        mask, lt, rt = _normalize(state.get("buttons"))
+        ls = state.get("left_stick") or [0, 0]
+        rs = state.get("right_stick") or [0, 0]
+        with self._lock:
+            self._ensure()
+            self._apply(mask, (float(ls[0]), float(ls[1])), (float(rs[0]), float(rs[1])),
+                        max(lt, float(state.get("left_trigger", 0) or 0)), max(rt, float(state.get("right_trigger", 0) or 0)))
+            self._touch()
+
     def neutral(self) -> None:
         with self._lock:
             if self._pad is not None:

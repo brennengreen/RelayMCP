@@ -80,9 +80,12 @@ class _BehaviorOutputs:
     def stick(self, side, x, y):
         gamepad.PAD.stick(side, x, y)
 
+    def hold(self, state):
+        gamepad.PAD.hold(state)
+
     def release(self, used=()):
-        # Key taps, pad presses, clicks and mouse moves are momentary; only a stick a behavior steered stays put.
-        if "stick" in used:
+        # Key taps, pad presses, clicks and mouse moves are momentary; a steered stick or a held state stays put.
+        if "stick" in used or "hold" in used:
             gamepad.PAD.neutral()
 
 

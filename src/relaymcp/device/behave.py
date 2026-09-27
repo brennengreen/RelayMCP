@@ -29,11 +29,13 @@ EVENTS_KEPT = 300
 KINDS = {
     "react": 'region [l,t,r,b]; when {"color": [r,g,b], "tol": 40, "min_fraction": 0.2} or {"change": 12}; do {"key": '
              '["space"]} | {"pad": ["a"]} | {"click": true}; repeat (true); cooldown_ms (300); hz (120)',
-    "track": 'color [r,g,b], tol (50), region (search area); aim "cursor" or [x,y] (e.g. the crosshair); output "mouse" '
-             '| "right_stick" | "left_stick"; gain (0.6); within px (10); hold_frames (5): done when on target that long '
-             '(follow: true keeps following until max_s)',
-    "press_until": 'do (as react); every_ms (400); until {"text": "Play"} | {"color": [r,g,b], "region": [...]} | '
-                   '{"change": 12, "region": [...]}; max_presses (20)',
+    "track": 'color [r,g,b], tol (50), region (search area); or at [x,y]: whatever is there now (a tree, a door), '
+             'size (120 px); aim "cursor" or [x,y] (default for at: screen center = crosshair); output "mouse" | '
+             '"right_stick" | "left_stick"; gain; within px; hold_frames: done when on target that long (follow: true '
+             'keeps following until max_s)',
+    "press_until": 'do (as react, or {"hold": {"right_trigger": 1}} to keep a controller state, e.g. mining); '
+                   'every_ms (400); until {"text": "Play"} | {"color": [r,g,b], "region": [...]} | {"change": 12, '
+                   '"region": [...]}; max_presses (20)',
     "watch": 'region; when (as react); every_ms (100): reports each time it happens',
     "navigate": 'text (the menu item to reach); region (the menu); with "pad" (d-pad + A) | "keys" (arrows + Enter); '
                 'confirm (false): press A/Enter on it; direction ("down") while it is off screen; max_moves (30)',
@@ -72,6 +74,37 @@ def difference(a, b) -> float:
     if a is None or b is None or a.shape != b.shape:
         return 255.0
     return float(np.abs(a[..., :3].astype(np.int16) - b[..., :3].astype(np.int16)).mean())
+
+
+def gray_small(frame, k: int = 4):
+    """A downscaled grayscale copy (every k-th pixel) for fast matching."""
+    np = _np()
+    f = frame[::k, ::k, :3].astype(np.float32)
+    return f[..., 2] * 0.299 + f[..., 1] * 0.587 + f[..., 0] * 0.114  # BGRA frames
+
+
+def match_template(img, tmpl) -> tuple[int, int, float]:
+    """(x, y, score) of the best normalized cross-correlation match of tmpl (top-left corner) in img, via FFT."""
+    np = _np()
+    ih, iw = img.shape
+    th, tw = tmpl.shape
+    if th > ih or tw > iw:
+        raise ValueError("template larger than the image")
+    t = tmpl - tmpl.mean()
+    tnorm = float(np.sqrt((t * t).sum())) + 1e-6
+    corr = np.fft.irfft2(np.fft.rfft2(img) * np.fft.rfft2(t[::-1, ::-1], s=img.shape), s=img.shape)[th - 1:, tw - 1:]
+    pad = np.pad(img, ((1, 0), (1, 0)))
+    s1 = pad.cumsum(0).cumsum(1)
+    s2 = (pad * pad).cumsum(0).cumsum(1)
+
+    def box(a):
+        return a[th:, tw:] - a[:-th, tw:] - a[th:, :-tw] + a[:-th, :-tw]
+
+    n = th * tw
+    var = box(s2) - box(s1) ** 2 / n
+    ncc = corr / (np.sqrt(np.maximum(var, 1e-6)) * tnorm)
+    y, x = divmod(int(np.argmax(ncc)), ncc.shape[1])
+    return x, y, float(ncc[y, x])
 
 
 def matches(when: dict, frame, previous) -> tuple[bool, dict]:
@@ -241,6 +274,11 @@ class Runtime:
         return frame, captured
 
     def _act(self, run: Run, do: dict) -> None:
+        if "hold" in do:  # a controller state kept until the behavior (or script state) ends, e.g. mining
+            run.used.add("hold")
+            self.out.hold(do["hold"] or {})
+            run.stats["actions"] += 1
+            return
         if "key" in do:
             run.used.add("key")
             self.out.key(do["key"] if isinstance(do["key"], list) else [do["key"]])
@@ -317,11 +355,72 @@ class Runtime:
         if "text" in until:
             if not self.read_text:
                 raise RuntimeError("text conditions need OCR")
-            want = " ".join(str(until["text"]).lower().split())
-            return any(want in " ".join(ln["text"].lower().split()) for ln in self.read_text(until.get("region")))
+            from .ocr import find
+            return find(self.read_text(until.get("region")), str(until["text"])) is not None
         frame, _ = self._frame(run, until.get("region"))
         hit, _m = matches(until, frame, baseline)
         return hit
+
+    def _run_track_at(self, run: Run, p: dict) -> None:
+        """Aim at whatever is at screen point `at` (e.g. a tree seen in a screenshot): remember a patch of the screen
+        around it, find it again in every frame, and turn (stick or mouse) until it sits at the aim point, by
+        default the middle of the screen, where 3D games put the crosshair."""
+        np = _np()
+        k = 4
+        frame, _ = self._frame(run, None)
+        h, w = frame.shape[:2]
+        size = max(32, min(int(p.get("size", 120)), 400))
+        half = size // (2 * k)
+        cx, cy = int(p["at"][0]) // k, int(p["at"][1]) // k
+        img = gray_small(frame, k)
+        if not (half <= cx < img.shape[1] - half and half <= cy < img.shape[0] - half):
+            raise ValueError("at is too close to the edge of the screen for its size")
+        tmpl = img[cy - half:cy + half, cx - half:cx + half].copy()
+        if float(tmpl.std()) < 3:
+            raise ValueError("nothing distinctive at that point to follow (a flat area)")
+        aim = p.get("aim") or [w / 2, h / 2]
+        output, gain = p.get("output", "right_stick"), float(p.get("gain", 0.8))
+        within, hold = float(p.get("within", 24)), int(p.get("hold_frames", 3))
+        scale, nudge = float(p.get("full_deflection_px", 500)), float(p.get("min_deflection", 0.22))
+        min_score = float(p.get("min_score", 0.45))
+        on_target, lost, errors = 0, 0, collections.deque(maxlen=600)
+        run.used.add("mouse" if output == "mouse" else "stick")
+        for n, _ in enumerate(self._ticks(run, p.get("hz", 30))):
+            frame, _ = self._frame(run, None)
+            img = gray_small(frame, k)
+            x, y, score = match_template(img, tmpl)
+            run.stats["match"] = round(score, 2)
+            if score < min_score:
+                lost += 1
+                run.stats["frames_without_target"] = lost
+                if output != "mouse":
+                    self.out.stick(output, 0.0, 0.0)
+                continue
+            tx, ty = (x + half) * k, (y + half) * k
+            ex, ey = tx - aim[0], ty - aim[1]
+            err = (ex * ex + ey * ey) ** 0.5
+            errors.append(err)
+            run.stats.update(error_px=round(err, 1), target=[int(tx), int(ty)])
+            if err <= within:
+                on_target += 1
+                if output != "mouse":
+                    self.out.stick(output, 0.0, 0.0)
+                if hold and on_target >= hold and not p.get("follow", False):
+                    run.reason = "on target"
+                    run.emit("on_target", error_px=round(err, 1), match=round(score, 2))
+                    return
+                continue
+            on_target = 0
+            if score > 0.8 and n % 10 == 9:  # refresh the patch as the view changes (only on a confident match)
+                tmpl = img[y:y + 2 * half, x:x + 2 * half].copy()
+            if output == "mouse":
+                self.out.mouse(int(round(np.clip(ex * gain * 0.5, -200, 200))), int(round(np.clip(ey * gain * 0.5, -200, 200))))
+            else:
+                def deflect(e):
+                    d = max(-1.0, min(1.0, e / scale * gain * 2))
+                    return 0.0 if abs(e) <= within / 2 else (d if abs(d) >= nudge else nudge * (1 if d > 0 else -1))
+                self.out.stick(output, deflect(ex), -deflect(ey))
+            run.stats["actions"] += 1
 
     def _run_navigate(self, run: Run, p: dict) -> None:
         if not self.read_text:
@@ -413,10 +512,12 @@ class Runtime:
         raise _Stopped("the script ran out of time")
 
     def _run_track(self, run: Run, p: dict) -> None:
+        if p.get("at"):
+            return self._run_track_at(run, p)
         region = p.get("region")
         color, tol = p.get("color"), int(p.get("tol", 50))
         if not color:
-            raise ValueError("track needs color [r, g, b]")
+            raise ValueError("track needs color [r, g, b], or at [x, y]")
         output, gain = p.get("output", "mouse"), float(p.get("gain", 0.6))
         within, hold = float(p.get("within", 10)), int(p.get("hold_frames", 5))
         aim, max_step = p.get("aim", "cursor"), float(p.get("max_step", 200))
@@ -469,14 +570,10 @@ def center_of(box) -> tuple[float, float]:
 
 
 def best_line(lines: list[dict], want: str) -> dict | None:
-    """The OCR line for a menu item: exact, then starts-with, then contains (case and spacing ignored)."""
-    ranked = []
-    for i, ln in enumerate(lines):
-        t = " ".join(ln["text"].lower().split())
-        score = 3 if t == want else 2 if t.startswith(want) else 1 if want in t else 0
-        if score:
-            ranked.append((-score, len(t), i))
-    return lines[min(ranked)[2]] if ranked else None
+    """The OCR line for a menu item: exact, then starts-with, then contains, then a close OCR misreading (case and
+    spacing ignored; see ocr.find)."""
+    from .ocr import find
+    return find(lines, want)
 
 
 def _dominant(pixels) -> float:

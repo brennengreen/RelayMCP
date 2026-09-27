@@ -40,6 +40,10 @@ handheld itself.
 - **SSH sessions no longer drop each other:** the shared SSH connection is owned by the background service and runs
   detached from it; commands reuse it but never become it (a connection born in a short-lived shell used to take
   every session riding on it down when that shell ended). `relaymcp trust` only stops it taking new sessions.
+- **Found by playing Minecraft:** text matching tolerates stylized game fonts (Minecraft's "Resume" reads as
+  "fiesume" to OCR, "Quit" as "auit"); `track` can aim at whatever is at a screen point (template matching, e.g. a
+  tree seen in a screenshot) and turns the camera until it's under the crosshair; behaviors can keep a controller
+  state held (`{"hold": {"right_trigger": 1}}`) until something happens, e.g. mine until the block breaks.
 - **`relaymcp-handheld` skill:** `relaymcp agent install` also adds an on-demand Copilot skill with the playbook
   (fast patterns and pitfalls), loaded only when a task involves the handheld.
 - **Hardened by review:** two independent review rounds before release: menu highlights are never guessed,
