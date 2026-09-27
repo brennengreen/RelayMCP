@@ -62,11 +62,19 @@ def test_observe_reads_the_window(server):
 
 
 def test_act_taps_text_and_waits_for_the_result(server):
-    out = call(server, "act", {"steps": [{"focus": "RelayActTest"}, {"tap_text": "Launch Mission"},
+    out = call(server, "act", {"steps": [{"focus": "RelayActTest"}, {"click_text": "Launch Mission"},
                                           {"wait_text": "Button pressed", "timeout": 8}], "observe": "text"})
     print("\nact:", out)
     assert "failed" not in out and out["done"] == "3/3", out
     assert any("button pressed" in line[0].lower() for line in out["observe"]["text"])
+
+
+def test_act_types_into_a_field(server):
+    label = call(server, "observe", {"find": "Button pressed"})  # the entry sits below the label
+    x, y = label["text"][0][1], label["text"][0][2] + 70
+    out = call(server, "act", {"steps": [{"click": [x, y]}, {"type": "hello relay"}, {"wait_text": "hello relay", "timeout": 5}]})
+    print("\ntype:", out)
+    assert out["done"] == "3/3", out
 
 
 def test_act_reports_the_failing_step(server):

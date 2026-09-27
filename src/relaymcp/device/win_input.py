@@ -397,6 +397,28 @@ def mouse_hold(button: str = "left", hold_ms: int = 500) -> dict:
     return {"button": button, "hold_ms": hold_ms}
 
 
+def mouse_click(x: float, y: float, button: str = "left", count: int = 1, interval_ms: int = 80) -> dict:
+    """Move the cursor to (x, y) in screen pixels and click (count=2 double-clicks). Works in apps that ignore touch."""
+    _check_point(x, y)
+    if button not in _BUTTONS:
+        raise ValueError("button must be left, right or middle")
+    down_flag, up_flag = _BUTTONS[button]
+    user32.SetCursorPos(round(x), round(y))
+    time.sleep(0.02)
+    count = max(1, min(int(count), 3))
+    for i in range(count):
+        d = INPUT(type=INPUT_MOUSE)
+        d.u.mi = MOUSEINPUT(dwFlags=down_flag)
+        u = INPUT(type=INPUT_MOUSE)
+        u.u.mi = MOUSEINPUT(dwFlags=up_flag)
+        _send([d])
+        time.sleep(0.03)
+        _send([u])
+        if i < count - 1:
+            time.sleep(interval_ms / 1000)
+    return {"clicked": [round(x), round(y)], "button": button, "count": count}
+
+
 # ---------------------------------------------------------------------------------------------------- touch keyboard
 
 def touch_keyboard(action: str = "status") -> dict:

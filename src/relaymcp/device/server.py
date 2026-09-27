@@ -192,9 +192,9 @@ def build_server(port: int) -> FastMCP:
     async def act(steps: list[dict], observe: str = "") -> Any:
         """Several steps in one call, in order; stops at the first failure. Steps (one key each; screen px):
         {"press": ["a"], "ms": 120}; {"pad": [gamepad_sequence steps]}; {"tap": [x, y]}; {"tap_text": "Play"};
-        {"swipe": [x1, y1, x2, y2], "ms": 300}; {"key": ["enter"]}; {"type": "text"}; {"focus": "Minecraft"};
-        {"wait": 500}; {"wait_text": "Connected", "timeout": 10} (or "gone": true). observe = "text" | "image"
-        returns the screen afterwards."""
+        {"click": [x, y]}; {"click_text": "OK"}; {"swipe": [x1, y1, x2, y2], "ms": 300}; {"key": ["enter"]};
+        {"type": "text"}; {"focus": "Minecraft"}; {"wait": 500}; {"wait_text": "Connected", "timeout": 10} (or
+        "gone": true). observe = "text" | "image" returns the screen afterwards."""
         if len(steps) > 40:
             raise ValueError("at most 40 steps per call")
         t_start, notes, failed = time.monotonic(), [], None
@@ -221,7 +221,7 @@ def build_server(port: int) -> FastMCP:
 
     async def act_step(step: dict) -> str | None:
         """Run one act step; returns a short note worth reporting (or None)."""
-        kind = next((k for k in step if k not in ("ms", "timeout", "gone", "hold_ms")), None)
+        kind = next((k for k in step if k not in ("ms", "timeout", "gone", "hold_ms", "button", "count")), None)
         arg, ms = step.get(kind), step.get("ms")
         if kind == "press":
             await _run(INPUT, gamepad.PAD.run_steps, [{"buttons": arg if isinstance(arg, list) else [arg], "ms": ms or 120}])
@@ -229,14 +229,19 @@ def build_server(port: int) -> FastMCP:
             await _run(INPUT, gamepad.PAD.run_steps, arg)
         elif kind == "tap":
             await _run(INPUT, win_input.touch_tap, int(arg[0]), int(arg[1]), 1, step.get("hold_ms", 60))
-        elif kind == "tap_text":
+        elif kind == "click":
+            await _run(INPUT, win_input.mouse_click, int(arg[0]), int(arg[1]), step.get("button", "left"), step.get("count", 1))
+        elif kind in ("tap_text", "click_text"):
             seen = await _run(SCREEN, read_text)
             hit = ocr.find(seen["lines"], str(arg))
             if not hit:
                 raise LookupError(f"no text matching {arg!r} on screen")
             x, y = ocr.center(hit["box"])
-            await _run(INPUT, win_input.touch_tap, x, y, 1, step.get("hold_ms", 60))
-            return f"tapped {hit['text']!r} at [{x},{y}]"
+            if kind == "tap_text":
+                await _run(INPUT, win_input.touch_tap, x, y, 1, step.get("hold_ms", 60))
+            else:
+                await _run(INPUT, win_input.mouse_click, x, y, step.get("button", "left"), step.get("count", 1))
+            return f"{'tapped' if kind == 'tap_text' else 'clicked'} {hit['text']!r} at [{x},{y}]"
         elif kind == "swipe":
             x1, y1, x2, y2 = (int(v) for v in arg)
             await _run(INPUT, win_input.touch_swipe, x1, y1, x2, y2, ms or 300, 0, 0)
