@@ -6,7 +6,8 @@ import importlib
 import time
 
 for name in ("paths", "text", "focus", "agent", "speech", "tts", "system", "launcher", "audio", "win_input", "gamepad", "voice",
-             "lean", "capture", "ocr", "procs", "pshost", "updates", "behave", "inbox", "turns", "control", "skills"):
+             "lean", "capture", "ocr", "procs", "pshost", "updates", "behave", "inbox", "turns", "control", "skills",
+             "pixfont"):
     t = time.monotonic()
     importlib.import_module(f"relaymcp.device.{name}")
     print(f"import relaymcp.device.{name}: {time.monotonic() - t:.2f}s", flush=True)

@@ -74,6 +74,14 @@ handheld itself.
   a radial stick (deadzone and curve on the stick's length, as in Minecraft) from a per-axis one, and turns send the
   stick vector that model needs; the finishing pulses on the vertical axis divided the deflection, not the rate, by
   the vertical gain (on the Ally a 2.7-degree pitch turn ended at 9.7).
+- **Armoury Crate's Command Center no longer eats the controller:** on the Ally it opened as the virtual pad
+  plugged in, and the game got no input at all (turn mode's resume press and every stick move went to the overlay's
+  menu, where a game's presses would change the handheld's settings). It's closed with the pad's B right after
+  plugging in and before agent input, and a program stops if it opens mid-run (as if you took over).
+- **Instruments read exactly:** programs get `numbers(region)` and `pixel_text(region)`, which read text drawn in a
+  game's pixel font glyph by glyph (Windows OCR read Minecraft's "Position: -11, 100, 0" as "-11, 13B," every time),
+  and `grid_angle(region)`, a compass for grid worlds: looking straight down, the texture's straight edges give the
+  yaw off the world's axes to a fraction of a degree.
 - **Programs queue like action chunks:** `params.after = <run id>` starts a program the moment that run finishes
   (plan the next chunk while one plays; it's cancelled if the run ahead fails or is stopped, and a guard firing
   clears the queue), and `params.replace = <run id>` swaps a running program for a new one without letting go of

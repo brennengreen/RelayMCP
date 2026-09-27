@@ -119,3 +119,23 @@ def test_the_pad_reprimes_after_touch_mouse_or_keyboard_input(pad, monkeypatch):
     out = pad.run_steps([{"buttons": ["a"], "ms": 10}])
     assert pad.reprimes == 1 and "reprimed" not in out  # once is enough
     assert gamepad._after(500, 0xFFFFFFF0) and not gamepad._after(0xFFFFFFF0, 500)  # tick wrap-around
+
+
+def test_the_command_center_overlay_is_closed_with_b_before_input(pad, monkeypatch):
+    """Seen on the Ally: Armoury Crate's Command Center opened as the pad plugged in; the game got no input (turn
+    mode's resume press and every stick move went to the overlay's menu)."""
+    open_ = [True]
+    monkeypatch.setattr(gamepad, "command_center_open", lambda max_age=0.25: open_[0])
+
+    def update():
+        if pad._pad.state.get("buttons", 0) & gamepad.BUTTON_BITS["b"]:
+            open_[0] = False  # B is the overlay's back button
+        pad._pad.updates.append(dict(pad._pad.state))
+    monkeypatch.setattr(pad._pad, "update", update)
+    note = pad.close_command_center()
+    assert note and note.startswith("closed Armoury Crate's Command Center"), note
+    assert pad._pad.updates[-1]["buttons"] == 0  # let go of B afterwards
+    assert pad.close_command_center() is None  # nothing open: nothing pressed
+    open_[0] = True
+    monkeypatch.setattr(pad._pad, "update", lambda: None)  # B does nothing this time
+    assert pad.close_command_center().startswith("WARNING")

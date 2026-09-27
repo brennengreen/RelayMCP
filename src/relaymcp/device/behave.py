@@ -63,7 +63,10 @@ KINDS = {
                '"min_deflection" (the stick deadzone it learned; pass it back next time)}. '
                't = track(x, y, size=120): follow what is at (x, y) yourself: t.find() -> (x, y, score) in the '
                'latest frame. shift(a, b) -> (dx, dy, peak): how far the view moved between two frames of the same '
-               'region (phase correlation; crop away the HUD), e.g. to calibrate camera turns. '
+               'region (phase correlation; crop away the HUD), e.g. to calibrate camera turns. numbers(region, '
+               'font="minecraft") -> ints drawn in a game\'s pixel font (HUD coordinates, counts), read exactly; '
+               'pixel_text(region); grid_angle(region) -> (degrees, strength): straight edges\' turn off square, '
+               'modulo 90 (looking straight down at a grid world: the yaw off its axes). '
                'guard(fn, "hurt"): checked during every wait, stops the program when fn() is truthy. log(msg, **data) '
                '-> an event; result = {...} is returned. Also W, H, CX, CY, np, math. Everything held is released '
                'when it ends; a stop request, max_s or a real controller moving ends it. skill("name", X=1) runs a '
@@ -1113,7 +1116,7 @@ class Program:
         seeing = {"elapsed": self.elapsed, "frame": self.frame, "diff": difference, "text": self.text,
                   "sees": self.sees, "color": self.color, "track": self.track, "shift": phase_shift, "log": self.log,
                   "W": self.w, "H": self.h, "CX": self.w // 2, "CY": self.h // 2, "np": _np(), "math": math,
-                  "time": time}
+                  "time": time, "numbers": self.numbers, "pixel_text": self.pixel_text, "grid_angle": self.grid_angle}
         if self.perception_only:  # guards watch; only their reflex program touches the controller
             return seeing
         return {**seeing, "pad": self.pad, "press": self.press, "seq": self.seq, "release": self.release,
@@ -1243,6 +1246,21 @@ class Program:
     def frame(self, region=None):
         return self.rt._frame(self.run, region)[0]
 
+    def pixel_text(self, region, font: str = "minecraft", threshold: int = 200) -> str:
+        """Text drawn in a game's pixel font, read exactly ("?" for glyphs the font table doesn't have)."""
+        from . import pixfont
+        return pixfont.read(self.frame(region), font, threshold)
+
+    def numbers(self, region, font: str = "minecraft", threshold: int = 200) -> list:
+        """Whole numbers in a HUD region drawn in a pixel font (after its last ":"), e.g. [x, y, z]."""
+        from . import pixfont
+        return pixfont.numbers(self.pixel_text(region, font, threshold))
+
+    def grid_angle(self, region=None) -> tuple:
+        """(degrees, strength): how far the picture's straight edges are turned off square, modulo 90."""
+        from .control import grid_angle
+        return grid_angle(self.frame(region))
+
     def _lines(self, region):
         if not self.rt.read_text:
             raise RuntimeError("text needs OCR")
@@ -1315,7 +1333,7 @@ class Program:
 
 
 Program.NAMES = {"elapsed", "frame", "diff", "text", "sees", "color", "track", "shift", "log", "W", "H", "CX", "CY",
-                 "np", "math", "time", "pad", "press", "seq", "release", "wait", "until", "aim", "guard", "skill",
+                 "np", "math", "time", "numbers", "pixel_text", "grid_angle", "pad", "press", "seq", "release", "wait", "until", "aim", "guard", "skill",
                  "turn", "level", "look_at", "scan", "look_rate", "camera"}
 
 

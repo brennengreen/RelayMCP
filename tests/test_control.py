@@ -484,3 +484,38 @@ def test_stick_for_splits_one_length_on_a_radial_stick():
     assert cam.stick_for(60.0, 0.0) == (cam.curve.deflection(60.0), 0.0)
     axial = control.Camera(cam.io, dict(prof, look=dict(look, stick="axial")))
     assert axial.stick_for(60.0, 40.0) == (axial.curve.deflection(60.0), axial.curve.deflection(80.0))
+
+
+def _pixel_art(seed=4, size=900, texel=32):
+    rng = np.random.default_rng(seed)
+    t = rng.integers(40, 220, (size // texel + 1, size // texel + 1)).astype(np.uint8)
+    return np.kron(t, np.ones((texel, texel), np.uint8))[:size, :size]
+
+
+def _rotated(img, deg):
+    """Content turned by deg in picture axes (x right, y down): clockwise on screen for deg > 0."""
+    h, w = img.shape
+    a = math.radians(deg)
+    ys, xs = np.mgrid[0:h, 0:w]
+    cx, cy = w / 2, h / 2
+    sx = np.cos(a) * (xs - cx) + np.sin(a) * (ys - cy) + cx
+    sy = -np.sin(a) * (xs - cx) + np.cos(a) * (ys - cy) + cy
+    return img[np.clip(sy.round().astype(int), 0, h - 1), np.clip(sx.round().astype(int), 0, w - 1)]
+
+
+@pytest.mark.parametrize("deg", [0.0, 7.5, -20.0, 33.0, 44.0])
+def test_grid_angle_reads_how_far_a_pixel_art_ground_is_turned(deg):
+    img = _rotated(_pixel_art(), deg)[250:650, 250:650]
+    got, strength = control.grid_angle(img)
+    err = (got - deg + 45) % 90 - 45
+    assert abs(err) < 1.0 and strength > 0.3, (got, strength)
+
+
+def test_grid_angle_sees_no_grid_in_isotropic_noise():
+    rng = np.random.default_rng(1)
+    img = rng.normal(0, 1, (400, 400))
+    k = np.exp(-np.arange(-6, 7) ** 2 / 8.0)
+    img = np.apply_along_axis(lambda r: np.convolve(r, k, "same"), 1, img)
+    img = np.apply_along_axis(lambda c: np.convolve(c, k, "same"), 0, img)  # blobs, no direction preferred
+    _deg, strength = control.grid_angle((img - img.min()) / np.ptp(img) * 255)
+    assert strength < 0.2, strength

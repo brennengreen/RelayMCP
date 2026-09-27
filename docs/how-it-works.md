@@ -128,6 +128,9 @@ unknown *plant* with a camera: nothing below is specific to one game.
    `level`, `look_at` (put a screen point under the crosshair) and `scan` in degrees. Turns feed forward through
    the inverse response curve, release early by the measured coast, keep following the picture through every
    pulse, and wait until the view has settled before correcting, like a servo's in-position check.
+   The game's own instruments are sensors too: HUD numbers (Minecraft's coordinates) are read exactly in the game's
+   pixel font, and looking straight down at a grid world, the texture's straight edges are a compass
+   (`grid_angle`).
 5. **Guard separately.** A `guard` behavior is a standing safety monitor, apart from the programs that come and go:
    when its condition holds (health dropping, a death screen) every program stops, a turn-based game pauses, an
    optional reflex program runs, and the next tool results carry an `alerts` entry. Guards only watch; they never

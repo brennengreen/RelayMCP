@@ -252,6 +252,40 @@ def yaw_with_focal(segments, f: float) -> float:
     return total
 
 
+def grid_angle(img, mask=None, smooth: int = 4) -> tuple[float, float]:
+    """The orientation of a picture's straight edges modulo 90 degrees, in (-45, 45]: pixel-art textures seen square
+    on (a voxel world's ground from straight above), floor tiles, a grid. A compass for grid worlds: looking straight
+    down, it is how far the camera's yaw is off the world's axes. Angles follow the picture's axes (x right, y down):
+    positive = the grid appears turned clockwise. Returns (degrees, strength 0-1: how much of the edge energy agrees;
+    below ~0.2 there is no clear grid). smooth: average k x k blocks first (a turned edge is drawn as a staircase of
+    single-pixel steps, whose own edges are square)."""
+    np = _np()
+    g = np.asarray(img, np.float64)
+    if g.ndim == 3:
+        g = g[..., :3].mean(axis=2)
+    if smooth > 1:
+        h, w = (g.shape[0] // smooth) * smooth, (g.shape[1] // smooth) * smooth
+        g = g[:h, :w].reshape(h // smooth, smooth, w // smooth, smooth).mean(axis=(1, 3))
+        if mask is not None:
+            mask = np.asarray(mask, bool)[:h, :w].reshape(h // smooth, smooth, w // smooth, smooth).all(axis=(1, 3))
+    # Scharr gradients: nearly the same response in every direction (plain differences bias the angle by degrees)
+    gx = 3 * (g[:-2, 2:] - g[:-2, :-2]) + 10 * (g[1:-1, 2:] - g[1:-1, :-2]) + 3 * (g[2:, 2:] - g[2:, :-2])
+    gy = 3 * (g[2:, :-2] - g[:-2, :-2]) + 10 * (g[2:, 1:-1] - g[:-2, 1:-1]) + 3 * (g[2:, 2:] - g[:-2, 2:])
+    r2 = gx * gx + gy * gy
+    if mask is not None:
+        m = np.asarray(mask, bool)[1:-1, 1:-1]
+        gx, gy, r2 = gx[m], gy[m], r2[m]
+    total = float(r2.sum())
+    if total <= 0:
+        return 0.0, 0.0
+    # r^2 e^(4i theta) = (gx^2 - gy^2 + 2i gx gy)^2 / r^2: a grid's edges at theta, theta + 90, ... all agree
+    c, s = gx * gx - gy * gy, 2 * gx * gy
+    ok = r2 > 1e-9
+    zr = float(((c * c - s * s)[ok] / r2[ok]).sum())
+    zi = float(((2 * c * s)[ok] / r2[ok]).sum())
+    return math.degrees(math.atan2(zi, zr) / 4), math.hypot(zr, zi) / total
+
+
 def world_turn(p) -> tuple[float, float]:
     """(yaw right, pitch up) radians from a camera rotation vector, for cameras that turn about the world's vertical
     axis and tilt without rolling (first-person games, gimbals): yawing while tilted rolls the picture, so yaw is the

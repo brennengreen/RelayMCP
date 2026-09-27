@@ -124,13 +124,14 @@ TURNS = turns.Turns(  # turn-based play (focus_window pause): the game runs only
 BEHAVIORS = behave.Runtime(
     grab=lambda region: SCREEN.submit(GRABBER.grab_array, region).result(timeout=5),
     outputs=_BehaviorOutputs(),
-    takeover=lambda: gamepad.physical_active(),
+    takeover=lambda: gamepad.physical_active() or ("Armoury Crate's Command Center opened (it takes the controller)"
+                                                   if gamepad.command_center_open() else None),
     read_text=lambda region: SCREEN.submit(lambda: ocr.recognize(GRABBER.grab(), capture.clamp_region(
         region, 0, 0, *win_input.screen_size()) if region else None)).result(timeout=10),
     cursor=lambda: capture.cursor_pos(),
     state_events=lambda topic, since: (lambda r: (r["events"], r["cursor"]))(inbox.INBOX.read(topic, since, 200)),
     # A paused game must be in front to resume; guards only watch, so they don't keep a turn-based game running.
-    on_start=lambda run: None if run.kind == "guard" else (focus.before_input(), TURNS.begin()),
+    on_start=lambda run: None if run.kind == "guard" else _before_behavior(run),
     on_end=lambda run: None if run.kind == "guard" else TURNS.end(),
     profiles=control.ProfileStore(USER_DIR / "profiles"),
     app=lambda: (focus.foreground() or {}).get("process") or "unknown",
@@ -149,16 +150,27 @@ def _in_worker(pool: ThreadPoolExecutor, fn, *args, **kwargs):
             gc.collect()
 
 
+def _before_behavior(run) -> None:
+    focus.before_input()
+    note = gamepad.PAD.close_command_center()
+    if note:
+        run.emit("note", text=note)
+    TURNS.begin()
+
+
 def _focused(fn, turn: bool = True):
     """Input goes to whatever is in front: refocus the remembered input target first, then report what had focus.
     In turn-based play the game is resumed first and paused again after (turn=False: not for this call)."""
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         pre = focus.before_input()
+        closed = gamepad.PAD.close_command_center()
         if turn:
             TURNS.begin()
         try:
             result = focus.annotate(fn(*args, **kwargs), pre)
+            if closed:
+                result["armoury_crate"] = closed
         finally:
             if turn:
                 TURNS.end()

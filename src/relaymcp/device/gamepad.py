@@ -32,6 +32,7 @@ if _WIN:
     _user32.EnumWindows.argtypes = [_WNDENUMPROC, wintypes.LPARAM]
     _user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
     _user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    _user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
 
 
 def _armoury_notice_windows() -> list[int]:
@@ -47,6 +48,41 @@ def _armoury_notice_windows() -> list[int]:
 
     _user32.EnumWindows(_WNDENUMPROC(cb), 0)
     return found
+
+
+COMMAND_CENTER_CLASS = "HwndWrapper[ClassicCommandCenter.exe"
+_cc_cache = [0.0, False]
+
+
+def command_center_open(max_age: float = 0.25) -> bool:
+    """Is Armoury Crate's Command Center overlay (ROG Ally) showing? While it is, games get no controller input: it
+    takes the controller for its own menu, where a game's presses would change the handheld's settings. Seen opening
+    as the virtual pad plugged in. Cached for max_age seconds (behaviors ask on every wait)."""
+    if not _WIN:
+        return False
+    now = time.monotonic()
+    if now - _cc_cache[0] <= max_age:
+        return _cc_cache[1]
+    found = []
+
+    def cb(hwnd, _):
+        if _user32.IsWindowVisible(hwnd):
+            buf = ctypes.create_unicode_buffer(64)
+            _user32.GetWindowTextW(hwnd, buf, 64)
+            if buf.value == "Command Center":
+                cls = ctypes.create_unicode_buffer(128)
+                _user32.GetClassNameW(hwnd, cls, 128)
+                if cls.value.startswith(COMMAND_CENTER_CLASS):
+                    found.append(hwnd)
+                    return False
+        return True
+
+    try:
+        _user32.EnumWindows(_WNDENUMPROC(cb), 0)
+    except Exception:
+        pass
+    _cc_cache[:] = [now, bool(found)]
+    return bool(found)
 
 
 def idle_limit_s() -> float | None:
@@ -207,6 +243,7 @@ class VirtualPad:
             # keep watching while the pad is plugged in.
             self.last_notice = dismiss_armoury_notice(NOTICE_WAIT_SECONDS if _armoury_crate_running() else 0.3)
             self.last_focus_restore = focus.restore(before)
+            self.last_notice = self.close_command_center() or self.last_notice
             self.primed = self._prime() if prime_enabled() else False
             self._watcher = threading.Thread(target=self._watch_notice, args=(before,), daemon=True)
             self._watcher.start()
@@ -237,6 +274,22 @@ class VirtualPad:
             return
         if self._prime():
             self.reprimes += 1
+
+    def close_command_center(self) -> str | None:
+        """Close the Command Center overlay with B (its back button) if it's showing and the pad is plugged in: the
+        agent is about to send input, and every press would go to the overlay's menu instead of the game."""
+        if self._pad is None or not command_center_open(max_age=0):
+            return None
+        with self._lock:
+            self._apply(BUTTON_BITS["b"], (0.0, 0.0), (0.0, 0.0), 0.0, 0.0)
+            time.sleep(0.12)
+            self._apply(0, (0.0, 0.0), (0.0, 0.0), 0.0, 0.0)
+        for _ in range(30):
+            time.sleep(0.05)
+            if not command_center_open(max_age=0):
+                return "closed Armoury Crate's Command Center (games get no controller input while it's open)"
+        return ("WARNING: Armoury Crate's Command Center is open and didn't close with B; games get no controller "
+                "input until it's closed (the handheld's Command Center button, or tap outside it)")
 
     def _prime(self) -> bool:
         """So the first real press lands in games that only wake up to a new controller (see PRIME_STEPS)."""
