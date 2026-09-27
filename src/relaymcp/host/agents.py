@@ -10,7 +10,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import config
+from . import config, devguard
 from .voice import find_agent
 
 COPILOT_CONFIG = Path.home() / ".copilot" / "mcp-config.json"
@@ -25,6 +25,7 @@ def copilot_servers() -> dict:
 
 def register_copilot(cfg: dict) -> list[str]:
     """Add/update the servers in Copilot CLI's user config. Returns what changed."""
+    devguard.check("change GitHub Copilot CLI's MCP registrations")
     exe = find_agent("copilot")
     if not exe:
         raise RuntimeError("GitHub Copilot CLI (`copilot`) isn't installed")
@@ -42,6 +43,7 @@ def register_copilot(cfg: dict) -> list[str]:
 
 
 def unregister_copilot(cfg: dict) -> list[str]:
+    devguard.check("change GitHub Copilot CLI's MCP registrations")
     exe = find_agent("copilot")
     current, removed = copilot_servers(), []
     for name, url, _ in config.mcp_servers(cfg):

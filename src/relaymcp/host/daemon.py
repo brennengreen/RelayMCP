@@ -14,7 +14,7 @@ from logging.handlers import RotatingFileHandler
 
 import relaymcp
 
-from . import config, tunnel, voice
+from . import config, devguard, tunnel, voice
 
 STATUS_FILE = config.STATE_DIR / "daemon.json"
 log = logging.getLogger("relaymcp")
@@ -37,6 +37,7 @@ def read_status() -> dict | None:
 
 
 def run() -> None:
+    devguard.check("run the background daemon (tunnels to the handheld)")
     _logging()
     cfg = config.load()
     stop = threading.Event()

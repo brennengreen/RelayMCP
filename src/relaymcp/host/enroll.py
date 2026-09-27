@@ -9,7 +9,7 @@ import threading
 import urllib.parse
 from pathlib import Path
 
-from . import kit
+from . import devguard, kit
 
 BOOTSTRAP = """$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
 $d = Join-Path $env:TEMP 'RelayMCP-kit'; New-Item -ItemType Directory -Force -Path $d | Out-Null
@@ -32,6 +32,7 @@ class Enrollment:
         return f"irm http://{self.bind}:{self.port}/{self.token} | iex"
 
     def start(self) -> None:
+        devguard.check("serve a setup kit on your network")
         enrollment = self
 
         class Handler(http.server.BaseHTTPRequestHandler):

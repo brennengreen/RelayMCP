@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-from . import config
+from . import config, devguard
 
 LABEL = "dev.relaymcp.daemon"
 SYSTEMD_UNIT = "relaymcp.service"
@@ -119,6 +119,7 @@ def backend() -> str:
 
 def install() -> str:
     """Install (or update) and start the service. Returns a short description."""
+    devguard.check("install or update the background service")
     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
     kind = backend()
     if kind == "launchd":
@@ -153,6 +154,7 @@ def install() -> str:
 
 
 def uninstall() -> bool:
+    devguard.check("remove the background service")
     kind = backend()
     if kind == "launchd":
         subprocess.run(["launchctl", "bootout", f"{_domain()}/{LABEL}"], capture_output=True)
@@ -172,6 +174,7 @@ def uninstall() -> bool:
 
 
 def restart() -> None:
+    devguard.check("restart the background service")
     kind = backend()
     if kind == "launchd":
         subprocess.run(["launchctl", "kickstart", "-k", f"{_domain()}/{LABEL}"], capture_output=True)

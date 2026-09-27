@@ -71,7 +71,17 @@ def load() -> dict:
     data: dict = {}
     if CONFIG_FILE.exists():
         data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-    return _merge(DEFAULTS, data)
+    return _merge(defaults(), data)
+
+
+def defaults() -> dict:
+    """DEFAULTS, with ports moved out of the way (+10000) in dev mode so a dev daemon can never collide with the real
+    one."""
+    out = copy.deepcopy(DEFAULTS)
+    if os.environ.get("RELAYMCP_DEV") == "1":
+        out["device"]["ports"] = {k: v + 10000 for k, v in out["device"]["ports"].items()}
+        out["enroll"]["port"] += 10000
+    return out
 
 
 def exists() -> bool:

@@ -11,7 +11,7 @@ import socket
 import subprocess
 from pathlib import Path
 
-from . import config
+from . import config, devguard
 
 MARK = "# Added by RelayMCP (https://github.com/brennengreen/RelayMCP); remove with `relaymcp uninstall`"
 NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -87,6 +87,7 @@ def user_ssh_config() -> Path:
 
 def ensure_include() -> bool:
     """Put `Include <~/.relaymcp/ssh_config>` at the top of ~/.ssh/config (Include only applies globally there)."""
+    devguard.check("edit ~/.ssh/config")
     path = user_ssh_config()
     line = f"Include {_p(config.SSH_CONFIG)}"
     current = path.read_text(encoding="utf-8") if path.exists() else ""
@@ -102,6 +103,7 @@ def ensure_include() -> bool:
 
 
 def remove_include() -> bool:
+    devguard.check("edit ~/.ssh/config")
     path = user_ssh_config()
     if not path.exists():
         return False
@@ -139,6 +141,7 @@ def fingerprint(key: str) -> str:
 
 
 def scan_host_key(host: str) -> str | None:
+    devguard.check("contact the handheld")
     try:
         out = subprocess.run(["ssh-keyscan", "-T", "5", "-t", "ed25519", host], capture_output=True, text=True,
                              timeout=20, creationflags=NO_WINDOW).stdout
@@ -152,6 +155,7 @@ def scan_host_key(host: str) -> str | None:
 
 
 def close_master(cfg: dict) -> None:
+    devguard.check("close the real SSH control connection")
     if os.name != "nt":
         subprocess.run([ssh_exe(), "-O", "exit", cfg["device"]["name"]], capture_output=True, timeout=10)
 
@@ -179,6 +183,7 @@ def reachable(host: str | None, port: int = 22, timeout: float = 3.0) -> bool:
 
 def run(cfg: dict, command: str, timeout: float = 60, check: bool = False) -> subprocess.CompletedProcess:
     """Run a command in the device's default shell (Windows PowerShell)."""
+    devguard.check("run commands on the handheld")
     return subprocess.run([ssh_exe(), "-o", "BatchMode=yes", cfg["device"]["name"], command], capture_output=True,
                           text=True, timeout=timeout, check=check, creationflags=NO_WINDOW)
 
@@ -207,5 +212,6 @@ def clixml_to_text(text: str) -> str:
 
 def copy_to(cfg: dict, local: list[Path], remote_dir: str, timeout: float = 600) -> None:
     """scp files to a folder (relative to the device user's home)."""
+    devguard.check("copy files to the handheld")
     subprocess.run([shutil.which("scp") or "scp", "-q", "-o", "BatchMode=yes", *[str(p) for p in local],
                     f"{cfg['device']['name']}:{remote_dir}/"], check=True, timeout=timeout, creationflags=NO_WINDOW)

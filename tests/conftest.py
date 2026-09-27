@@ -4,6 +4,13 @@ import sys
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_dev_mode(monkeypatch):
+    """Tests start outside dev mode even when run from a dev shell (scripts/dev-env.sh); dev-mode tests opt in."""
+    monkeypatch.delenv("RELAYMCP_DEV", raising=False)
+    monkeypatch.delenv("RELAYMCP_DEV_ALLOW", raising=False)
+
+
 @pytest.fixture()
 def relay_home(tmp_path, monkeypatch):
     """A throwaway ~/.relaymcp (and HOME) so tests never touch the real one."""
