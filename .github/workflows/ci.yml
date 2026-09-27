@@ -107,4 +107,4 @@ jobs:
           RELAYMCP_DEVICE_TESTS: "1"
         run: |
           uv pip install --python "$env:RUNNER_TEMP\devenv\Scripts\python.exe" pytest
-          & "$env:RUNNER_TEMP\devenv\Scripts\python.exe" -m pytest tests/device tests/test_capture.py -q -rs -s -p no:cacheprovider
+          & "$env:RUNNER_TEMP\devenv\Scripts\python.exe" -m pytest tests/device tests/test_capture.py tests/test_procs.py tests/test_pshost.py -q -rs -s -p no:cacheprovider

@@ -32,6 +32,12 @@ Input reliability, from real use driving Minecraft Bedrock on a ROG Ally.
 - **No tool-search round trip:** Copilot hides MCP tool schemas behind a search tool, which cost every voice prompt
   an extra model call. Voice runs and the `handheld` agent keep the handheld's tool schemas in view; other Copilot
   sessions are unchanged.
+- **`proc` tool: long-running consoles over MCP** (e.g. a Bedrock Dedicated Server): start one, send it a line and
+  get its reply, read only new output, or wait until a line matches, all without screenshots. Updates wait while one
+  runs.
+- **`powershell` tool on the hardware server:** a persistent session (variables and functions carry over, ~50 ms per
+  call instead of 1.5–2.5 s), DPI-aware so Win32 coordinates match screenshots, and errors as plain `ERROR:` lines
+  instead of CLIXML.
 - **Agents hear about updates:** MCP clients only load tools when a session starts, so after an update, results
   briefly carry a `relaymcp_update` note naming the new tools and saying to start a new session. `handheld_status`
   reports the tool count and a tool-set hash.

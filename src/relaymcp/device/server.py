@@ -36,7 +36,7 @@ from mcp.types import ImageContent, TextContent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import __version__, audio, capture, focus, gamepad, lean, ocr, speech, system, tts, updates, voice, win_input
+from . import __version__, audio, capture, focus, gamepad, lean, ocr, procs, pshost, speech, system, tts, updates, voice, win_input
 from .lean import compact, lean_result, lean_schema
 from .paths import USER_DIR, VOICE_HEADER, device_settings
 
@@ -54,6 +54,9 @@ PLAY = ThreadPoolExecutor(max_workers=1, thread_name_prefix="play", initializer=
 STT = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stt", initializer=_com_init)  # whisper (CPU heavy)
 SCREEN = ThreadPoolExecutor(max_workers=1, thread_name_prefix="screen", initializer=_com_init)  # capture + OCR (owns DXGI)
 GRABBER = capture.Grabber()
+PROC = ThreadPoolExecutor(max_workers=4, thread_name_prefix="proc")  # process sessions (reads and waits block)
+PROCS = procs.Manager(USER_DIR / "procs.json")
+PS = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ps")  # the persistent PowerShell session, one call at a time
 
 
 def _in_worker(pool: ThreadPoolExecutor, fn, *args, **kwargs):
@@ -91,6 +94,7 @@ controller, speakers, mic). Pair with the `{screen}` server (screen control): lo
 - Fastest loop: observe (screen text + tap points) -> act (several steps in one call, e.g. tap_text + wait_text).
   screenshot here is faster and ~3x cheaper than `{screen}`'s; its to_screen maps image to screen pixels.
 - Coordinates are physical screen pixels, the same as `{screen}` screenshots.
+- powershell here keeps its session and is ~30x faster than `{screen}`'s; proc runs consoles (e.g. a game server).
 - Input only reaches the window in front. After launching a game, call focus_window("<game>") once (not `{screen}`'s
   App switch, which can claim success when it failed): input tools keep it in front, and each result's `foreground`
   says where input went (plus a warning if it was probably lost).
@@ -275,6 +279,22 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
         else:
             raise ValueError(f"unknown step {step!r}")
         return None
+
+    # ------------------------------------------------------------------------------------------ processes
+    @tool()
+    async def powershell(script: str, timeout: float = 60.0, reset: bool = False) -> dict:
+        """PowerShell in a persistent desktop-session runspace: variables and functions persist, ~50 ms per call,
+        DPI-aware (Win32 coordinates = screen px), errors as plain "ERROR:" lines. reset = start fresh."""
+        return await _run(PS, pshost.HOST.run, script, timeout, reset)
+
+    @tool()
+    async def proc(action: str, name: str = "", command: str = "", cwd: str = "", text: str = "", pattern: str = "",
+                   timeout: float = 10.0, cursor: int | None = None, max_lines: int = 60) -> dict:
+        """Long-running processes you talk to (e.g. a game server console), no window, desktop session. action:
+        start (name, command, cwd; pattern = wait for a ready line) | send (name, text = a line for its stdin; returns
+        the reply, or waits for pattern) | read (new output since the last read) | wait (pattern regex, timeout s) |
+        stop (text = graceful command, e.g. "stop") | list. Updates wait while one runs."""
+        return await _run(PROC, procs.run, PROCS, action, name, command, cwd, text, pattern, timeout, cursor, max_lines)
 
     # ------------------------------------------------------------------------------------------ gamepad
     @tool()
@@ -631,6 +651,11 @@ def main() -> None:
         try:
             gamepad.PAD.disconnect()
             win_input.release_all_keys()
+        except Exception:
+            pass
+        try:
+            PROCS.stop_all()  # don't leave orphaned consoles behind
+            pshost.HOST.stop()
         except Exception:
             pass
         log.info("RelayMCP hardware server stopped")

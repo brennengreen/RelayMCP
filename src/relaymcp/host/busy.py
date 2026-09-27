@@ -29,6 +29,8 @@ $all = @(Get-CimInstance Win32_Process)
 $sshd = @($all | Where-Object { $_.Name -eq 'sshd-session.exe' } | ForEach-Object { $_.ProcessId })
 $mine = @(); $p = $PID
 for ($i = 0; $i -lt 16 -and $p; $i++) { $mine += $p; $p = ($all | Where-Object { $_.ProcessId -eq $p } | Select-Object -First 1).ParentProcessId }
+$pf = Join-Path $u 'procs.json'
+$o.proc_sessions = @(if (Test-Path $pf) { try { (Get-Content $pf -Raw | ConvertFrom-Json).running | Where-Object { Get-Process -Id $_.pid -ErrorAction SilentlyContinue } | ForEach-Object { $_.name } } catch { } })
 $o.ssh_commands = @($all | Where-Object { ($sshd -contains $_.ParentProcessId) -and ($_.Name -notin @('sshd-session.exe', 'conhost.exe')) -and ($mine -notcontains $_.ProcessId) } | ForEach-Object { '{0} since {1:HH:mm}' -f $_.Name, $_.CreationDate })
 $o | ConvertTo-Json -Compress
 """
@@ -69,6 +71,11 @@ def reasons(probe: dict, quiet_s: int = 60, ignore_lease: bool = False) -> list[
     awake_until = _when(probe.get("awake_until"))
     if awake_until and awake_until > now and not ignore_lease:
         out.append(f"a keep-awake lease until {awake_until:%H:%M}")
+    sessions = probe.get("proc_sessions") or []
+    if isinstance(sessions, str):
+        sessions = [sessions]
+    if sessions:
+        out.append("process sessions running: " + ", ".join(sessions[:4]))
     commands = probe.get("ssh_commands") or []
     if isinstance(commands, str):
         commands = [commands]
