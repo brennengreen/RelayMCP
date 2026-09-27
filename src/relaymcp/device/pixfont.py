@@ -58,17 +58,18 @@ def font_scale(mask) -> int:
     return max(1, int(np.median(runs[:max(1, len(runs) // 4)])))
 
 
-def glyph_grid(mask, scale: int) -> list[str]:
-    """The text as font pixels: one character per font pixel, sampled at each pixel's middle."""
+def glyph_grid(mask, scale: float) -> list[str]:
+    """The text as font pixels: one character per font pixel, sampled at each pixel's middle. The scale may be
+    fractional (a HUD scaled by a non-whole factor: Minecraft's hotbar counts are ~3.7 px per font pixel)."""
     np = _np()
     rows, cols = np.flatnonzero(mask.any(axis=1)), np.flatnonzero(mask.any(axis=0))
     if not len(rows):
         return []
     top, left = int(rows[0]), int(cols[0])
-    h = (int(rows[-1]) - top) // scale + 1
-    w = (int(cols[-1]) - left) // scale + 1
-    ys = np.minimum(top + np.arange(h) * scale + scale // 2, mask.shape[0] - 1)
-    xs = np.minimum(left + np.arange(w) * scale + scale // 2, mask.shape[1] - 1)
+    h = max(1, int(round((int(rows[-1]) - top + 1) / scale)))
+    w = max(1, int(round((int(cols[-1]) - left + 1) / scale)))
+    ys = np.minimum((top + (np.arange(h) + 0.5) * scale).astype(int), mask.shape[0] - 1)
+    xs = np.minimum((left + (np.arange(w) + 0.5) * scale).astype(int), mask.shape[1] - 1)
     sub = mask[np.ix_(ys, xs)]
     return ["".join("#" if v else "." for v in r) for r in sub]
 
@@ -114,13 +115,28 @@ def match_glyph(bitmap: list[str], font: dict[str, tuple[str, ...]], max_wrong: 
 
 
 def read(img, font: str = "minecraft", threshold: int = 200) -> str:
-    """The text in an image region drawn in a known pixel font ("?" for glyphs it doesn't know, e.g. letters)."""
+    """The text in an image region drawn in a known pixel font ("?" for glyphs it doesn't know, e.g. letters). The
+    font's pixel size is tried three ways (the thinnest strokes; the text's height as 7 rows, or 8 with a descender)
+    and the reading with the fewest unknown glyphs wins."""
+    np = _np()
     mask = ink_mask(img, threshold)
-    scale = font_scale(mask)
-    if not scale:
+    run = font_scale(mask)
+    if not run:
         return ""
+    rows = np.flatnonzero(mask.any(axis=1))
+    height = int(rows[-1]) - int(rows[0]) + 1
+    candidates = [float(run)]
+    for c in (height / ROWS, height / (ROWS + 1)):
+        if c >= 1.0 and all(abs(c - o) > 0.05 for o in candidates):
+            candidates.append(c)
     glyphs = FONTS[font]
-    return "".join(match_glyph(bm, glyphs) for _x, bm in split_glyphs(glyph_grid(mask, scale)))
+    best = None
+    for scale in candidates:
+        text = "".join(match_glyph(bm, glyphs) for _x, bm in split_glyphs(glyph_grid(mask, scale)))
+        key = (text.count("?"), -len(text.strip()))
+        if best is None or key < best[0]:
+            best = (key, text)
+    return best[1]
 
 
 def numbers(text: str) -> list[int]:

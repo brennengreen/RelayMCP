@@ -92,3 +92,25 @@ def test_programs_read_hud_numbers():
     rt = behave.Runtime(Hud().grab, Out())
     out = behave.run_tool(rt, "start", "program", {"code": "result = numbers([0, 0, W, H])", "wait": True}, max_s=5)
     assert out["state"] == "done" and out["result"] == [-13, 100, 1], out
+
+
+
+def render_scaled(grid, scale, background=40):
+    """Font pixels drawn at a fractional scale (nearest neighbour), white on a dim box, no shadow."""
+    h, w = int(round((len(grid) + 2) * scale)), int(round((len(grid[0]) + 2) * scale))
+    img = np.full((h, w, 4), background, np.uint8)
+    ys, xs = np.mgrid[0:h, 0:w]
+    fy, fx = (ys / scale).astype(int) - 1, (xs / scale).astype(int) - 1
+    inside = (fy >= 0) & (fy < len(grid)) & (fx >= 0) & (fx < len(grid[0]))
+    ink = np.zeros((h, w), bool)
+    ink[inside] = [grid[a][b] == "#" for a, b in zip(fy[inside], fx[inside])]
+    img[ink, :3] = 255
+    return img
+
+
+@pytest.mark.parametrize("scale", [3.7, 2.6, 4.3])
+def test_hotbar_counts_drawn_at_a_fractional_scale_read_right(scale):
+    """Minecraft's hotbar counts are drawn ~3.7 screen px per font pixel: sampling on a whole-pixel grid drifts a
+    font pixel within two glyphs ("20" read as "?")."""
+    for s in ("20", "17", "5", "64", "38"):
+        assert pixfont.read(render_scaled(text_grid(s), scale)) == s, (s, scale)
