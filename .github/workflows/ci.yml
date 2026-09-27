@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - run: uvx ruff check src tests scripts
       - name: Parse the setup script template (PowerShell)
         shell: pwsh
@@ -73,7 +73,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - run: uv venv --python ${{ matrix.python }}
       - run: uv pip install -e ".[dev]"
       - run: uv run --no-sync pytest
@@ -86,7 +86,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - run: uv venv --python 3.9   # macOS's own /usr/bin/python3 is 3.9
       - run: uv pip install -e ".[dev]"
       - run: uv run --no-sync pytest
@@ -99,7 +99,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
       - run: uv venv --python 3.12
       - run: uv pip install -e .
       - name: Build a real kit
