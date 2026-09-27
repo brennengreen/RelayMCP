@@ -114,6 +114,11 @@ def copilot_command(cfg: dict, exe: str, prompt: str, sid: str, fresh: bool) -> 
             cmd += ["--allow-tool", server]
         for server in other_copilot_servers(own):
             cmd += ["--disable-mcp-server", server]
+    # Copilot defers MCP tool schemas behind a search tool, which costs a voice prompt a whole extra model round trip.
+    # Re-declaring the hardware server for this run only keeps its schemas in view (other sessions stay deferred).
+    urls = {n: url for n, url, _ in config.mcp_servers(cfg)}
+    cmd += ["--additional-mcp-config", json.dumps({"mcpServers": {own[1]: {
+        "type": "http", "url": urls[own[1]], "tools": ["*"], "deferTools": "never"}}}, separators=(",", ":"))]
     if v.get("model"):
         cmd += ["--model", str(v["model"])]
     if v.get("reasoning_effort"):

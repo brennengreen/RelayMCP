@@ -45,6 +45,9 @@ def test_copilot_command_limits_tools(relay_home, monkeypatch):
     i = cmd.index("--available-tools")
     assert cmd[i + 1:i + 3] == ["ally", "ally-handheld"] and "--disable-builtin-mcps" in cmd
     assert cmd[cmd.index("--model") + 1] == "gpt-5.4-mini" and "--no-custom-instructions" in cmd
+    extra = json.loads(cmd[cmd.index("--additional-mcp-config") + 1])["mcpServers"]
+    assert extra == {"ally-handheld": {"type": "http", "url": "http://127.0.0.1:8767/mcp", "tools": ["*"],
+                                       "deferTools": "never"}}
     cfg["voice"]["permissions"] = "full"
     full = voice.copilot_command(cfg, "copilot", "hi", "sid", fresh=False)
     assert "--allow-all" in full and "--available-tools" not in full and "--disable-builtin-mcps" not in full

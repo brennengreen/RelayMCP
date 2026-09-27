@@ -22,6 +22,12 @@ Input reliability, from real use driving Minecraft Bedrock on a ROG Ally.
 - **`handheld_status` ~2 s faster:** brightness is read and set through WMI over COM instead of starting PowerShell.
 - **Leaner tools:** hardware tool definitions are 21% smaller (no schema titles or null defaults, shorter
   descriptions), and results are minified JSON without empty fields.
+- **`relaymcp agent install`** adds a `handheld` custom agent to GitHub Copilot CLI: a fast model (Claude Haiku
+  4.5 by default, `--model` to change it) with only RelayMCP's tools and a short playbook. Main sessions hand
+  device work to it instead of driving the handheld step by step with a slow model.
+- **No tool-search round trip:** Copilot hides MCP tool schemas behind a search tool, which cost every voice prompt
+  an extra model call. Voice runs and the `handheld` agent keep the handheld's tool schemas in view; other Copilot
+  sessions are unchanged.
 - **`relaymcp bench`** measures latency (ping, status, screenshot, SSH) and tokens per result, and compares runs.
   `scripts/analyze_session.py` splits a Copilot session's time into model and device time.
 - **Dev mode** (`scripts/dev-env.sh`): a development checkout can't touch the real installation.

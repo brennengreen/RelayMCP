@@ -467,6 +467,21 @@ def cmd_exec(args: argparse.Namespace) -> None:
     sys.exit(out.returncode)
 
 
+def cmd_agent(args: argparse.Namespace) -> None:
+    cfg = _need_config()
+    if args.model:
+        cfg.setdefault("agent", {})["model"] = args.model
+        config.save(cfg)
+    if args.action == "install":
+        changed = agents.install_agent(cfg)
+        ui.ok(f"{'installed' if changed else 'already up to date'}: {agents.agent_path()} (model {agents.agent_model(cfg)})")
+        ui.info("Copilot sessions started from now on can hand handheld work to it (or pick it with /agent handheld).")
+    elif args.action == "remove":
+        ui.ok("removed" if agents.remove_agent() else "not installed")
+    else:
+        print(agents.handheld_agent(cfg))
+
+
 def cmd_bench(args: argparse.Namespace) -> None:
     from . import bench
     cfg = _need_config()
@@ -594,6 +609,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--timeout", type=float, default=300)
     s.add_argument("command", nargs=argparse.REMAINDER)
     s.set_defaults(func=cmd_exec)
+
+    s = sub.add_parser("agent", help="a fast Copilot CLI custom agent for hands-on handheld work")
+    s.add_argument("action", nargs="?", choices=["install", "remove", "print"], default="print")
+    s.add_argument("--model", help=f"model it runs on (default {agents.DEFAULT_AGENT_MODEL})")
+    s.set_defaults(func=cmd_agent)
 
     s = sub.add_parser("bench", help="measure tool latency and context cost through the tunnel")
     s.add_argument("--rounds", type=int, default=15, help="pings per server")
