@@ -79,7 +79,8 @@ KINDS = {
     "calibrate": 'learn the camera controls of the app in front, once per app (~30 s: pass max_s 90; somewhere safe '
                  'with a textured view, in the gameplay view): which pixels are HUD, input latency, acceleration, the '
                  'right stick\'s deadzone and response curve, degrees per pixel (turns all the way round), focal '
-                 'length, vertical gain and pitch limit. Saved on the handheld; programs then get turn/level/look_at/'
+                 'length, vertical gain, pitch limit and whether the stick is radial. Saved on the handheld; programs then get '
+                 'turn/level/look_at/'
                  'scan. params: points (deflections to measure), full_turn (true), pitch (true).',
     "guard": 'a standing safety check, separate from programs (they come and go, it stays): setup (code run once: '
              'regions, baselines, e.g. RED0 = color([190,30,30], HEARTS)); when (a Python expression over frame, '

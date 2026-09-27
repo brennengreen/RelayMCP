@@ -34,11 +34,14 @@ class CameraSim:
     TW, TH = 3072, 1536  # the world's texture (equirectangular)
 
     def __init__(self, hfov=90.0, max_rate=240.0, deadzone=0.3, expo=2.0, accel_s=0.12, latency_s=0.04,
-                 limit=80.0, invert_y=False, hud=True, seed=11, fps=None, pitch=0.0, slow_ms=0.0):
+                 limit=80.0, invert_y=False, hud=True, seed=11, fps=None, pitch=0.0, slow_ms=0.0, y_gain=1.0,
+                 radial=False):
         self.fps, self._vsync, self._shown = fps, None, None
         self.slow_ms = slow_ms  # extra time per new frame, like a slow machine or capture
         self.max_rate, self.deadzone, self.expo = max_rate, deadzone, expo
         self.accel_s, self.latency_s, self.limit, self.invert = accel_s, latency_s, limit, invert_y
+        self.y_gain = y_gain  # pitch turns this much slower than yaw at the same deflection (Minecraft: ~0.67)
+        self.radial = radial  # deadzone and curve on the stick's length (Minecraft), not on each axis
         self.focal = (self.W / 2) / math.tan(math.radians(hfov / 2))
         self.ppd = self.focal * math.pi / 180  # px per degree at the middle of the picture
         self.tex = _texture(self.TH, self.TW, 8, seed)
@@ -102,7 +105,12 @@ class CameraSim:
             dt = min(0.002, now - self.t)
             self.t += dt
             cx, cy = self._command_at(self.t)
-            tx, ty = self.rate_for(cx), self.rate_for(cy) * (-1 if self.invert else 1)
+            if self.radial:
+                m = min(1.0, math.hypot(cx, cy))
+                r = self.rate_for(m) / m if m > 0 else 0.0
+                tx, ty = r * cx, r * cy * self.y_gain * (-1 if self.invert else 1)
+            else:
+                tx, ty = self.rate_for(cx), self.rate_for(cy) * self.y_gain * (-1 if self.invert else 1)
             a = min(1.0, dt / tau)
             self.vx += (tx - self.vx) * a
             self.vy += (ty - self.vy) * a
@@ -161,7 +169,8 @@ def true_profile(sim):
     pts = (0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.85, 1.0)
     return {"px_per_deg": sim.ppd, "focal_px": sim.focal, "pitch_bottom_deg": -sim.limit,
             "look": {"curve": [[d, sim.rate_for(d)] for d in pts], "latency_s": sim.latency_s,
-                     "accel_s": sim.accel_s, "y_gain": -1.0 if sim.invert else 1.0}}
+                     "accel_s": sim.accel_s, "y_gain": sim.y_gain * (-1.0 if sim.invert else 1.0),
+                     "stick": "radial" if sim.radial else "axial"}}
 
 
 def test_response_curve_and_its_inverse():
@@ -439,3 +448,39 @@ def test_a_turn_that_runs_out_of_time_says_so():
     out = cam.turn(yaw=150, timeout=0.3)
     assert out.get("timed_out") is True, out
     assert "timed_out" not in cam.turn(yaw=-20), "a turn that got there doesn't carry the flag"
+
+
+@pytest.mark.parametrize("radial", [True, False])
+def test_small_combined_turns_on_a_radial_or_per_axis_stick(radial):
+    """Minecraft on the Ally: a radial stick (deadzone 0.4 on its length), pitch at 0.67x the yaw rate. Sending each
+    axis through the curve alone pushed the stick's length far past the deadzone, and a (3.4, -2.7) turn ended at
+    -9.7 pitch after 1.9 s; the finishing pulses also divided the deflection (not the rate) by the vertical gain."""
+    sim = CameraSim(deadzone=0.4, max_rate=150.0, expo=1.0, y_gain=0.67, latency_s=0.06, accel_s=0.03, radial=radial)
+    cam = control.Camera(io_for(sim), true_profile(sim))
+    for yaw, pitch in ((3.4, -2.7), (-3.4, 2.7), (-2.0, 3.5), (0.0, -2.2), (12.0, 6.0), (-30.9, -7.0)):
+        p0, y0 = sim.pitch, sim.turned
+        out = cam.turn(yaw=yaw, pitch=pitch)
+        assert abs((sim.pitch - p0) - pitch) < 1.2 and abs((sim.turned - y0) - yaw) < 1.2, (yaw, pitch, out,
+                                                                                            sim.pitch - p0)
+
+
+@pytest.mark.parametrize("radial", [True, False])
+def test_calibration_tells_a_radial_stick_from_a_per_axis_one(radial):
+    sim = CameraSim(deadzone=0.4, max_rate=150.0, expo=1.0, y_gain=0.67, radial=radial, limit=85.0)
+    events = []
+    io = control.PlantIO(frame=sim.frame, stick=sim.stick, sleep=time.sleep, log=lambda m, **d: events.append((m, d)))
+    prof = control.calibrate(io, points=(0.3, 0.4, 0.5, 0.6, 0.7, 0.85, 1.0), hold_s=0.35, full_turn=False)
+    assert prof["look"]["stick"] == ("radial" if radial else "axial"), [e for e in events if e[0] == "stick"]
+    assert abs(prof["look"]["y_gain"] - 0.67) < 0.07, prof["look"]["y_gain"]
+    assert abs(sim.pitch) < 2.0, sim.pitch
+
+
+def test_stick_for_splits_one_length_on_a_radial_stick():
+    look = {"curve": [[0.4, 0.0], [0.5, 25.0], [0.7, 75.0], [1.0, 150.0]], "y_gain": 0.5}
+    prof = {"px_per_deg": 10.0, "focal_px": 573.0, "look": dict(look, stick="radial")}
+    cam = control.Camera(control.PlantIO(frame=lambda: None, stick=lambda x, y: None, sleep=time.sleep), prof)
+    x, y = cam.stick_for(60.0, 40.0)  # pitch 40 at gain 0.5 takes the yaw rate 80: length for hypot(60, 80) = 100
+    assert math.hypot(x, y) == pytest.approx(cam.curve.deflection(100.0)) and x / y == pytest.approx(60 / 80)
+    assert cam.stick_for(60.0, 0.0) == (cam.curve.deflection(60.0), 0.0)
+    axial = control.Camera(cam.io, dict(prof, look=dict(look, stick="axial")))
+    assert axial.stick_for(60.0, 40.0) == (axial.curve.deflection(60.0), axial.curve.deflection(80.0))

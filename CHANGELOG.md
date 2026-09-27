@@ -70,7 +70,10 @@ handheld itself.
   the full turn solves the focal length that makes it exactly 360 degrees (a rough first focal length no longer
   biases pixels per degree by 2-3%), redoing the turn slower if tracking broke or the start view was missed.
   `look_at` corrects only on a match near the middle of the picture (on the Ally, a look-alike dirt block across the
-  screen pulled it 20 degrees away), and a `turn` that runs out of time says so (`timed_out`).
+  screen pulled it 20 degrees away), and a `turn` that runs out of time says so (`timed_out`). Calibration also tells
+  a radial stick (deadzone and curve on the stick's length, as in Minecraft) from a per-axis one, and turns send the
+  stick vector that model needs; the finishing pulses on the vertical axis divided the deflection, not the rate, by
+  the vertical gain (on the Ally a 2.7-degree pitch turn ended at 9.7).
 - **Programs queue like action chunks:** `params.after = <run id>` starts a program the moment that run finishes
   (plan the next chunk while one plays; it's cancelled if the run ahead fails or is stopped, and a guard firing
   clears the queue), and `params.replace = <run id>` swaps a running program for a new one without letting go of

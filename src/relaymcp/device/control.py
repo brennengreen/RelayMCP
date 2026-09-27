@@ -920,6 +920,22 @@ def calibrate(io: PlantIO, points=(0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.8
             # stick down normally moves the picture up (-y), stick up moves it down (+y)
             look["y_gain"] = round(math.copysign(abs(vy) / rate_yaw, -vy if down else vy), 3)
         io.log("pitch", deflection=d_p, y_gain=look["y_gain"])
+        # 6. Radial or per-axis stick: most games apply the deadzone and response curve to the stick's length (a
+        #    diagonal push turns both ways at the curve's rate for its full length), some to each axis alone. A
+        #    servo that assumes the wrong one overshoots when both axes move (seen on Minecraft: +7 degrees).
+        a = d_p / math.sqrt(2)
+        px_curve = ResponseCurve([[d, r] for d, r in curve_px])
+        odo = cam.odometry()
+        io.stick(a, -a if down else a)
+        trace = _trace(io, odo, seconds, axis=0)
+        io.stick(0.0, 0.0)
+        cam._settle(odo)
+        vx = abs(_steady_rate(trace, steady_after))
+        radial_px, axial_px = rate_yaw / math.sqrt(2), abs(px_curve.rate(a))
+        radial = abs(math.log(max(vx, 1.0) / max(radial_px, 1.0))) <= abs(math.log(max(vx, 1.0) / max(axial_px, 1.0)))
+        look["stick"] = "radial" if radial else "axial"
+        io.log("stick", kind=look["stick"], diagonal_px_s=round(vx), radial_px_s=round(radial_px),
+               axial_px_s=round(axial_px))
         Camera(io, profile).level()
     return profile
 
@@ -939,6 +955,7 @@ class Camera:
         self.latency = float(look.get("latency_s", 0.05))
         self.accel = max(0.03, float(look.get("accel_s", 0.1)))
         self.y_gain = float(look.get("y_gain", 1.0)) or 1.0
+        self.radial = look.get("stick", "radial") != "axial"  # most games; calibration says which
         self.max_d = float(look.get("max_deflection", 1.0))  # faster than this, odometry can't follow
         # how far (in seconds of the current speed) it keeps turning after the stick lets go
         self.coast = float(look.get("coast_s") or (self.latency + self.accel / 3))
@@ -959,6 +976,16 @@ class Camera:
             return 0.0
         decel = self.curve.max_rate / max(self.coast, 0.03)
         return math.copysign(min(self.curve.max_rate, math.sqrt(1.2 * decel * left), 5.0 * left), err)
+
+    def stick_for(self, yaw_rate: float, pitch_rate: float) -> tuple[float, float]:
+        """Stick (x, y) for yaw and pitch rates (degrees/s). A radial stick turns at the curve's rate for the stick's
+        length, split by its direction; a per-axis one takes each axis through the curve alone."""
+        yr, pr = yaw_rate, (pitch_rate / self.y_gain if pitch_rate else 0.0)  # pitch as the yaw rate it takes
+        if self.radial and yr and pr:
+            mag = math.hypot(yr, pr)
+            m = abs(self.curve.deflection(mag))
+            return m * yr / mag, m * pr / mag
+        return (self.curve.deflection(yr) if yr else 0.0), (self.curve.deflection(pr) if pr else 0.0)
 
     def _hold(self, odo: Odometry, x: float, y: float, seconds: float) -> None:
         """Hold the stick for `seconds`, then center it, following the picture all the while (odometry can't
@@ -1008,7 +1035,7 @@ class Camera:
                 if ry == 0 and rp == 0 and (abs(ey) > tol or abs(ep) > tol):
                     io.stick(0.0, 0.0)  # coasting in on the inputs already sent
                 else:
-                    io.stick(self.curve.deflection(ry), self.curve.deflection(rp / self.y_gain) if rp else 0.0)
+                    io.stick(*self.stick_for(ry, rp))
                 started = time.perf_counter() - t0 > self.latency + self.accel + 0.1  # (not moving yet is not a limit)
                 still = still + 1 if started and rp and abs(vy) < 0.03 * self.curve.max_rate * self.ppd else 0
                 if still >= 8:  # pushing the pitch and the picture doesn't move: a pitch limit
@@ -1023,12 +1050,12 @@ class Camera:
                     break
                 for axis, err in ((0, ey), (1, ep)):
                     if abs(err) > tol:
-                        want = min(0.3 * self.curve.max_rate, max(self.curve.min_rate, abs(err) / 0.15))
-                        d = self.curve.deflection(math.copysign(want, err))
-                        rate = max(abs(self.curve.rate(d)), 1e-6)  # what that deflection really turns
+                        g = self.y_gain if axis == 1 else 1.0  # pitch turns g x as fast as yaw at a deflection
+                        want = min(0.3 * self.curve.max_rate, max(self.curve.min_rate, abs(err) / 0.15 / abs(g)))
+                        d = self.curve.deflection(math.copysign(want, err / g))
+                        rate = max(abs(self.curve.rate(d) * g), 1e-6)  # what that deflection really turns
                         # (a lagging camera still turns rate x time in all)
-                        self._hold(odo, d if axis == 0 else 0.0, (d / self.y_gain) if axis == 1 else 0.0,
-                                   min(0.4, abs(err) / rate))
+                        self._hold(odo, d if axis == 0 else 0.0, d if axis == 1 else 0.0, min(0.4, abs(err) / rate))
                 self._settle(odo)
         finally:
             io.stick(0.0, 0.0)
@@ -1108,8 +1135,7 @@ class Camera:
 
     def rates(self, yaw_rate: float = 0.0, pitch_rate: float = 0.0) -> tuple[float, float]:
         """Stick deflections that turn at these rates (deg/s): feedforward only."""
-        return (self.curve.deflection(yaw_rate) if yaw_rate else 0.0,
-                self.curve.deflection(pitch_rate / self.y_gain) if pitch_rate else 0.0)
+        return self.stick_for(yaw_rate, pitch_rate)
 
     def scan(self, score: Callable, degrees: float = 360.0, rate: float | None = None) -> dict:
         """Turn round (right) calling score(frame) on each view; then turn back to the best one. Returns its heading
