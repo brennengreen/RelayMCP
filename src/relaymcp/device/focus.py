@@ -78,6 +78,14 @@ def invisible(fg: dict | None) -> bool:
     return fg.get("visible") is False or rect[2] - rect[0] <= 0 or rect[3] - rect[1] <= 0
 
 
+def is_app_window(info: dict | None) -> bool:
+    """A window a person would put input into: not the desktop, shell, a known focus stealer or an invisible window."""
+    if not info or info.get("desktop") or info.get("minimized") or invisible(info):
+        return False
+    proc = (info.get("process") or "").lower()
+    return proc not in FOCUS_STEALERS and proc not in SHELL_PROCESSES
+
+
 def warning_for(fg: dict | None, target: dict | None) -> str | None:
     """Why input probably didn't land, or None."""
     if not fg or fg.get("desktop"):
@@ -381,14 +389,98 @@ def target() -> dict | None:
         return _target
 
 
+class ForegroundTracker:
+    """Watches the foreground window (4 times a second, cheap Win32 calls): keeps a short history of who had focus
+    and when, and the last normal app window, so focus stolen by a pop-up or an invisible helper can be put back
+    even when no input target was set."""
+
+    def __init__(self, history: int = 24):
+        from collections import deque
+        self.changes = deque(maxlen=history)
+        self.last_app: dict | None = None
+        self._hwnd = None
+        self._thread = None
+
+    def note(self, info: dict | None, at: float) -> None:
+        hwnd = (info or {}).get("hwnd")
+        if hwnd == self._hwnd:
+            return
+        self._hwnd = hwnd
+        entry = {"at": time.strftime("%H:%M:%S", time.localtime(at)), **(short(info) or {"app": None})}
+        if info and invisible(info):
+            entry["invisible"] = True
+        self.changes.append(entry)
+        if is_app_window(info):
+            self.last_app = {"hwnd": info["hwnd"], "title": info.get("title"), "app": info.get("app")}
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+
+        def loop():
+            while True:
+                try:
+                    self.note(foreground(), time.time())
+                except Exception:
+                    pass
+                time.sleep(0.25)
+
+        self._thread = threading.Thread(target=loop, name="foreground", daemon=True)
+        self._thread.start()
+
+    def recent(self, n: int = 8) -> list[dict]:
+        return list(self.changes)[-n:]
+
+
+TRACKER = ForegroundTracker()
+
+
 def before_input() -> dict:
-    """Called before sending input: brings the remembered target back to the front if something took focus."""
+    """Called before sending input: brings the remembered target back to the front if something took focus. With no
+    target, a focus stealer (a pop-up or an invisible helper window) gives focus back to the last app window."""
     t = target()
-    if not t or not t["hwnd"]:
-        return {}
-    if foreground_hwnd() == t["hwnd"]:
-        return {}
-    return {"refocused": bool(focus_window(t["hwnd"]).get("ok"))}
+    if t and t["hwnd"]:
+        if foreground_hwnd() == t["hwnd"]:
+            return {}
+        return {"refocused": bool(focus_window(t["hwnd"]).get("ok"))}
+    fg = foreground()
+    last = TRACKER.last_app
+    stolen = fg and ((fg.get("process") or "").lower() in FOCUS_STEALERS or invisible(fg))  # not the shell or Start
+    if stolen and last and last["hwnd"] != fg.get("hwnd") and window_info(last["hwnd"]):
+        return {"refocused": bool(focus_window(last["hwnd"]).get("ok"))}
+    return {}
+
+
+def diagnose() -> dict:
+    """Why input might not register, in one call: what has focus (and whether it can take input), the input target,
+    the last app window, recent focus changes, and how long since real input."""
+    fg = foreground()
+    t = target()
+    out = {"foreground": short(fg, t if t and t["hwnd"] else None), "input_target": t and {k: t[k] for k in ("query", "title", "app")},
+           "last_app_window": TRACKER.last_app and {k: TRACKER.last_app[k] for k in ("title", "app")},
+           "focus_changes": TRACKER.recent(), "warning": warning_for(fg, t if t and t["hwnd"] else None)}
+    if fg:
+        out["foreground"].update({k: True for k in ("hung", "minimized") if fg.get(k)})
+        if invisible(fg):
+            out["foreground"]["invisible"] = True
+    idle = last_input_seconds()
+    if idle is not None:
+        out["seconds_since_input"] = idle
+    return out
+
+
+def last_input_seconds() -> float | None:
+    """Seconds since the last keyboard, mouse, touch or pen input on this session (Windows counts injected input too)."""
+    try:
+        class LASTINPUTINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+        u, k, _ = _win()
+        li = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
+        if not u.GetLastInputInfo(ctypes.byref(li)):
+            return None
+        return round(((k.GetTickCount() - li.dwTime) & 0xFFFFFFFF) / 1000, 1)
+    except Exception:
+        return None
 
 
 def annotate(result, pre: dict | None = None) -> dict:

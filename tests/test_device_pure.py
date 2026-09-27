@@ -62,3 +62,23 @@ def test_invisible_focus_holders_are_named():
             "visible": True}
     assert not invisible(game) and warning_for(game, {"hwnd": 1}) is None
     assert not invisible(None)
+
+
+def test_tracker_remembers_the_last_app_window_and_focus_changes():
+    from relaymcp.device.focus import ForegroundTracker, is_app_window
+    game = {"hwnd": 1, "title": "Minecraft", "process": "Minecraft.Windows.exe", "app": "Minecraft.Windows.exe",
+            "rect": [0, 0, 1920, 1080], "visible": True}
+    stealer = {"hwnd": 2, "title": "AsHotplugCtrl", "process": "AsHotplugCtrl.exe", "app": "AsHotplugCtrl.exe",
+               "rect": [0, 0, 0, 0], "visible": True}
+    start = {"hwnd": 3, "title": "Start", "process": "SearchHost.exe", "app": "SearchHost.exe",
+             "rect": [0, 0, 800, 600], "visible": True}
+    assert is_app_window(game) and not is_app_window(stealer) and not is_app_window(start)
+    t = ForegroundTracker()
+    t.note(game, 1000)
+    t.note(game, 1001)  # no change, no entry
+    t.note(stealer, 1002)
+    t.note(start, 1003)
+    assert t.last_app["title"] == "Minecraft"
+    changes = t.recent()
+    assert [c["app"] for c in changes] == ["Minecraft.Windows", "AsHotplugCtrl", "SearchHost"]
+    assert changes[1].get("invisible") is True and "invisible" not in changes[0]

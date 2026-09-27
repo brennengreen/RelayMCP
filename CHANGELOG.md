@@ -4,6 +4,11 @@
 
 Input reliability, from real use driving Minecraft Bedrock on a ROG Ally.
 
+- **Focus stealers are caught and undone:** input results name invisible windows that hold focus (like ASUS'
+  AsHotplugCtrl) instead of reporting success. The hardware server watches the foreground and, when a pop-up or an
+  invisible helper takes focus, gives it back to the last app window before sending input, even with no input
+  target set. `focus_window()` with no target explains why input may not register: what has focus, recent focus
+  changes, and seconds since the last input.
 - **Input lands in the game:** when the virtual gamepad plugs in, Armoury Crate's notice took the foreground and input
   was silently dropped. RelayMCP now puts the game back in front after closing the notice.
 - **`focus_window`** brings a window to the front past Windows' foreground lock and reports what *really* has focus.

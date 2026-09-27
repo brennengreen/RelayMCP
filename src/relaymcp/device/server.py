@@ -357,12 +357,11 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
     async def focus_window(target: str = "", remember: bool = True) -> dict:
         """Bring a window to the front and verify it really is (past Windows' foreground lock). target = title or
         process, e.g. "Minecraft"; remember=True makes it the input target (input tools refocus it). Empty target
-        = what has focus now; "none" clears the target."""
+        = what has focus and why input may not register (recent focus changes, time since input); "none" clears
+        the target."""
         def run() -> dict:
             if not target:
-                t = focus.target()
-                return {"foreground": focus.short(focus.foreground(), t), "input_target": t and {k: t[k] for k in ("query", "title", "app")},
-                        "windows": [focus.short(w) for w in focus.windows(8)]}
+                return {**focus.diagnose(), "windows": [focus.short(w) for w in focus.windows(8)]}
             if target.strip().lower() == "none":
                 focus.set_target(None)
                 return {"input_target": None, "foreground": focus.short(focus.foreground())}
@@ -638,6 +637,7 @@ def main() -> None:
     log.addHandler(handler)
     log.setLevel(logging.INFO)
     win_input.set_dpi_awareness()
+    focus.TRACKER.start()
     log.info("RelayMCP hardware server %s starting on 127.0.0.1:%d", __version__, args.port)
     if args.parent_pid:
         _exit_with_parent(args.parent_pid)
