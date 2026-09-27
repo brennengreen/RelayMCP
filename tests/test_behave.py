@@ -809,3 +809,14 @@ def test_aimer_can_look_only_near_where_the_target_should_be():
     assert abs(x - 620) <= 8 and abs(y - 440) <= 8 and score > 0.9, (x, y, score)
     x, y, score = aimer.find(img, refresh=False, near=(160, 260, 60))
     assert abs(x - 160) <= 8 and abs(y - 260) <= 8 and score > 0.9, (x, y, score)
+
+
+def test_a_guard_started_again_under_its_name_replaces_itself():
+    rt, _ = program_rt()
+    a = rt.start("guard", {"name": "health", "when": "False"}, max_s=30)
+    b = rt.start("guard", {"name": "health", "when": "False"}, max_s=30)
+    c = rt.start("guard", {"name": "fire", "when": "False"}, max_s=30)
+    time.sleep(0.4)
+    states = {r["id"]: r["state"] for r in rt.status()["behaviors"]}
+    assert states[a["id"]] == "stopped" and states[b["id"]] == "running" and states[c["id"]] == "running", states
+    rt.stop()

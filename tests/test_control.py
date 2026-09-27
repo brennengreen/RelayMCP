@@ -531,3 +531,36 @@ def test_yawing_while_looking_straight_down_turns_the_right_way():
         start = sim.turned
         out = cam.turn(yaw=want)
         assert abs((sim.turned - start) - want) < 2.0, (want, sim.turned - start, out)
+
+
+def test_the_next_program_knows_where_the_camera_was_left_looking(tmp_path):
+    """Turn-based play runs one program per call: the pitch set at a limit in one (Minecraft's -90) must carry over,
+    or the next program's yaws seen straight down turn the wrong way."""
+    sim = CameraSim(limit=90.0, pitch=-90.0, deadzone=0.0, expo=1.0)
+    store = control.ProfileStore(tmp_path)
+    store.save("Sim.exe", true_profile(sim))
+    behave, rt = _runtime(sim, store)
+    st = behave.run_tool(rt, "start", "program", {"code": "set_pitch(-90)\nturn(yaw=10)", "wait": True}, max_s=10)
+    assert st["state"] == "done" and rt.pitch_known.get("Sim.exe") == pytest.approx(-90.0, abs=1.0), rt.pitch_known
+    for want in (30.0, -45.0):
+        start = sim.turned
+        st = behave.run_tool(rt, "start", "program", {"code": f"turn(yaw={want})", "wait": True}, max_s=10)
+        assert st["state"] == "done" and abs((sim.turned - start) - want) < 2.0, (want, sim.turned - start)
+
+
+def test_a_stalled_picture_away_from_a_limit_is_not_a_limit():
+    """Right after a jump the picture can stall for a moment: with the pitch known, only near straight up or down
+    does a stall mean a pitch limit."""
+    sim = CameraSim(limit=90.0, pitch=0.0)
+    cam = control.Camera(io_for(sim), true_profile(sim))
+    cam.set_pitch(0.0)
+    real = sim.stick
+    calls = [0]
+
+    def sluggish(x, y):  # the game ignores the stick for the first ~0.35 s
+        calls[0] += 1
+        real(x, y) if time.perf_counter() - t0 > 0.35 else real(0.0, 0.0)
+    cam.io.stick = sluggish
+    t0 = time.perf_counter()
+    out = cam.turn(pitch=40)
+    assert "pitch_limit" not in out and abs(sim.pitch - 40) < 2.0, (out, sim.pitch)

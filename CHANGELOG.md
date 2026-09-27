@@ -87,6 +87,10 @@ handheld itself.
 - **Turn mode is sturdier:** a dropped resume press is tried again (then the close button) instead of letting a
   program play into the pause menu for its whole run, and a pause profile's `dead` text (e.g. "Respawn") keeps it
   from pressing pause on a death screen, where it only opened a menu that ate the next presses.
+- **Programs remember where the camera looks:** the next program's camera starts knowing the pitch the last one
+  left it at (turn-based play runs one program per call; yaws seen straight down need it), not after you take over;
+  and with the pitch known, a stalled picture only counts as a pitch limit near straight up or down (right after a
+  jump's landing it stalled mid-range). A guard started again under its name replaces itself.
 - **Instruments read exactly:** programs get `numbers(region)` and `pixel_text(region)`, which read text drawn in a
   game's pixel font glyph by glyph (Windows OCR read Minecraft's "Position: -11, 100, 0" as "-11, 13B," every time),
   and `grid_angle(region)`, a compass for grid worlds: looking straight down, the texture's straight edges give the

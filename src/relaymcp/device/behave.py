@@ -353,6 +353,7 @@ class Runtime:
         self.cursor = cursor
         self.state_events = state_events  # (topic, since) -> (events [{"n", "topic", "data"}], cursor): the inbox
         self.runs: dict[str, Run] = {}
+        self.pitch_known: dict[str, float] = {}  # app -> the camera's pitch when the last program left it (degrees)
         self._lock = threading.Lock()
 
     # --- lifecycle ---------------------------------------------------------------------------------------------------
@@ -383,6 +384,12 @@ class Runtime:
                 raise RuntimeError(f"at most {MAX_QUEUED} behaviors queued (let some play first)")
             if not queue and not replace and len(active) >= MAX_RUNS:
                 raise RuntimeError(f"at most {MAX_RUNS} behaviors at a time (stop one first)")
+            same = [r for r in active if kind == "guard" and r.kind == "guard" and params.get("name")
+                    and r.params.get("name") == params.get("name")]
+            for r in same:  # a guard started again under its name replaces itself (no pile of copies)
+                r.stop_reason = "replaced by a new guard of the same name"
+                r.stop_evt.set()
+                active.remove(r)
             if kind == "guard" and sum(r.kind == "guard" for r in active) >= MAX_GUARDS:
                 raise RuntimeError(f"at most {MAX_GUARDS} guards at a time (stop one first)")
             for rid in [rid for rid, r in self.runs.items() if r.state not in ("running", "queued")][:-8]:
@@ -844,6 +851,13 @@ class Runtime:
             run.thread_id = None
             if skill_name and self.skills is not None:
                 self.skills.record(app, str(skill_name), outcome)
+            # the next program's camera starts out knowing its pitch (yaws seen straight down need it); not after
+            # someone took over the controller: they may have moved the camera
+            cam = api._camera
+            if cam is not None and cam._tilt is not None and "took over" not in outcome:
+                self.pitch_known[api.app] = cam._tilt
+            else:
+                self.pitch_known.pop(api.app, None)
         if "result" in ns:
             run.stats["result"] = _jsonable(ns["result"])
 
@@ -1107,6 +1121,8 @@ class Program:
                                  stick=lambda x, y: self._apply({**self.state, "right_stick": [x, y]}),
                                  sleep=lambda seconds: self.wait(seconds * 1000), log=self.log)
             self._camera = control.Camera(io, self.profile)
+            if self.app in self.rt.pitch_known:
+                self._camera.set_pitch(self.rt.pitch_known[self.app])
         return self._camera
 
     def look_rate(self, yaw_dps: float = 0.0, pitch_dps: float = 0.0) -> None:

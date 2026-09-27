@@ -1098,8 +1098,13 @@ class Camera:
                     io.stick(*self.stick_for(ry, rp))
                 started = time.perf_counter() - t0 > self.latency + self.accel + 0.1  # (not moving yet is not a limit)
                 still = still + 1 if started and rp and abs(vy) < 0.03 * self.curve.max_rate * self.ppd else 0
-                if still >= 8:  # pushing the pitch and the picture doesn't move: a pitch limit
-                    at_limit = True
+                if still >= 8:  # pushing the pitch and the picture doesn't move: a pitch limit (when the pitch is
+                    # known, only near straight up or down: right after a jump's landing the picture also stalls)
+                    now_p = None if self._tilt is None else self._tilt + odo.y / self.ppd
+                    if now_p is None or abs(now_p) > 80:
+                        at_limit = True
+                    else:
+                        still = 0
                 io.sleep(1 / 120)
             io.stick(0.0, 0.0)
             self._settle(odo)
