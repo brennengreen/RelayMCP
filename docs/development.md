@@ -74,6 +74,10 @@ Things worth knowing:
   Windows-MCP screenshots).
 - **SSH sessions can't see the desktop.** To inspect windows, use the Windows-MCP `PowerShell` tool (which runs in
   the signed-in session) rather than `relaymcp exec`.
+- **ViGEmBus before vgamepad:** vgamepad ships only as source, and its build opens the ViGEmBus driver's interactive
+  installer if the driver isn't registered, which would hang an unattended setup. So the kit carries the driver's MSI
+  (the exact one vgamepad bundles, from its pinned PyPI release) and `Relay-Setup.ps1` installs it silently, after a
+  signature check, before building the runtime. CI does the same on a clean Windows runner.
 - **Don't hide consoles with `conhost --headless` or restart loops in `.cmd` files.** Defender flags that pattern;
   see [how-it-works.md](how-it-works.md#the-agent-and-its-servers-process-lifecycle).
 

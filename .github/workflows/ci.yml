@@ -64,6 +64,18 @@ jobs:
           $expected = "the CI runner$([char]0x2019)s PC"
           if ($HostLabel -ne $expected) { throw "host label mangled: [$HostLabel]" }
           'parsed OK; host label intact'
+      - name: Install the ViGEmBus driver silently from the kit (as setup does, before the runtime)
+        timeout-minutes: 5
+        shell: powershell
+        run: |
+          $msi = "$env:RUNNER_TEMP\kit\ViGEmBusSetup_x64.msi"
+          $sig = Get-AuthenticodeSignature -FilePath $msi
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Nefarius') { throw "bad signature: $($sig.Status) $($sig.SignerCertificate.Subject)" }
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart /l*v `"$env:RUNNER_TEMP\vigembus.log`"" -Wait -PassThru
+          "msiexec exit code: $($p.ExitCode)"
+          $registered = [bool](Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue | Get-ItemProperty -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'Nefarius Virtual Gamepad Emulation Bus Driver*' })
+          if (-not $registered) { Get-Content "$env:RUNNER_TEMP\vigembus.log" -Tail 30; throw 'ViGEmBus is not registered after the silent install' }
+          'ViGEmBus installed and registered'
       - name: Install the device runtime from the kit (as the handheld does)
         timeout-minutes: 10
         run: |

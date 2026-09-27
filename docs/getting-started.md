@@ -67,7 +67,7 @@ Choose **Yes** when Windows asks for administrator rights. The first run takes 2
 - [uv](https://docs.astral.sh/uv/) and a private Python 3.12
 - [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) (pinned version) and the RelayMCP device runtime
 - the Whisper speech models and the Kokoro voice (~200 MB, hash-checked)
-- the ViGEmBus virtual-controller driver (signature-checked)
+- the ViGEmBus virtual-controller driver (signature-checked; x64 handhelds)
 - two scheduled tasks (`RelayMCP-Controller`, `RelayMCP-Agent`) plus the *Repair RelayMCP* and *Ask Copilot*
   shortcuts
 

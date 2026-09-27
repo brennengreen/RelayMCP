@@ -300,7 +300,7 @@ try {
     Invoke-Icacls @($KitDir, '/inheritance:r', '/grant', '*S-1-5-32-544:(OI)(CI)F', '/grant', '*S-1-5-18:(OI)(CI)F', '/grant', '*S-1-5-32-545:(OI)(CI)RX', '/Q')
     if ($PSScriptRoot -and ($PSScriptRoot.TrimEnd('\') -ne $KitDir)) {
         Copy-Item -Path $PSCommandPath -Destination (Join-Path $KitDir 'Relay-Setup.ps1') -Force
-        foreach ($f in @($MsiName, 'relaymcp-device.zip')) {
+        foreach ($f in @($MsiName, 'relaymcp-device.zip', 'ViGEmBusSetup_x64.msi')) {
             $src = Join-Path $PSScriptRoot $f
             if (Test-Path $src) { Copy-Item -Path $src -Destination (Join-Path $KitDir $f) -Force }
         }
@@ -461,6 +461,25 @@ try {
     $mcpPython = Join-Path $toolDir.Trim() 'windows-mcp\Scripts\python.exe'
     if (-not (Test-Path $mcpPython)) { throw "Windows-MCP's Python wasn't found at $mcpPython." }
 
+    Step 'Virtual gamepad driver (ViGEmBus)'
+    # Must come before the runtime: building vgamepad (the driver's Python wrapper) on a machine without the driver
+    # opens the driver's interactive installer and waits for clicks. Installed silently here instead, from the kit's
+    # copy, after checking the publisher's signature.
+    $vigemRegistered = [bool](Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+        Get-ItemProperty -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'Nefarius Virtual Gamepad Emulation Bus Driver*' })
+    $vigemPresent = [bool](Get-PnpDevice -FriendlyName '*Virtual Gamepad Emulation Bus*' -PresentOnly -ErrorAction SilentlyContinue)
+    if ($vigemRegistered -and $vigemPresent) {
+        Info 'already installed'
+    } else {
+        $vigem = Join-Path $KitDir 'ViGEmBusSetup_x64.msi'
+        if (-not (Test-Path $vigem)) { throw 'ViGEmBusSetup_x64.msi is missing from this kit. Rebuild it with `relaymcp kit`.' }
+        $sig = Get-AuthenticodeSignature -FilePath $vigem
+        if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Nefarius') { throw "The ViGEmBus installer's signature isn't valid ($($sig.Status))." }
+        Info 'installing the virtual gamepad driver (about 20 seconds)...'
+        $p = Start-Process msiexec.exe -ArgumentList "/i `"$vigem`" /qn /norestart /l*v `"$(Join-Path $KitDir 'vigembus-install.log')`"" -Wait -PassThru
+        if ($p.ExitCode -notin 0, 3010) { throw "The ViGEmBus installer failed (exit code $($p.ExitCode)); see vigembus-install.log." }
+    }
+
     Step 'RelayMCP device runtime (hardware tools, voice; runs hidden)'
     $hhZip = Join-Path $KitDir 'relaymcp-device.zip'
     $hhDir = Join-Path $KitDir 'device'
@@ -493,15 +512,6 @@ try {
         throw 'relaymcp-device.zip is missing from this kit. Rebuild it with `relaymcp kit`.'
     }
     if ($hhInstalled) {
-        # Virtual gamepad driver (ViGEmBus), shipped signed inside the vgamepad package.
-        if (-not (Get-PnpDevice -FriendlyName '*Virtual Gamepad Emulation Bus*' -PresentOnly -ErrorAction SilentlyContinue)) {
-            $vigem = Join-Path $hhVenv 'Lib\site-packages\vgamepad\win\vigem\install\x64\ViGEmBusSetup_x64.msi'
-            $sig = Get-AuthenticodeSignature -FilePath $vigem
-            if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Nefarius') { throw "The ViGEmBus installer's signature isn't valid ($($sig.Status))." }
-            Info 'installing the virtual gamepad driver (ViGEmBus)...'
-            $p = Start-Process msiexec.exe -ArgumentList "/i `"$vigem`" /qn /norestart /l*v `"$(Join-Path $KitDir 'vigembus-install.log')`"" -Wait -PassThru
-            if ($p.ExitCode -notin 0, 3010) { throw "The ViGEmBus installer failed (exit code $($p.ExitCode))." }
-        }
         # Fixed-action SYSTEM task that closes Armoury Crate's "External controller connected" notice (an elevated
         # window the non-elevated server can't click) without choosing anything. Standard users may run only this task.
         $service = New-Object -ComObject Schedule.Service
