@@ -25,10 +25,15 @@ class WNDCLASSW(ctypes.Structure):
     _fields_ = [("style", w.UINT), ("lpfnWndProc", WNDPROC), ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int),
                 ("hInstance", w.HINSTANCE), ("hIcon", w.HICON), ("hCursor", w.HANDLE), ("hbrBackground", w.HBRUSH),
                 ("lpszMenuName", w.LPCWSTR), ("lpszClassName", w.LPCWSTR)]
-wc = WNDCLASSW(lpfnWndProc=proc, hInstance=k.GetModuleHandleW(None), lpszClassName="RELAYSTEALER")
+k.GetModuleHandleW.restype = w.HMODULE
+k.GetModuleHandleW.argtypes = [w.LPCWSTR]
+hinst = k.GetModuleHandleW(None)
+wc = WNDCLASSW(lpfnWndProc=proc, hInstance=hinst, lpszClassName="RELAYSTEALER")
 u.RegisterClassW(ctypes.byref(wc))
 u.CreateWindowExW.restype = w.HWND
-hwnd = u.CreateWindowExW(0x00080080, "RELAYSTEALER", "RelayStealer", 0x94000000, 0, 0, 0, 0, None, None, wc.hInstance, None)
+u.CreateWindowExW.argtypes = [w.DWORD, w.LPCWSTR, w.LPCWSTR, w.DWORD, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                              ctypes.c_int, w.HWND, w.HMENU, w.HINSTANCE, w.LPVOID]
+hwnd = u.CreateWindowExW(0x00080080, "RELAYSTEALER", "RelayStealer", 0x94000000, 0, 0, 0, 0, None, None, hinst, None)
 print(hwnd, flush=True)
 msg = w.MSG()
 end = time.time() + 60
@@ -44,8 +49,10 @@ def scene():
     pytest.importorskip("tkinter")
     from relaymcp.device import focus
     app = subprocess.Popen([sys.executable, "-c", APP])
-    stealer = subprocess.Popen([sys.executable, "-c", STEALER], stdout=subprocess.PIPE, text=True)
-    hwnd = int(stealer.stdout.readline().strip())
+    stealer = subprocess.Popen([sys.executable, "-c", STEALER], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    first = stealer.stdout.readline().strip()
+    assert first.isdigit(), f"the helper window didn't start: {first} {stealer.stdout.read()[-500:]}"
+    hwnd = int(first)
     deadline = time.time() + 20
     while time.time() < deadline and not focus.find_window("RelayStealTarget"):
         time.sleep(0.2)
