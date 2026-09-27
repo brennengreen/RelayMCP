@@ -28,6 +28,11 @@ def scp_exe() -> str:
     return (override + "-scp") if override else (shutil.which("scp") or "scp")
 
 
+def keyscan_exe() -> str:
+    override = os.environ.get("RELAYMCP_SSH")
+    return (override + "-keyscan") if override else (shutil.which("ssh-keyscan") or "ssh-keyscan")
+
+
 def host_key_alias(cfg: dict) -> str:
     return f"relaymcp-{cfg['device']['name']}"
 
@@ -164,7 +169,7 @@ def fingerprint(key: str) -> str:
 def scan_host_key(host: str) -> str | None:
     devguard.check("contact the handheld")
     try:
-        out = subprocess.run(["ssh-keyscan", "-T", "5", "-t", "ed25519", host], capture_output=True, text=True,
+        out = subprocess.run([keyscan_exe(), "-T", "5", "-t", "ed25519", host], capture_output=True, text=True,
                              timeout=20, creationflags=NO_WINDOW).stdout
     except (OSError, subprocess.TimeoutExpired):
         return None

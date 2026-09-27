@@ -223,10 +223,12 @@ class Runtime:
                 next_t = now
             wake = min(next_t, deadline)
             # Long waits go in short slices: a stop request, a takeover or the time limit is noticed within 0.25 s.
+            # (Short waits skip the extra takeover check: the top of the loop does it once per tick.)
+            long_wait = wake - time.perf_counter() > 0.25
             while wake - time.perf_counter() > 0.005:
                 if run.stop_evt.wait(min(wake - time.perf_counter() - 0.003, 0.25)):
                     break
-                who = self.takeover()
+                who = self.takeover() if long_wait else None
                 if who:
                     raise _Stopped(f"you took over ({who})")
             if not run.stop_evt.is_set():

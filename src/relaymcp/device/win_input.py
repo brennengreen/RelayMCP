@@ -313,21 +313,26 @@ def key_press(keys: list[str], hold_ms: int = 50, repeat: int = 1, interval_ms: 
     # The lock covers sending and bookkeeping only, never the hold: a 5 s walk mustn't block a quick tap meanwhile.
     # Keys are counted, so a tap of a key someone else is holding doesn't let go of it.
     for i in range(repeat):
+        pressed: list[str] = []  # only what this call actually pressed is let go (a failed key-down counts nothing)
         try:
             for k in keys:
                 with _key_lock:
                     if _keys_down[k] == 0:
-                        _send([_key_input(k, False)])
+                        _send([_key_input(k, False)])  # raises when Windows refuses (lock screen, UAC, elevated app)
                     _keys_down[k] += 1
+                pressed.append(k)
                 time.sleep(0.01)
             time.sleep(hold_ms / 1000)
         finally:
-            for k in reversed(keys):
+            for k in reversed(pressed):
                 with _key_lock:
                     _keys_down[k] -= 1
                     if _keys_down[k] <= 0:
                         del _keys_down[k]
-                        _send([_key_input(k, True)])
+                        try:
+                            _send([_key_input(k, True)])
+                        except Exception:
+                            pass  # keep releasing the rest; nothing is left counted as held
         if i < repeat - 1:
             time.sleep(max(0, interval_ms) / 1000)
     return {"keys": keys, "hold_ms": hold_ms, "repeat": repeat}
