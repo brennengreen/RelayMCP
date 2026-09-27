@@ -163,6 +163,15 @@ tested end to end. Linux and Windows hosts use the same code paths (OpenSSH, sys
 and are covered by CI, but have seen less real-world use. Other Windows handhelds should work; the Armoury Crate
 niceties are ROG-specific. Issues and PRs are welcome.
 
+## Use responsibly
+
+- RelayMCP gives an agent full control of the handheld. Read the [security model](docs/security.md) before you set
+  it up.
+- Many online and multiplayer games forbid automated input, and anti-cheat software may flag virtual controllers. Use
+  the gamepad and input tools only where a game's rules allow it.
+- RelayMCP is a personal open-source project. It isn't affiliated with or endorsed by ASUS, Microsoft, Xbox, GitHub
+  or Anthropic; product names are trademarks of their owners.
+
 ## Acknowledgements
 
 RelayMCP builds on [Windows-MCP](https://github.com/CursorTouch/Windows-MCP) (screen control),

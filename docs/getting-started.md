@@ -61,6 +61,9 @@ Sign in on the handheld and connect it to your home Wi-Fi. Then use either route
 powershell -c "irm http://192.168.1.10:8766/Ab3xYz | iex"
 ```
 
+The one-liner fetches the kit over plain HTTP, so use it only on your own home network
+([why](security.md#trust-decisions)).
+
 Choose **Yes** when Windows asks for administrator rights. The first run takes 2–5 minutes. It installs:
 
 - OpenSSH Server (key-only, reachable only from your local network; the installer's SHA-256 is verified)
