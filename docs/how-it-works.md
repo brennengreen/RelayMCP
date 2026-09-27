@@ -74,6 +74,26 @@ Things that trip agents up:
   nowhere. `focus_window` (with `remember`) brings a window back and says what *really* has focus; the screen server's
   `App` switch can report success while Windows' foreground lock kept another window in front.
 
+### Fast paths: keep the model out of the loop
+
+In a real session most of the wall time is the model thinking between tool calls (70-90%, and each call's first
+token gets slower as the context grows). So the hardware server offers ways to do more per model call, and to keep
+fast reactions on the handheld:
+
+| Need | Use | Why |
+|---|---|---|
+| See what's on screen | `observe` (text + tap points) | ~150 tokens and ~120 ms, versus ~1,900 tokens for a full-size screenshot |
+| See graphics | `screenshot` | DXGI capture, small JPEG: ~70 ms and ~730 tokens; `only_if_changed` costs nothing when nothing moved |
+| Do a sub-goal | `act` | one call for "focus the game, tap *Play*, wait for *Servers*", stopping at the first failure |
+| React, repeat, follow | `behavior` | loops on the handheld at up to 240 Hz: react in ~35 ms, track a target, walk a menu to an item by its text, or run a small `script` state machine |
+| Talk to a console | `proc` | a game server or build: send a command, get its reply, wait for a log line |
+| Exact game state | `state` inbox | a game server script or add-on POSTs JSON to the handheld; agents read or wait for it |
+| Scripting | `powershell` | a warm, DPI-aware session: ~50 ms per call instead of 1.5-2.5 s, errors as plain text |
+
+Behaviors are bounded: each has a time limit, releases every held input when it ends, and stops as soon as a real
+controller moves (you can always take over). The `handheld` custom agent and the `relaymcp-handheld` skill
+(`relaymcp agent install`) teach these patterns to Copilot sessions.
+
 ### Home and away
 
 "Home" means a connected network whose default gateway's MAC address is listed in
