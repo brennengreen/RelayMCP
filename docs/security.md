@@ -27,6 +27,10 @@ power, *only at home*, and that the handheld behaves like a normal handheld ever
 - **What "home" means.** Your router's MAC address, freshly confirmed with ARP, not a Wi-Fi name. Anyone can name a
   network after yours; spoofing your router's MAC on a network you join is far less likely, and even then SSH still
   requires your key.
+- **Setup trusts your home network.** The one-liner downloads the kit over plain HTTP and runs it as administrator,
+  and the handheld's check-in is plain HTTP too. The kit's random token keeps other devices from fetching the kit or
+  faking a check-in, but it can't stop someone who can intercept traffic on the network. Run setup on your own home
+  network. The USB route doesn't download the kit over the network.
 
 ## Voice prompts and permissions
 
