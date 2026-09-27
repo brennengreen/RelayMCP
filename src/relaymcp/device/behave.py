@@ -36,6 +36,9 @@ KINDS = {
     "watch": 'region; when (as react); every_ms (100): reports each time it happens',
     "navigate": 'text (the menu item to reach); region (the menu); with "pad" (d-pad + A) | "keys" (arrows + Enter); '
                 'confirm (false): press A/Enter on it; direction ("down") while it is off screen; max_moves (30)',
+    "script": 'a small state machine: start (state name); states {name: {do (as react, repeated every_ms 250), until '
+              '(text | color | change | {"state": {"topic", "match"}}), ms (instead of until: stay this long), next '
+              '(state or "done"), timeout_s (30), on_timeout (state, else stop)}}',
 }
 
 
@@ -117,7 +120,7 @@ class Run:
             s = sorted(self._frame_ms)
             out["frame_ms_p50"] = round(s[len(s) // 2], 1)
         for k, v in self.stats.items():
-            if k not in ("ticks", "actions"):
+            if k not in ("ticks", "actions") and k not in out:  # never let a behavior's stat hide the run's own fields
                 out[k] = v
         return out
 
@@ -128,11 +131,12 @@ class Runtime:
     [{"text", "box"}]; cursor() -> [x, y]."""
 
     def __init__(self, grab: Callable, outputs, takeover: Callable | None = None, read_text: Callable | None = None,
-                 cursor: Callable | None = None):
+                 cursor: Callable | None = None, state_events: Callable | None = None):
         self.grab, self.out = grab, outputs
         self.takeover = takeover or (lambda: None)
         self.read_text = read_text
         self.cursor = cursor
+        self.state_events = state_events  # (topic, since) -> (events [{"n", "topic", "data"}], cursor): the inbox
         self.runs: dict[str, Run] = {}
         self._lock = threading.Lock()
 
@@ -284,7 +288,14 @@ class Runtime:
             presses += 1
             run.stats["presses"] = presses
 
-    def _condition(self, run: Run, until: dict, baseline) -> bool:
+    def _condition(self, run: Run, until: dict, baseline, since: int = 0) -> bool:
+        if "state" in until:
+            if not self.state_events:
+                raise RuntimeError("state conditions need the state inbox")
+            want = until["state"] or {}
+            from .inbox import matches as inbox_matches
+            events, _ = self.state_events(want.get("topic", ""), since)
+            return any(inbox_matches(e["data"], want.get("match", "")) for e in events)
         if "text" in until:
             if not self.read_text:
                 raise RuntimeError("text conditions need OCR")
@@ -334,6 +345,53 @@ class Runtime:
             run.stats["actions"] += 1
             moves += 1
             run.stats["moves"] = moves
+
+    def _run_script(self, run: Run, p: dict) -> None:
+        states = p.get("states") or {}
+        name = p.get("start") or next(iter(states), None)
+        if not name or name not in states:
+            raise ValueError("script needs states and a start state that exists")
+        visits = 0
+        while name != "done":
+            if name not in states:
+                raise ValueError(f"no state {name!r}")
+            visits += 1
+            if visits > 200:
+                raise _Stopped("script went through 200 states (a loop?)")
+            st = states[name]
+            run.emit("state", name=name)
+            run.stats["current"] = name
+            outcome = self._script_state(run, st)
+            if outcome == "timeout":
+                if st.get("on_timeout"):
+                    name = st["on_timeout"]
+                    continue
+                raise _Stopped(f"state {name!r} timed out")
+            name = st.get("next", "done")
+        run.reason = "script finished"
+
+    def _script_state(self, run: Run, st: dict) -> str:
+        """Run one state until its condition holds ('next'), its time is up ('next' for ms states), or its timeout."""
+        do, until = st.get("do"), st.get("until")
+        every = max(0.02, float(st.get("every_ms", 250)) / 1000)
+        entered = time.perf_counter()
+        hold_s = float(st["ms"]) / 1000 if "ms" in st and not until else None
+        timeout = float(st.get("timeout_s", 30))
+        baseline = self._frame(run, until.get("region"))[0] if until and "change" in until else None
+        cursor = self.state_events("", 0)[1] if until and "state" in until and self.state_events else 0
+        last_do = 0.0
+        for _ in self._ticks(run, 1 / every if not hold_s else 50):
+            now = time.perf_counter()
+            if hold_s is not None and now - entered >= hold_s:
+                return "next"
+            if until and self._condition(run, until, baseline, cursor):
+                return "next"
+            if now - entered >= timeout:
+                return "timeout"
+            if do and now - last_do >= every:
+                self._act(run, do)
+                last_do = now
+        raise _Stopped("the script ran out of time")
 
     def _run_track(self, run: Run, p: dict) -> None:
         region = p.get("region")

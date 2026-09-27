@@ -280,3 +280,44 @@ def test_navigate_gives_up_on_a_missing_item():
     rt = behave.Runtime(menu.frame, MenuOutputs(menu), read_text=menu.lines)
     s = wait_state(rt, rt.start("navigate", {"text": "Credits", "max_moves": 4, "settle_ms": 20}, max_s=5)["id"])
     assert s["state"] == "stopped" and "didn't reach 'credits' in 4 moves" in s["reason"]
+
+
+def test_script_runs_states_until_text_then_inbox_state(world):
+    from relaymcp.device import inbox
+    box = inbox.Inbox()
+    rt = behave.Runtime(world.frame, Outputs(world), read_text=lambda region: world.text,
+                        state_events=lambda topic, since: (lambda r: (r["events"], r["cursor"]))(box.read(topic, since, 200)))
+    box.post("mob", {"type": "iron_golem", "angry": True})  # before the script: must not count
+    script = {"start": "find", "states": {
+        "find": {"do": {"pad": ["dpad_right"]}, "every_ms": 30, "until": {"text": "Iron Golem"}, "next": "attack"},
+        "attack": {"do": {"pad": ["rt"]}, "every_ms": 30, "until": {"state": {"topic": "mob", "match": "angry=true"}},
+                   "next": "cool_down"},
+        "cool_down": {"ms": 100, "next": "done"}}}
+    rid = rt.start("script", script, max_s=5)["id"]
+
+    def game():
+        time.sleep(0.2)
+        world.text = [{"text": "Iron Golem", "box": [0, 0, 1, 1]}]
+        time.sleep(0.25)
+        box.post("mob", {"type": "iron_golem", "angry": True})
+
+    threading.Thread(target=game).start()
+    s = wait_state(rt, rid)
+    assert s["state"] == "done" and s["reason"] == "script finished", s
+    assert [e["name"] for e in s["new_events"] if e["event"] == "state"] == ["find", "attack", "cool_down"]
+    assert ("dpad_right",) in world.pads and ("rt",) in world.pads
+    rights, rts = world.pads.count(("dpad_right",)), world.pads.count(("rt",))
+    assert 3 <= rights <= 12 and 4 <= rts <= 16, (rights, rts)
+
+
+def test_script_timeouts_branch_or_stop(rt, world):
+    s = wait_state(rt, rt.start("script", {"start": "a", "states": {
+        "a": {"until": {"text": "never"}, "timeout_s": 0.2, "on_timeout": "b"},
+        "b": {"ms": 50, "next": "done"}}}, max_s=5)["id"])
+    assert s["state"] == "done" and [e["name"] for e in s["new_events"] if e["event"] == "state"] == ["a", "b"]
+    s = wait_state(rt, rt.start("script", {"states": {"a": {"until": {"text": "never"}, "timeout_s": 0.2}}}, max_s=5)["id"])
+    assert s["state"] == "stopped" and "timed out" in s["reason"]
+    s = wait_state(rt, rt.start("script", {"start": "x", "states": {"x": {"ms": 1, "next": "x"}}}, max_s=10)["id"], 15)
+    assert s["state"] == "stopped" and "200 states" in s["reason"]
+    s = wait_state(rt, rt.start("script", {"start": "nope", "states": {}}, max_s=2)["id"])
+    assert s["state"] == "failed"

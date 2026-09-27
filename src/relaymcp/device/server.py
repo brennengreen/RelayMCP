@@ -92,6 +92,7 @@ BEHAVIORS = behave.Runtime(
     read_text=lambda region: SCREEN.submit(lambda: ocr.recognize(GRABBER.grab(), capture.clamp_region(
         region, 0, 0, *win_input.screen_size()) if region else None)).result(timeout=10),
     cursor=lambda: capture.cursor_pos(),
+    state_events=lambda topic, since: (lambda r: (r["events"], r["cursor"]))(inbox.INBOX.read(topic, since, 200)),
 )
 
 
@@ -322,7 +323,7 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
                        max_s: float = 30.0) -> dict:
         """Real-time loops on the handheld (react in tens of ms, no model round trips). action: start (kind, params,
         max_s) -> id | status (id, since) | stop (id or all) | kinds (their params): react, track, press_until,
-        watch. A real controller moving stops them."""
+        navigate, watch, script. A real controller moving stops them."""
         return await _run(PROC, behave.run_tool, BEHAVIORS, action, kind, params, id, since, max_s)
 
     # ------------------------------------------------------------------------------------------ processes
