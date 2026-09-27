@@ -147,7 +147,7 @@ things on your computer. Change the voice with `relaymcp voice --voice am_michae
 ## Documentation
 
 - [Getting started](docs/getting-started.md): the full setup walkthrough, updating, uninstalling
-- [How it works](docs/how-it-works.md): architecture, lifecycle, and file locations
+- [How it works](docs/how-it-works.md): architecture, which channel to use (hardware, screen or SSH), lifecycle, and file locations
 - [Security model](docs/security.md): what's exposed, to whom, and when
 - [Voice prompts](docs/voice.md): triggers, models, settings, custom agents
 - [MCP tools](docs/tools.md): every hardware tool and its parameters

@@ -44,6 +44,26 @@ changes are logged (`relaymcp logs`).
 | `RelayMCP-DismissControllerNotice` task | SYSTEM, on demand | Closes Armoury Crate's "external controller connected" prompt, which appears when the virtual gamepad plugs in. It has a fixed action and nothing else can be run through it. |
 | sshd | Windows service (Manual start) | Key-only logins from your computer's key, firewall-scoped to the local subnet on Private networks. |
 
+### Three ways in: which to use
+
+| Channel | Runs as | Use it for |
+|---|---|---|
+| **Hardware MCP** (`ally-handheld`) | you, in the desktop session; per-monitor DPI-aware | Gamepad, touch, keys, mouse, focus, audio, speech, display, power |
+| **Screen MCP** (`ally`, Windows-MCP) | you, in the desktop session; not elevated | Screenshots, UI automation, apps, clipboard, and PowerShell that needs the desktop (windows, UI state) |
+| **SSH** (`relaymcp exec`, `relaymcp ssh`) | an elevated administrator in session 0, with no desktop | Services, files, installs, logs, and long-running processes you pipe commands into (e.g. a Bedrock Dedicated Server) |
+
+Things that trip agents up:
+
+- **SSH can't see the desktop.** Windows, focus and GUI apps live in your session; commands over SSH run in a
+  different one, so window titles come back empty and apps started there are invisible. Use the screen server's
+  `PowerShell` tool (or `App`) for anything with windows.
+- **Coordinates are physical pixels** in both MCP servers (screenshots, clicks, touch). PowerShell started by the
+  screen server isn't DPI-aware, so Win32 calls there return scaled coordinates on a scaled display (175% on the ROG
+  Ally). Call `SetProcessDPIAware()` at the start of such a script, or multiply by the scale.
+- **Input goes to the foreground window.** Every input result reports `foreground` and warns when input probably went
+  nowhere. `focus_window` (with `remember`) brings a window back and says what *really* has focus; the screen server's
+  `App` switch can report success while Windows' foreground lock kept another window in front.
+
 ### Home and away
 
 "Home" means a connected network whose default gateway's MAC address is listed in
