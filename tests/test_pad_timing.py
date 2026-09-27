@@ -96,3 +96,26 @@ def test_priming_can_be_turned_off(monkeypatch):
     assert gamepad.prime_enabled() is False
     monkeypatch.setattr(gamepad, "device_settings", lambda: {})
     assert gamepad.prime_enabled() is True
+
+
+def test_the_pad_reprimes_after_touch_mouse_or_keyboard_input(pad, monkeypatch):
+    monkeypatch.setattr(gamepad, "PRIME_SETTLE_S", 0.0)
+    monkeypatch.setattr(gamepad, "device_settings", lambda: {})
+    now = [1000]
+    monkeypatch.setattr(gamepad, "_tick_now", lambda: now[0])
+    last_input = [500]
+    monkeypatch.setattr(gamepad, "_last_input_tick", lambda: last_input[0])
+    pad.run_steps([{"buttons": ["a"], "ms": 10}])  # the pad's own input: nothing to switch back from
+    first = len(pad._pad.updates)
+    now[0] = 5000
+    pad.run_steps([{"buttons": ["a"], "ms": 10}])
+    assert pad.reprimes == 0 and len(pad._pad.updates) - first == 2  # press + release, no prime
+    last_input[0] = 6000  # someone tapped the screen after that
+    now[0] = 7000
+    out = pad.run_steps([{"buttons": ["a"], "ms": 10}])
+    assert pad.reprimes == 1 and "reprimed" in out
+    rights = [u[1]["right"][0] for u in pad._pad.updates[-5:]]
+    assert rights[0] > 0.3 and rights[1] < -0.3  # the nudge came before the press
+    out = pad.run_steps([{"buttons": ["a"], "ms": 10}])
+    assert pad.reprimes == 1 and "reprimed" not in out  # once is enough
+    assert gamepad._after(500, 0xFFFFFFF0) and not gamepad._after(0xFFFFFFF0, 500)  # tick wrap-around

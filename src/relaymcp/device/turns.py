@@ -46,6 +46,7 @@ class Turns:
         self.paused_at: float | None = None
         self.busy = 0
         self.note: str | None = None
+        self.switching = False  # pausing or resuming right now: menus fade in and out
 
     def configure(self, profile: dict | None) -> dict | None:
         with self._lock:
@@ -83,6 +84,10 @@ class Turns:
             out["note"] = self.note
         return out
 
+    def running(self) -> bool:
+        """Is the world on screen and moving (not paused, not a pause menu fading in or out)? Always, without turns."""
+        return not self.profile or (not self.paused and not self.switching)
+
     def frozen(self):
         """The frame from just before the game was paused (the world as it is), or None while it runs."""
         return self.frame if self.profile and self.paused else None
@@ -111,6 +116,13 @@ class Turns:
             time.sleep(0.05)
 
     def _resume(self) -> None:
+        self.switching = True
+        try:
+            self._resume_now()
+        finally:
+            self.switching = False
+
+    def _resume_now(self) -> None:
         text = self.profile["text"]
         paused = self._shows() if text else self.paused
         if not paused:
@@ -127,6 +139,13 @@ class Turns:
         self.paused, self.frame, self.note = False, None, None
 
     def _pause(self) -> None:
+        self.switching = True
+        try:
+            self._pause_now()
+        finally:
+            self.switching = False
+
+    def _pause_now(self) -> None:
         if self.paused:
             return
         who = self._in_use()

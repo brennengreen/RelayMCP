@@ -146,3 +146,19 @@ def test_resume_waits_until_the_menu_is_really_gone_and_the_screen_settles(monke
     t.begin()
     assert not t.paused and settled == [True] and not game.paused
     assert game.reads >= 6 and len(game.presses) == 1  # read past the flicker; never pressed resume twice
+
+
+def test_the_world_counts_as_running_only_between_switches(monkeypatch):
+    monkeypatch.setattr(turns, "RECHECK_S", 0)
+    game = Game()
+    seen = []
+    t = turns.Turns(game.press, game.grab, lambda text, region=None: (seen.append(t.running()), game.sees(text))[1],
+                    lambda: None)
+    t.configure({"button": "start", "text": "Game is paused", "settle_ms": 0})
+    seen.clear()
+    t.begin()
+    t.end()  # pausing: the menu fades in while the pause text isn't readable yet
+    assert seen and not any(seen), seen  # never "running" while switching
+    assert not t.running() and t.paused
+    t.begin()
+    assert t.running()

@@ -662,8 +662,8 @@ class Runtime:
                 preflight(ast.parse(reflex, "<reflex>"), Program.NAMES, "reflex program")
             except SyntaxError as e:
                 raise ValueError(f"reflex program line {e.lineno}: {e.msg}") from None
-        exec(compile(setup_tree, "<guard setup>", "exec"), ns)
-        cond = compile(when_tree, "<guard>", "eval")
+        setup_code, cond = compile(setup_tree, "<guard setup>", "exec"), compile(when_tree, "<guard>", "eval")
+        ready = False  # setup samples baselines: it runs on the first tick the game is running, not on a pause menu
         name = str(p.get("name") or when)[:60]
         repeat, cooldown = bool(p.get("repeat", False)), float(p.get("cooldown_ms", 3000)) / 1000
         every = max(20.0, float(p.get("every_ms", 100)))
@@ -672,6 +672,10 @@ class Runtime:
         for _ in self._ticks(run, 1000 / every, takeover_stops=False):
             if not self.active():
                 continue  # a paused game shows its pause menu, not the world
+            if not ready:
+                exec(setup_code, ns)
+                ready = True
+                continue
             try:
                 hit = eval(cond, ns)
             except _Stopped:

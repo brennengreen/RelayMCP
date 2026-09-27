@@ -686,12 +686,19 @@ def test_a_standing_guard_stops_programs_and_starts_a_reflex():
 def test_guards_only_judge_a_running_game_and_have_no_controller():
     world, running = GuardWorld(), [False]
     rt, _ = _guard_runtime(world, active=lambda: running[0])
+    lazy = rt.start("guard", {"setup": "RED0 = color([200, 30, 30], [600, 1000, 1000, 1040])",
+                              "when": "color([200, 30, 30], [600, 1000, 1000, 1040]) < 0.5 * RED0"}, max_s=30)
+    world.health = 0.0  # the "pause menu" shows no health: a baseline sampled now would be 0
     g = rt.start("guard", {"when": "color([200, 30, 30], [600, 1000, 1000, 1040]) < 0.2", "then": "note"}, max_s=30)
-    world.health = 0.0
     time.sleep(0.4)
+    assert rt.status(lazy["id"])["state"] == "running"
+    world.health = 1.0
     assert rt.status(g["id"])["state"] == "running" and rt.take_alerts() is None  # paused: nothing judged
     running[0] = True
+    time.sleep(0.3)  # the lazy guard samples its baseline now, from the running game
+    world.health = 0.0
     assert wait_state(rt, g["id"], 5)["reason"].startswith("fired")
+    assert wait_state(rt, lazy["id"], 5)["reason"].startswith("fired")  # its baseline was the real health
     bad = rt.start("guard", {"when": "True", "setup": "pad(ls=(0, 1))"}, max_s=5)
     st = wait_state(rt, bad["id"], 5)
     assert st["state"] == "failed" and "unknown name 'pad'" in st["reason"], st

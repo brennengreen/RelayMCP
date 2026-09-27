@@ -30,6 +30,11 @@ from typing import Any, Callable
 
 MIN_PEAK = 0.03      # phase-correlation peaks below this are noise (a flat or changed view)
 WORK_WIDTH = 480     # frames are downscaled to about this width for estimation
+# Following the picture only works while it moves little between two captures: phase correlation wraps around at
+# the tile size, so a big miss aliases to a small, consistent, wrong answer (measured: +44% at 41 degrees a frame,
+# with every frame "tracked"). Calibration only admits stick deflections under this, and control stays below them.
+SAFE_FRAME_FRACTION = 0.08   # of the picture's width per captured frame
+LOOP_FRAME_FRACTION = 0.05   # the full turn goes slower still, so the first view is matched as it comes back
 
 
 def _np():
@@ -145,22 +150,124 @@ class Overlay:
 
 # ---------------------------------------------------------------------------------------------------- odometry
 
-class Odometry:
-    """How far the camera has turned since it was made, from the picture alone. x, y: how far the picture moved, in
-    screen px (turning right moves it left, looking up moves it down): yaw = -x / px_per_deg, pitch = y /
-    px_per_deg.
+DEFAULT_HFOV_DEG = 90.0  # a camera's horizontal field of view until calibration measures its focal length
 
-    Robust global motion: a grid of tiles over the middle of the picture, each phase-correlated with the same tile
-    of a keyframe; tiles that touch the overlay are skipped (a static crosshair pulls a whole-picture correlation
-    toward "no motion", masked or not), and the median of the confident tiles wins (a mob walking through one tile,
-    or a tile of plain sky, doesn't matter). Keyframes are re-taken as the view moves on, so slow turns add up
-    exactly. With focal_px (from calibration), each tile is corrected for perspective (a pinhole camera's edges
-    move faster than its middle)."""
+
+def flow(p, x, y, f):
+    """Picture motion (u, v) at image offsets (x, y) from the middle, for a pinhole camera of focal length f turned by
+    p = (pitch up, yaw right, roll) radians, to first order (the rotational optical flow of a camera)."""
+    wx, wy, wz = p
+    return (x * y / f * wx - (f + x * x / f) * wy + y * wz,
+            (f + y * y / f) * wx - x * y / f * wy - x * wz)
+
+
+def rotation_matrix(p):
+    """The rotation (new camera axes in the old camera's coordinates) for rotation vector p (Rodrigues)."""
+    np = _np()
+    wx, wy, wz = (float(v) for v in p)
+    k = np.array([[0.0, -wz, wy], [wz, 0.0, -wx], [-wy, wx, 0.0]])
+    th = math.sqrt(wx * wx + wy * wy + wz * wz)
+    if th < 1e-9:
+        return np.eye(3) + k
+    return np.eye(3) + math.sin(th) / th * k + (1 - math.cos(th)) / (th * th) * (k @ k)
+
+
+def rotated(p, x, y, f):
+    """Exact picture motion (u, v) at offsets (x, y) from the middle when a pinhole camera turns by rotation vector
+    p: a pure rotation maps the picture by the homography K R^T K^-1, whatever the scene's depth."""
+    np = _np()
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    d = rotation_matrix(p).T @ np.stack([x, y, np.full_like(x, f)])
+    return f * d[0] / d[2] - x, f * d[1] / d[2] - y
+
+
+def _linear_rotation(a, f):
+    """First-order least squares (small turns): the starting point for the exact fit."""
+    np = _np()
+    bx, by, bu, bv, bw = a.T
+    m = np.zeros((2 * len(bx), 3))
+    m[0::2, 0], m[0::2, 1], m[0::2, 2] = bx * by / f, -(f + bx * bx / f), by
+    m[1::2, 0], m[1::2, 1], m[1::2, 2] = f + by * by / f, -bx * by / f, -bx
+    rhs = np.empty(2 * len(bx))
+    rhs[0::2], rhs[1::2] = bu, bv
+    sw = np.sqrt(np.repeat(bw, 2))
+    return np.linalg.lstsq(m * sw[:, None], rhs * sw, rcond=None)[0]
+
+
+def _refine_rotation(p, a, f, steps: int = 4):
+    """Gauss-Newton on the exact model (rotated), from p."""
+    np = _np()
+    x, y, u, v, w = a.T
+    sw = np.sqrt(np.repeat(w, 2))
+    for _ in range(steps):
+        pu, pv = rotated(p, x, y, f)
+        r = np.empty(2 * len(x))
+        r[0::2], r[1::2] = pu - u, pv - v
+        jac = np.empty((2 * len(x), 3))
+        for j in range(3):
+            dp = np.zeros(3)
+            dp[j] = 1e-4
+            qu, qv = rotated(p + dp, x, y, f)
+            jac[0::2, j], jac[1::2, j] = (qu - pu) / 1e-4, (qv - pv) / 1e-4
+        delta = np.linalg.lstsq(jac * sw[:, None], -r * sw, rcond=None)[0]
+        p = p + delta
+        if float(np.abs(delta).max()) < 1e-7:
+            break
+    return p
+
+
+def fit_rotation(rows, f: float, max_rms: float = 1.5):
+    """The camera rotation that best explains tile shifts. rows: (x, y, u, v, weight): a tile's offset from the middle
+    and how far its content moved. Tiles that don't fit (a mob walking through, a wrong match) are dropped. Returns
+    (rotation vector: pitch up, yaw right, roll; rms px; tiles used) or None when fewer than 3 tiles agree."""
+    np = _np()
+    a = np.asarray(rows, float)
+    use = np.ones(len(a), bool)
+    x, y, u, v, _w = a.T
+    p = None
+    for _ in range(4):
+        if use.sum() < 3:
+            return None
+        p = _refine_rotation(_linear_rotation(a[use], f) if p is None else p, a[use], f)
+        pu, pv = rotated(p, x, y, f)
+        res = np.hypot(pu - u, pv - v)
+        keep = res <= max(1.0, 3.0 * float(np.median(res[use])))
+        if (keep == use).all():
+            break
+        use = keep
+    if use.sum() < 3:
+        return None
+    rms = float(np.sqrt(np.mean(res[use] ** 2)))
+    return (p, rms, int(use.sum())) if rms <= max_rms else None
+
+
+def world_turn(p) -> tuple[float, float]:
+    """(yaw right, pitch up) radians from a camera rotation vector, for cameras that turn about the world's vertical
+    axis and tilt without rolling (first-person games, gimbals): yawing while tilted rolls the picture, so yaw is the
+    size of the yaw-and-roll part (whatever the tilt), with the yaw part's sign."""
+    wx, wy, wz = (float(v) for v in p)
+    return math.copysign(math.hypot(wy, wz), wy), wx
+
+
+class Odometry:
+    """A gyro made of pixels: how far the camera has turned since it was made, from the picture alone.
+
+    Tiles over the middle of the picture (none touching the HUD) are phase-correlated with the same tiles of a
+    keyframe, each searched where the current rotation estimate says it went; the camera rotation that explains
+    their shifts (pinhole rotational flow: perspective, and the roll a tilted camera shows when it yaws) is fitted by
+    robust least squares. Keyframes are re-taken every few degrees, so long turns add up exactly.
+
+    yaw, pitch: radians turned (right, up); x, y: the same as picture motion in screen px at the middle of the
+    picture (turning right moves it left): x = -yaw * f, y = pitch * f. theta: the camera's absolute pitch, estimated
+    from how much the picture rolls while it yaws (roll/yaw = tan(pitch)), or None before any yaw."""
 
     GRID = (3, 3)  # columns, rows over the middle 60% x 70% of the picture
+    REKEY = 0.07   # of the width: a new keyframe (first-order flow stays exact for small turns)
 
-    def __init__(self, frame, overlay: Overlay | None = None, focal_px: float | None = None):
+    def __init__(self, frame, overlay: Overlay | None = None, focal_px: float | None = None,
+                 tolerance: float = 1.0):
         np = _np()
+        self.tolerance = tolerance  # x the fit's allowed error (a focal length not measured yet fits less well)
         self.k = scale_for(frame.shape[1])
         g = gray(frame, self.k)
         h, w = g.shape
@@ -168,84 +275,95 @@ class Odometry:
         x0, x1, y0, y1 = int(w * 0.2), int(w * 0.8), int(h * 0.15), int(h * 0.85)
         tw, th = (x1 - x0) // cols, (y1 - y0) // rows
         usable = overlay is not None and overlay.mask.shape == g.shape
-        tiles = []
-        for r in range(rows):
-            for c in range(cols):
-                tx, ty = x0 + c * tw, y0 + r * th
-                if usable and overlay.mask[ty:ty + th, tx:tx + tw].mean() > 0.02:
-                    continue
-                gain_x = gain_y = 1.0
-                if focal_px:
-                    fx = focal_px / self.k
-                    cx, cy = tx + tw / 2 - w / 2, ty + th / 2 - h / 2
-                    gain_x, gain_y = 1 + (cx / fx) ** 2, 1 + (cy / fx) ** 2
-                tiles.append((tx, ty, gain_x, gain_y))
-        if len(tiles) < 2:  # an overlay over most of the middle: use every tile rather than none
-            tiles = [(x0 + c * tw, y0 + r * th, 1.0, 1.0) for r in range(rows) for c in range(cols)]
-        self.tiles, self.tw, self.th = tiles, tw, th
+        cells = [(x0 + c * tw, y0 + r * th) for r in range(rows) for c in range(cols)]
+        tiles = [(tx, ty) for tx, ty in cells if not (usable and overlay.mask[ty:ty + th, tx:tx + tw].mean() > 0.02)]
+        if len(tiles) < 3:  # an overlay over most of the middle: use every tile rather than none
+            tiles = cells
+        self.tiles = [(tx, ty, tx + tw / 2 - w / 2, ty + th / 2 - h / 2) for tx, ty in tiles]
+        self._cx = np.array([t[2] for t in self.tiles], float)
+        self._cy = np.array([t[3] for t in self.tiles], float)
+        self.tw, self.th, self.size = tw, th, (w, h)
+        self.f = focal_px / self.k if focal_px else (w / 2) / math.tan(math.radians(DEFAULT_HFOV_DEG / 2))
         self.window = _hanning((th, tw))
         self._total = float(self.window.sum()) + 1e-6
+        half = g[::2, ::2]
+        self._coarse_w = _hanning(half.shape)
+        if usable:
+            self._coarse_w = self._coarse_w * overlay.weight()[::2, ::2][:half.shape[0], :half.shape[1]]
         self._np = np
         self._key(g)
-        self.base, self.cur = [0.0, 0.0], [0.0, 0.0]
-        self.peak, self.used, self.lost = 1.0, len(tiles), 0
-        self.updates, self.lost_total = 0, 0  # measured frames, and how many of them couldn't be measured
-        self.tile_shifts: list = []  # (tile x, tile y, raw dx, raw dy) from the last measurement, for calibration
-        self.size = (w, h)
+        self.p = np.zeros(3)       # rotation since the keyframe
+        self.p_rate = np.zeros(3)  # per second, for predicting where tiles went
+        self.base_yaw = self.base_pitch = 0.0
+        self.theta: float | None = None
+        self.peak, self.used, self.lost, self.rms = 1.0, len(self.tiles), 0, 0.0
+        self.updates, self.lost_total = 0, 0
+        self.born = time.perf_counter()
+        self.tile_rows: list = []  # the last measurement's (x, y, u, v, weight) rows, for calibration
         self.samples: collections.deque = collections.deque(maxlen=64)
-        self.samples.append((time.perf_counter(), 0.0, 0.0))
+        self._t_meas = time.perf_counter()
+        self.samples.append((self._t_meas, 0.0, 0.0))
         self._last = frame
 
     def _key(self, g) -> None:
         """Make g the keyframe: its tiles' spectra are computed once, not on every frame."""
         self.ref = g
         self._ref_tiles = []
-        for tx, ty, _gx, _gy in self.tiles:
+        for tx, ty, _cx, _cy in self.tiles:
             a = g[ty:ty + self.th, tx:tx + self.tw]
             flat = float(a.std()) < 2.0  # plain sky or a flat wall: nothing to lock onto
             self._ref_tiles.append(None if flat else spectrum(a, self.window, self._total))
 
     @property
+    def yaw(self) -> float:
+        return self.base_yaw + world_turn(self.p)[0]
+
+    @property
+    def pitch(self) -> float:
+        return self.base_pitch + world_turn(self.p)[1]
+
+    @property
     def x(self) -> float:
-        return (self.base[0] + self.cur[0]) * self.k
+        return -self.yaw * self.f * self.k
 
     @property
     def y(self) -> float:
-        return (self.base[1] + self.cur[1]) * self.k
+        return self.pitch * self.f * self.k
 
-    def _measure(self, g, pred: tuple[float, float]) -> tuple[float, float, float, int] | None:
-        """Shift of frame g from the keyframe (working px), searching where the motion so far says it should be:
-        tile correlation only works for small shifts, so each tile is cut from g at the predicted place and only
-        the rest is measured. None unless most tiles agree."""
-        np = self._np
+    def _measure(self, g, pred):
         h, w = g.shape
-        ix, iy = int(round(pred[0])), int(round(pred[1]))
-        found = []
-        for (tx, ty, gx, gy), fa in zip(self.tiles, self._ref_tiles):
-            bx, by = tx + ix, ty + iy
-            if fa is None or bx < 0 or by < 0 or bx + self.tw > w or by + self.th > h:
+        rows = []
+        pu, pv = rotated(pred, self._cx, self._cy, self.f)  # where each tile went, if the camera turned by pred
+        for (tx, ty, cx, cy), fa, up, vp in zip(self.tiles, self._ref_tiles, pu, pv):
+            if fa is None:
                 continue
-            fb = spectrum(g[by:by + self.th, bx:bx + self.tw], self.window, self._total)
-            rx, ry, peak = shift_between(fa, fb, (self.th, self.tw))
-            found.append(((ix + rx) / gx, (iy + ry) / gy, peak, tx, ty, ix + rx, iy + ry))
-        if len(found) < 2:
+            ix, iy = int(round(up)), int(round(vp))
+            bx, by = tx + ix, ty + iy
+            if bx < 0 or by < 0 or bx + self.tw > w or by + self.th > h:
+                continue
+            rx, ry, peak = shift_between(fa, spectrum(g[by:by + self.th, bx:bx + self.tw], self.window, self._total),
+                                         (self.th, self.tw))
+            # near half a tile the answer may have wrapped around (a big miss read as a small one): don't trust it
+            if peak >= 0.05 and abs(rx) <= 0.3 * self.tw and abs(ry) <= 0.3 * self.th:
+                rows.append((cx, cy, ix + rx, iy + ry, peak))
+        if len(rows) < 3:
             return None
-        arr = np.array(found)
-        mx, my = float(np.median(arr[:, 0])), float(np.median(arr[:, 1]))
-        # agreement: 1.5 px, plus 20% for perspective before calibration measured it (edges move faster)
-        agree = (np.abs(arr[:, 0] - mx) <= 1.5 + 0.2 * abs(mx)) & (np.abs(arr[:, 1] - my) <= 1.5 + 0.2 * abs(my))
-        if int(agree.sum()) < max(2, (len(found) + 1) // 2):
+        motion = float(self._np.median([math.hypot(r[2], r[3]) for r in rows]))
+        # a model error (a slightly wrong focal length, a little parallax) grows with the motion it explains
+        fit = fit_rotation(rows, self.f, max_rms=self.tolerance * (1.5 + 0.08 * motion))
+        if fit is None or fit[2] < max(3, (len(rows) + 1) // 2):
             return None
-        good = arr[agree]
-        self.tile_shifts = [(int(r[3]), int(r[4]), float(r[5]), float(r[6])) for r in good]
-        return float(good[:, 0].mean()), float(good[:, 1].mean()), float(good[:, 2].mean()), int(agree.sum())
+        self.tile_rows = rows
+        return fit
 
-    def _coarse(self, g) -> tuple[float, float]:
-        """A rough whole-picture shift (half resolution, overlay not excluded): only a hypothesis for the tiles to
-        confirm, for when frames come far apart."""
-        a, b = central(self.ref[::2, ::2]), central(g[::2, ::2])
-        dx, dy, _ = image_shift(a, b, _hanning(a.shape))
-        return self.cur[0] + 2 * dx, self.cur[1] + 2 * dy
+    def _coarse(self, g):
+        """A rough whole-picture shift since the keyframe (half resolution, HUD masked out): only a guess for the
+        tiles to confirm, for when frames come far apart. None if there's no clear answer."""
+        np = self._np
+        dx, dy, peak = image_shift(self.ref[::2, ::2], g[::2, ::2], self._coarse_w)
+        if peak < MIN_PEAK:
+            return None
+        return np.array([2 * dy / self.f, -2 * dx / self.f, self.p[2]])
 
     def update(self, frame) -> tuple[float, float]:
         now = time.perf_counter()
@@ -255,31 +373,42 @@ class Odometry:
         self._last = frame
         self.updates += 1
         g = gray(frame, self.k)
-        vx, vy = self.rate(0.05)
-        gap = now - self.samples[-1][0]
-        dt = min(gap, 0.05)
-        px, py = self.cur[0] + vx / self.k * dt, self.cur[1] + vy / self.k * dt
-        cx, cy = self.cur
-        # the motion so far, then one axis stopping (a pitch limit, a released stick), then no motion at all
-        guesses = [(px, py), (px, cy), (cx, py), (cx, cy)]
+        gap = now - self._t_meas
+        # where it went at the last speed; after slowing down (a camera coasting to a stop) or speeding up; stopped
+        step = self.p_rate * min(gap, 0.3)
+        guesses = [self.p + f * step for f in (1.0, 0.6, 1.4, 0.3)] + [self.p.copy()]
         got = None
-        for pred in guesses + [None]:
-            got = self._measure(g, pred if pred is not None else self._coarse(g))
+        for pred in guesses:
+            got = self._measure(g, pred)
             if got is not None:
                 break
+        if got is None:
+            coarse = self._coarse(g)
+            if coarse is not None:
+                got = self._measure(g, coarse)
         if got is None:
             self.lost += 1
             self.lost_total += 1
             self.peak, self.used = 0.0, 0
             if gap < 0.1:
-                self.cur = list(guesses[0])  # dead reckoning across a frame or two
+                self.p = guesses[0]  # dead reckoning across a frame or two
         else:
-            dx, dy, self.peak, self.used = got
-            self.cur, self.lost = [dx, dy], 0
-        h, w = g.shape
-        if self.lost > 3 or abs(self.cur[0]) > 0.18 * w or abs(self.cur[1]) > 0.12 * h:
-            self.base = [self.base[0] + self.cur[0], self.base[1] + self.cur[1]]
-            self.cur, self.lost = [0.0, 0.0], 0
+            p, self.rms, self.used = got
+            self.peak = float(self._np.mean([r[4] for r in self.tile_rows]))
+            if gap > 1e-4:
+                self.p_rate = 0.5 * self.p_rate + 0.5 * (p - self.p) / max(gap, 1e-3)
+            self.p, self.lost, self._t_meas = p, 0, now
+            if abs(self.p[1]) > 0.03:  # yawing: the roll it shows gives the tilt
+                est = -math.atan(self.p[2] / self.p[1])
+                self.theta = est if self.theta is None else 0.7 * self.theta + 0.3 * est
+        w = self.size[0]
+        if self.lost > 3 or math.hypot(self.p[0], self.p[1]) * self.f > self.REKEY * w or abs(self.p[2]) > 0.08:
+            dyaw, dpitch = world_turn(self.p)
+            self.base_yaw += dyaw
+            self.base_pitch += dpitch
+            if self.theta is not None:
+                self.theta += dpitch
+            self.p, self.lost = self._np.zeros(3), 0
             self._key(g)
         self.samples.append((now, self.x, self.y))
         return self.x, self.y
@@ -287,6 +416,11 @@ class Odometry:
     def health(self) -> float:
         """The fraction of frames it could measure (1 = all)."""
         return 1.0 - self.lost_total / max(1, self.updates)
+
+    def fps(self) -> float:
+        """New frames per second since it was made (the capture rate, as seen by whoever updates it)."""
+        span = time.perf_counter() - self.born
+        return self.updates / span if span > 0.05 and self.updates else 0.0
 
     def rate(self, span: float = 0.1) -> tuple[float, float]:
         """Picture motion (screen px/s) over about the last `span` seconds."""
@@ -298,6 +432,36 @@ class Odometry:
                 break
         dt = max(1e-3, t1 - t0)
         return (x1 - x0) / dt, (y1 - y0) / dt
+
+
+def focal_from_rows(samples: list, width: int, k: int) -> float | None:
+    """The focal length (screen px) under which the rotation model best explains the tile shifts seen while the
+    camera turned: the edges of a pinhole camera's picture move faster than its middle, by an amount that depends
+    on it. samples: Odometry.tile_rows lists (working px). None when the view can't tell (too little motion)."""
+    np = _np()
+    usable = [rows for rows in samples if len(rows) >= 5 and max(abs(r[2]) for r in rows) > 4]
+    if len(usable) < 5:
+        return None
+    usable = usable[::max(1, len(usable) // 15)][:15]
+    w = width / k
+    candidates = np.geomspace(0.25 * w, 4.0 * w, 28)
+
+    def score(f):
+        errs = []
+        for rows in usable:
+            fit = fit_rotation(rows, float(f), max_rms=1e9)
+            errs.append(fit[1] ** 2 if fit else 100.0)
+        return float(np.median(errs))
+
+    scores = [score(f) for f in candidates]
+    i = int(np.argmin(scores))
+    if i in (0, len(candidates) - 1) or scores[i] > 0.9 * min(scores[0], scores[-1]):
+        return None  # no clear best: a flat (orthographic-looking) view or too little motion
+    a, b, c = scores[i - 1], scores[i], scores[i + 1]
+    lf = np.log(candidates)
+    d = a - 2 * b + c
+    off = 0.0 if d <= 0 else max(-0.5, min(0.5, 0.5 * (a - c) / d))
+    return float(np.exp(lf[i] + off * (lf[i + 1] - lf[i]))) * k
 
 
 # ---------------------------------------------------------------------------------------------------- response curve
@@ -407,8 +571,34 @@ def _trace(io: PlantIO, odo: Odometry, seconds: float, axis: int = 0, tiles: lis
         odo.update(io.frame())
         out.append((time.perf_counter() - t0, -odo.x if axis == 0 else odo.y))
         if tiles is not None and odo.used:
-            tiles.append(list(odo.tile_shifts))
+            tiles.append(list(odo.tile_rows))
         io.sleep(0.004)
+
+
+def _hold_steady(io: PlantIO, odo: Odometry, x: float, seconds: float, most: float = 1.4,
+                 tiles: list | None = None) -> tuple[float, list]:
+    """Hold the stick until the turn rate stops changing (at least `seconds`, at most `most`), following the
+    picture; then let go and follow it to a stop. Returns (steady px/s, trace)."""
+    io.stick(x, 0.0)
+    t0, trace = time.perf_counter(), []
+    try:
+        while True:
+            t = time.perf_counter() - t0
+            odo.update(io.frame())
+            trace.append((time.perf_counter() - t0, -odo.x))
+            if tiles is not None and odo.used:
+                tiles.append(list(odo.tile_rows))
+            if t >= seconds:
+                late = _steady_rate(trace, t - 0.15)
+                early = _steady_rate([p for p in trace if p[0] <= t - 0.15], t - 0.3)
+                if t >= most or (abs(late) > 0 and abs(late - early) <= 0.06 * abs(late)) or abs(late) < 1e-6:
+                    break
+            io.sleep(0.004)
+    finally:
+        io.stick(0.0, 0.0)
+    rate = abs(_steady_rate(trace, max(0.0, trace[-1][0] - 0.2)))
+    _trace(io, odo, 0.3)  # follow it to a stop
+    return rate, trace
 
 
 def step_response(trace: list, k: int) -> tuple[float, float, float]:
@@ -427,70 +617,57 @@ def step_response(trace: list, k: int) -> tuple[float, float, float]:
     return moved, abs(top), ramp
 
 
-def focal_from_flow(rows: list, k: int, size: tuple[int, int]) -> float | None:
-    """A pinhole camera's focal length (screen px) from tile shifts seen during a pure yaw turn: a tile at x from
-    the middle moves (1 + (x/f)^2) times as fast as the middle. None if the edges don't move faster (a flat view)."""
-    np = _np()
-    w = size[0]
-    ratios, offsets = [], []
-    for tiles in rows:
-        by_col: dict[int, list] = {}
-        for tx, _ty, dx, _dy in tiles:
-            by_col.setdefault(tx, []).append(dx)
-        cols = sorted(by_col)
-        if len(cols) < 3:
-            continue
-        centre = float(np.median(by_col[cols[len(cols) // 2]]))
-        if abs(centre) < 4:
-            continue
-        tw = cols[1] - cols[0]
-        for c in (cols[0], cols[-1]):
-            ratios.append(float(np.median(by_col[c])) / centre)
-            offsets.append(abs(c + tw / 2 - w / 2))
-    if len(ratios) < 5:
-        return None
-    gain, off = float(np.median(ratios)), float(np.median(offsets))
-    return None if gain <= 1.02 else off / math.sqrt(gain - 1) * k
-
-
 def _full_turn(io: PlantIO, overlay: Overlay, deflection: float, W: int, H: int, k: int,
                limit_s: float = 25.0, focal_px: float | None = None) -> float | None:
-    """Pixels in a full turn: turn steadily until the view comes back (a patch of the first view reappears near
-    where it was), adding up odometry on the way. None if it never comes back (a camera that can't turn round)."""
+    """Pixels in a full turn (loop closure): turn steadily, adding up odometry, until the first view comes back: a
+    patch of it (textured, off the HUD) is looked for around where a revolution should end (from the focal length,
+    if known), and the best match there decides. None if it never comes back (a camera that can't turn round)."""
     from .behave import match_template
+    np = _np()
     first = io.frame()
     g0 = gray(first, k)
     half = max(8, 60 // k)
     best = None
-    for fy in (0.35, 0.5, 0.65):  # the most textured candidate (not sky)
-        py, px = int(H * fy) // k, (W // 2) // k
-        patch = g0[py - half:py + half, px - half:px + half]
-        if patch.size and (best is None or patch.std() > best[0]):
-            best = (float(patch.std()), py, px, patch.copy())
+    for fy in (0.3, 0.4, 0.6, 0.7):  # the most textured candidate (not sky), away from the crosshair and HUD
+        for fx in (0.4, 0.6):
+            py, px = int(H * fy) // k, int(W * fx) // k
+            patch = g0[py - half:py + half, px - half:px + half]
+            if not patch.size or overlay.covers(px * k, py * k, 2 * half * k) > 0.02:
+                continue
+            if best is None or patch.std() > best[0]:
+                best = (float(patch.std()), py, px, patch.copy())
     if best is None or best[0] < 4:
         return None
     _, py, px, patch = best
-    band_top = max(0, py - half - 12)
+    band_top = max(0, py - half - 16)
+    expected = 2 * math.pi * focal_px if focal_px else None
+    lo, hi = (0.8 * expected, 1.3 * expected) if expected else (1.2 * W, 60.0 * W)
     odo = Odometry(first, overlay, focal_px)
     io.stick(deflection, 0.0)
     t0 = time.perf_counter()
+    seen: list = []  # (score, px in a revolution) around where it should close
     try:
         while time.perf_counter() - t0 < limit_s:
             frame = io.frame()
             odo.update(frame)
             turned = -odo.x
-            if turned > 1.2 * W:
-                band = gray(frame, k)[band_top:py + half + 12]
+            if turned > hi:
+                break
+            if turned >= lo:
+                band = gray(frame, k)[band_top:py + half + 16]
                 x, _, score = match_template(band, patch)
                 tx = (x + half) * k
-                if score > 0.8 and abs(tx - px * k) < W / 8:
-                    return turned + tx - px * k
-            if turned > 60 * W:
-                return None
+                if score > 0.8 and abs(tx - px * k) < W / 6:
+                    seen.append((score, turned + tx - px * k))
+                elif seen and max(seen)[0] > 0.9:
+                    break  # past it
             io.sleep(0.002)
-        return None
     finally:
         io.stick(0.0, 0.0)
+    if not seen:
+        return None
+    top = max(seen)[0]
+    return float(np.median([v for sc, v in seen if sc >= top - 0.03]))
 
 
 def _drive_to_limit(io: PlantIO, overlay: Overlay | None, y: float, top_px: float, limit_s: float = 4.0) -> list:
@@ -515,13 +692,14 @@ def _drive_to_limit(io: PlantIO, overlay: Overlay | None, y: float, top_px: floa
 
 def calibrate(io: PlantIO, points=(0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.85, 1.0), hold_s: float = 0.5,
               full_turn: bool = True, pitch: bool = True, app: str = "") -> dict:
-    """Identify the look stick (see the module docstring). Takes ~20-30 s; the camera ends roughly level if pitch."""
+    """Identify the look stick (see the module docstring). Takes ~20-30 s; ends looking level if pitch."""
     io.stick(0.0, 0.0)
     io.sleep(0.25)
     first = io.frame()
     H, W = first.shape[:2]
     k = scale_for(W)
 
+    # 1. The overlay: pixels that stay put while the view turns (no tracking needed, so any speed does).
     frames = []
     for d in (0.8, -0.8):
         io.stick(d, 0.0)
@@ -537,67 +715,83 @@ def calibrate(io: PlantIO, points=(0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.8
                            "gameplay view, and is the right stick its camera?)")
     io.log("overlay", fraction=round(overlay.fraction(), 3))
 
-    # Step response, at full deflection unless the picture then moves too fast to follow between frames (a fast
-    # camera, or a slow capture): then at the fastest deflection that can be followed, which control never exceeds.
-    for step_d in (1.0, 0.7, 0.5, 0.35):
-        odo = Odometry(io.frame(), overlay)
-        io.stick(step_d, 0.0)
-        tiles: list = []
-        trace = _trace(io, odo, 1.0, tiles=tiles)
-        io.stick(0.0, 0.0)
-        tail = _trace(io, odo, 0.6)  # after letting go: how far it coasts (latency, then slowing down)
-        if odo.health() >= 0.9:
+    # 2. The response curve, slow to fast, stopping before the picture moves too far between two captures to be
+    #    followed. Until the focal length is known, the rotation model is followed loosely and the tile shifts are
+    #    kept to measure it.
+    focal, rows_seen, curve_px, fps = None, [], [], 0.0
+    for d in sorted(points):
+        rates, health = [], 1.0
+        for sign in (1, -1):
+            odo = Odometry(io.frame(), overlay, focal, tolerance=1.0 if focal else 3.0)
+            rate, _ = _hold_steady(io, odo, sign * d, hold_s, tiles=rows_seen if focal is None else None)
+            rates.append(rate)
+            health = min(health, odo.health())
+            fps = max(fps, odo.fps())
+        rate = sum(rates) / 2
+        per_frame = rate / max(fps, 1.0)
+        if health < 0.85 or per_frame > SAFE_FRAME_FRACTION * W:
+            io.log("too fast to follow", deflection=d, px_per_frame=round(per_frame), measured=round(health, 2))
             break
-        io.log("too fast to follow", deflection=step_d, measured=round(odo.health(), 2))
-    else:
-        raise RuntimeError("the picture moves too fast to follow even at a third of the stick (a very slow capture?)")
+        curve_px.append((d, rate, health))
+        if focal is None and rate > 0:
+            focal = focal_from_rows(rows_seen, W, k)
+            if focal:
+                io.log("focal", focal_px=round(focal), deflection=d)
+    moving = [c for c in curve_px if c[1] > 0]
+    if not moving:
+        raise RuntimeError("couldn't measure a turn the picture can be followed at (too fast even at the "
+                           "smallest deflection, or too little texture)")
+    io.log("curve", px_s=[[d, round(r)] for d, r, _h in curve_px], capture_fps=round(fps))
+
+    # 3. Step response at the fastest safe deflection: latency, ramp up, coast after letting go.
+    d_step = moving[-1][0]
+    odo = Odometry(io.frame(), overlay, focal)
+    io.stick(d_step, 0.0)
+    tiles: list = []
+    trace = _trace(io, odo, 1.0, tiles=tiles)
+    io.stick(0.0, 0.0)
+    tail = _trace(io, odo, 0.6)
     latency, top_px, ramp = step_response(trace, k)
     if top_px <= 0:
         raise RuntimeError("no steady turn when the right stick was pushed")
-    released_at = trace[-1][1]
-    coast_s = max(latency, (tail[-1][1] - released_at) / top_px) if tail else latency + ramp / 3
-    focal = focal_from_flow(tiles, odo.k, odo.size)
-    io.log("step", deflection=step_d, latency_ms=round(latency * 1000), top_px_s=round(top_px),
-           ramp_ms=round(ramp * 1000), coast_ms=round(coast_s * 1000), focal_px=focal and round(focal))
+    coast_s = max(latency, (tail[-1][1] - trace[-1][1]) / top_px) if tail else latency + ramp / 3
+    focal = focal_from_rows(rows_seen + tiles, W, k) or focal  # more samples; the full turn measures it exactly
+    tilt = odo.theta
+    io.log("step", deflection=d_step, latency_ms=round(latency * 1000), top_px_s=round(top_px),
+           ramp_ms=round(ramp * 1000), coast_ms=round(coast_s * 1000), focal_px=focal and round(focal),
+           tilt_deg=tilt is not None and round(math.degrees(tilt), 1))
 
-    window = max(hold_s, 2 * ramp + 0.25)
-    curve_px = []
-    for d in points:
-        if d > step_d + 1e-9:
-            break
-        rates, health = [], 1.0
-        for sign in (1, -1):
-            odo = Odometry(io.frame(), overlay, focal)
-            io.stick(sign * d, 0.0)
-            tr = _trace(io, odo, window)
-            io.stick(0.0, 0.0)
-            rates.append(abs(_steady_rate(tr, window * 0.45)))
-            health = min(health, odo.health())
-            io.sleep(latency + 0.12)
-        if health < 0.85:  # faster than it can follow: the curve (and control) stops below this
-            io.log("too fast to follow", deflection=d, measured=round(health, 2))
-            break
-        curve_px.append((d, sum(rates) / 2))
-    if not curve_px:
-        raise RuntimeError("couldn't measure any turn rate")
-    io.log("curve", px_s=[[d, round(r)] for d, r in curve_px])
-
-    ppd = None
+    # 4. Degrees: a full turn (loop closure) at a speed the first view can be matched at as it comes back.
+    ppd, ppd_from = None, None
     if full_turn:
-        want = 0.45 * top_px
-        d_turn = min(curve_px, key=lambda p: abs(p[1] - want) if p[1] > 0.05 * top_px else 1e12)[0]
-        px_round = _full_turn(io, overlay, d_turn, W, H, k, focal_px=focal)
-        if px_round and px_round > W:
-            ppd = px_round / 360.0
-        io.log("full turn", px=round(px_round or 0), px_per_deg=ppd and round(ppd, 3))
-        io.sleep(latency + 0.2)
+        slow_enough = [c for c in moving if c[1] / max(fps, 1.0) <= LOOP_FRAME_FRACTION * W] or moving[:1]
+        d_turn, rate_px, _h = max(slow_enough, key=lambda c: c[1])
+        f_guess = focal or (W / 2) / math.tan(math.radians(DEFAULT_HFOV_DEG / 2))
+        expected_s = 2 * math.pi * f_guess / max(rate_px, 1e-6)
+        if expected_s <= 45:
+            px_round = _full_turn(io, overlay, d_turn, W, H, k, limit_s=1.6 * expected_s + 3, focal_px=focal)
+            if px_round and px_round > W:
+                ppd, ppd_from = px_round / 360.0, "full turn"
+            io.log("full turn", deflection=d_turn, px=round(px_round or 0), px_per_deg=ppd and round(ppd, 3))
+            io.sleep(latency + 0.2)
+        else:
+            io.log("full turn skipped", reason=f"a turn would take ~{expected_s:.0f} s")
+    if ppd is None and focal:
+        ppd, ppd_from = focal * math.pi / 180, "focal length"  # a pinhole camera's middle moves f px per radian
+    curve_px = [(d, r) for d, r, _h in curve_px]
 
     look: dict[str, Any] = {"stick": "right_stick", "latency_s": round(latency, 3), "accel_s": round(ramp, 3),
-                            "coast_s": round(coast_s, 3), "y_gain": 1.0, "max_deflection": curve_px[-1][0]}
+                            "coast_s": round(coast_s, 3), "y_gain": 1.0, "max_deflection": d_step,
+                            "capture_fps": round(fps, 1)}
     profile: dict[str, Any] = {"app": app, "screen": [W, H], "px_per_deg": ppd and round(ppd, 4),
-                               "focal_px": focal and round(focal, 1),
+                               "px_per_deg_from": ppd_from,
+                               # a pinhole camera moves its middle f px per radian: the full turn gives f exactly
+                               "focal_px": round(ppd * 180 / math.pi, 1) if ppd_from == "full turn"
+                               else (focal and round(focal, 1)),
                                "overlay": overlay.to_json(), "overlay_fraction": round(overlay.fraction(), 3),
                                "pitch_bottom_deg": -90.0, "calibrated": time.strftime("%Y-%m-%d %H:%M"), "look": look}
+    if tilt is not None:
+        profile["tilt_at_start_deg"] = round(math.degrees(tilt), 1)
     if ppd:
         look["curve"] = [[d, round(r / ppd, 2)] for d, r in curve_px]
         c = ResponseCurve(look["curve"])
@@ -606,13 +800,25 @@ def calibrate(io: PlantIO, points=(0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.8
         look["curve_px"] = [[d, round(r, 1)] for d, r in curve_px]
 
     if pitch and ppd:
-        trace = _drive_to_limit(io, overlay, -step_d, top_px)  # the same deflection as the yaw step: compare rates
-        moving = [(t, v) for t, v in trace if t <= trace[-1][0] - 0.1]
-        vy = _steady_rate(moving, 0.3) if len(moving) > 4 else 0.0
-        if abs(vy) > 0.05 * top_px:
-            look["y_gain"] = round(math.copysign(abs(vy) / top_px, -vy), 3)  # stick down: picture moves up (-y)
-        io.sleep(latency + 0.15)
-        Camera(io, profile).turn(pitch=-profile["pitch_bottom_deg"], tol=1.5)  # back up to level
+        # 5. Vertical gain: up/down at a moderate deflection, toward level (away from a pitch limit), long enough to
+        #    get past the latency and the ramp up; compared with how fast that deflection yaws.
+        cam = Camera(io, profile)
+        tilt_now = cam.tilt()
+        down = tilt_now is None or tilt_now > 0
+        d_p, rate_yaw = min(((d, r) for d, r in curve_px if r > 0), key=lambda c: abs(c[1] / ppd - 60.0))
+        steady_after = latency + 1.5 * max(ramp, 0.03)
+        seconds = steady_after + max(0.12, 15.0 / max(rate_yaw / ppd, 1e-6))
+        odo = cam.odometry()
+        io.stick(0.0, -d_p if down else d_p)
+        trace = _trace(io, odo, seconds, axis=1)
+        io.stick(0.0, 0.0)
+        cam._settle(odo)
+        vy = _steady_rate(trace, steady_after)
+        if abs(vy) > 0.05 * rate_yaw:
+            # stick down normally moves the picture up (-y), stick up moves it down (+y)
+            look["y_gain"] = round(math.copysign(abs(vy) / rate_yaw, -vy if down else vy), 3)
+        io.log("pitch", deflection=d_p, y_gain=look["y_gain"])
+        Camera(io, profile).level()
     return profile
 
 
@@ -634,6 +840,7 @@ class Camera:
         self.max_d = float(look.get("max_deflection", 1.0))  # faster than this, odometry can't follow
         # how far (in seconds of the current speed) it keeps turning after the stick lets go
         self.coast = float(look.get("coast_s") or (self.latency + self.accel / 3))
+        self._tilt: float | None = None  # the last tilt measured (degrees)
         ov = profile.get("overlay")
         self.overlay = Overlay.from_json(ov) if ov else None
 
@@ -651,11 +858,27 @@ class Camera:
         decel = self.curve.max_rate / max(self.coast, 0.03)
         return math.copysign(min(self.curve.max_rate, math.sqrt(1.2 * decel * left), 5.0 * left), err)
 
+    def _hold(self, odo: Odometry, x: float, y: float, seconds: float) -> None:
+        """Hold the stick for `seconds`, then center it, following the picture all the while (odometry can't
+        recover from a long blind gap in a fast turn)."""
+        io = self.io
+        io.stick(x, y)
+        end = time.perf_counter() + seconds
+        try:
+            while time.perf_counter() < end:
+                odo.update(io.frame())
+                io.sleep(0.004)
+        finally:
+            io.stick(0.0, 0.0)
+
     def _settle(self, odo: Odometry, timeout: float = 0.8) -> None:
         """Wait until the view has stopped (a servo's in-position check): the last input only shows after the
         latency, and then the camera slows down gradually."""
         io = self.io
-        io.sleep(self.latency)
+        end = time.perf_counter() + self.latency
+        while time.perf_counter() < end:  # (following the picture: it's still moving)
+            odo.update(io.frame())
+            io.sleep(0.004)
         t0, still = time.perf_counter(), 0
         while time.perf_counter() - t0 < timeout:
             odo.update(io.frame())
@@ -700,9 +923,9 @@ class Camera:
                         want = min(0.3 * self.curve.max_rate, max(self.curve.min_rate, abs(err) / 0.15))
                         d = self.curve.deflection(math.copysign(want, err))
                         rate = max(abs(self.curve.rate(d)), 1e-6)  # what that deflection really turns
-                        io.stick(d if axis == 0 else 0.0, (d / self.y_gain) if axis == 1 else 0.0)
-                        io.sleep(min(0.4, abs(err) / rate))  # a lagging camera still turns rate x time in all
-                        io.stick(0.0, 0.0)
+                        # (a lagging camera still turns rate x time in all)
+                        self._hold(odo, d if axis == 0 else 0.0, (d / self.y_gain) if axis == 1 else 0.0,
+                                   min(0.4, abs(err) / rate))
                 self._settle(odo)
         finally:
             io.stick(0.0, 0.0)
@@ -713,20 +936,45 @@ class Camera:
             out["pitch_limit"] = True
         return out
 
-    def level(self, pitch: float = 0.0) -> dict:
-        """Look straight ahead (or at `pitch` degrees): down to the pitch limit as a reference, then up."""
-        top = self.curve.max_rate * self.ppd
-        _drive_to_limit(self.io, self.overlay, -math.copysign(self.max_d, self.y_gain), top)
-        self.io.sleep(self.latency + self.coast)
-        return self.turn(pitch=pitch - float(self.profile.get("pitch_bottom_deg", -90.0)), tol=1.5)
+    def tilt(self) -> float | None:
+        """The camera's pitch now (degrees, up +), from how the picture rolls during a small yaw wiggle there and
+        back; None if it can't tell (a flat view)."""
+        odo = self.odometry()
+        rate = max(1.5 * self.curve.min_rate, min(60.0, 0.3 * self.curve.max_rate))
+        d = self.curve.deflection(rate)
+        seconds = min(0.3, 6.0 / abs(self.curve.rate(d)) + self.accel)
+        for sign in (1, -1):
+            self._hold(odo, sign * d, 0.0, seconds)
+            self._settle(odo)
+        self._tilt = None if odo.theta is None else math.degrees(odo.theta)
+        return self._tilt
 
-    def angles_to(self, x: float, y: float, w: int, h: int) -> tuple[float, float]:
-        """Yaw and pitch (degrees) to a screen point: a pinhole model with the measured focal length, or linear if
-        calibration found a flat view."""
+    def level(self, pitch: float = 0.0) -> dict:
+        """Look at `pitch` degrees (0 = straight ahead). The tilt comes from a small yaw wiggle, so no pitch limit
+        is needed; without one (a flat view), the bottom limit is the reference."""
+        now = self.tilt()
+        if now is None:
+            top = self.curve.max_rate * self.ppd
+            _drive_to_limit(self.io, self.overlay, -math.copysign(self.max_d, self.y_gain), top)
+            self.io.sleep(self.latency + self.coast)
+            now = float(self.profile.get("pitch_bottom_deg", -90.0))
+        out = self.turn(pitch=pitch - now, tol=1.0)
+        out["was_deg"] = round(now, 1)
+        return out
+
+    def angles_to(self, x: float, y: float, w: int, h: int, tilt: float | None = None) -> tuple[float, float]:
+        """Yaw and pitch (degrees) that bring a screen point to the middle, for a camera that yaws about the vertical
+        and is tilted `tilt` degrees (the last known tilt if not given, else level)."""
         f = self.profile.get("focal_px")
         if not f:
             return (x - w / 2) / self.ppd, -(y - h / 2) / self.ppd
-        return math.degrees(math.atan2(x - w / 2, f)), -math.degrees(math.atan2(y - h / 2, f))
+        t = math.radians(self._tilt if tilt is None and self._tilt is not None else (tilt or 0.0))
+        xc, yc = x - w / 2, y - h / 2
+        fwd = yc * math.sin(t) + f * math.cos(t)  # the point's direction in the level frame: forward and up
+        up = f * math.sin(t) - yc * math.cos(t)
+        yaw = math.degrees(math.atan2(xc, fwd))
+        elevation = math.degrees(math.atan2(up, math.hypot(xc, fwd)))
+        return yaw, elevation - math.degrees(t)
 
     def look_at(self, x: float, y: float, refine: bool = True, within: float = 12) -> dict:
         """Put screen point (x, y) under the crosshair: feed forward with the camera model, then correct on the

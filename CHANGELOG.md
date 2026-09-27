@@ -59,10 +59,15 @@ handheld itself.
 - **Camera control the robotics way (any game, drone feed or robot camera):** `behavior` kind `calibrate` identifies
   the look stick once per app (HUD overlay, latency, coast after release, deadzone and response curve, px/degree by
   loop closure over a full turn, focal length, vertical gain, pitch limit) and saves a profile on the handheld;
-  it backs off to the fastest deflection visual odometry can follow. Programs then get `turn(yaw, pitch)`,
-  `level()`, `look_at(x, y)`, `scan(score_fn)` and `look_rate()` in degrees, closed on tiled phase-correlation
-  odometry with consensus gating, feedforward through the inverse response curve, coast-aware release and settling.
-  `aim` defaults to the calibrated deadzone.
+  it measures the focal length first and the response curve from slow to fast, stopping below 8% of the picture
+  per captured frame (faster, image matching aliases and reads wrong while looking healthy). Programs then get
+  `turn(yaw, pitch)`, `level()`, `look_at(x, y)`, `scan(score_fn)` and `look_rate()` in degrees, closed on a visual
+  gyro (tile shifts fitted with the exact rotation homography, robust to things moving through the view, its roll
+  while yawing giving the camera's pitch), with feedforward through the inverse response curve, coast-aware release,
+  tracking through every correction and settling. `aim` defaults to the calibrated deadzone.
+- **The controller re-primes after touch, mouse or keyboard input:** tapping the screen switched Minecraft to its
+  touch controls, and the next controller press only switched it back. The virtual pad now checks Windows' last-input
+  time and nudges the right stick (net zero) first when anything but a controller came in since its last input.
 - **Guards, pre-flight checks and a skill library** (from embodied-agent research: runtime monitors kept apart
   from the policy, and Voyager-style libraries of verified skills): `behavior` kind `guard` is a standing safety
   check (setup + a Python condition over the screen) that stops every program when it fires (a turn-based game then

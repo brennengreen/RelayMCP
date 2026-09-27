@@ -135,7 +135,7 @@ BEHAVIORS = behave.Runtime(
     profiles=control.ProfileStore(USER_DIR / "profiles"),
     app=lambda: (focus.foreground() or {}).get("process") or "unknown",
     skills=skills.SkillStore(USER_DIR / "skills"),
-    active=lambda: not TURNS.paused,
+    active=TURNS.running,
 )
 lean.ALERT_HOOK = BEHAVIORS.take_alerts
 

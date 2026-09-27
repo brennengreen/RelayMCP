@@ -105,19 +105,26 @@ unknown *plant* with a camera: nothing below is specific to one game.
 2. **Plan slow, act fast.** The model writes a short `program` per sub-goal (code as policy). It runs on the handheld
    at frame rate with a controller and perception API, and every wait checks its guards, the time limit and your
    hands on the controller.
-3. **Identify the plant once.** `behavior` kind `calibrate` (about 30 s, once per game) probes the look stick and
-   learns which pixels are HUD, the input-to-picture latency, how far it coasts after letting go, the deadzone and
-   response curve, pixels per degree (it turns all the way round and recognizes where it started), the focal length
-   and the pitch limit. It never drives the camera faster than it can follow.
-4. **Close the loop on pixels.** Visual odometry (tiled phase correlation over the middle of the picture, HUD
-   tiles skipped, a consensus of tiles, keyframes) turns the picture into yaw and pitch, so programs get `turn`,
-   `level`, `look_at` (put a screen point under the crosshair) and `scan` in degrees. Turns feed forward through the
-   inverse response curve, release early by the measured coast, and wait until the view has settled before
-   correcting, like a servo's in-position check.
+3. **Identify the plant once.** `behavior` kind `calibrate` (about 20-30 s, once per game) probes the look stick
+   and learns which pixels are HUD, the focal length, the response curve and deadzone (slow to fast), the
+   input-to-picture latency, the ramp up and how far it coasts after letting go, pixels per degree (it turns all
+   the way round and recognizes where it started) and the vertical gain. It never drives the camera faster than it
+   can follow: past about 8% of the picture per captured frame, image matching aliases (a big miss reads as a
+   small one, consistently: measured +44% at 41 degrees a frame with every frame "tracked"), so the curve, and
+   control, stop below that.
+4. **Close the loop on pixels.** A visual gyro turns the picture into yaw and pitch: tiles over the middle of the
+   picture (none on the HUD) are phase-correlated with a keyframe, each searched where the current estimate says it
+   went, and the camera rotation that explains their shifts is fitted exactly (a pure rotation maps the picture by
+   a homography, whatever the depth), robustly (a mob walking through a tile is dropped). A tilted camera's picture
+   rolls as it yaws; that roll also gives its pitch, so `level` needs no pitch limit. Programs get `turn`,
+   `level`, `look_at` (put a screen point under the crosshair) and `scan` in degrees. Turns feed forward through
+   the inverse response curve, release early by the measured coast, keep following the picture through every
+   pulse, and wait until the view has settled before correcting, like a servo's in-position check.
 5. **Guard separately.** A `guard` behavior is a standing safety monitor, apart from the programs that come and go:
    when its condition holds (health dropping, a death screen) every program stops, a turn-based game pauses, an
    optional reflex program runs, and the next tool results carry an `alerts` entry. Guards only watch; they never
-   judge a paused game.
+   judge a paused game or one whose pause menu is fading in or out, and their setup (baselines) runs on the first
+   frame of the running game.
 6. **Check before moving, remember what worked.** A program that uses a name nothing defines fails before the
    controller moves ("did you mean 'wait'?"). Programs that worked can be saved as named skills per game (`save`,
    `skills`), with their inputs worked out from the code and a record of how their runs went, so later sessions

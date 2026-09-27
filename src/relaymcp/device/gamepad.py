@@ -58,6 +58,32 @@ def idle_limit_s() -> float | None:
     return None if minutes <= 0 else minutes * 60
 
 
+def _tick_now() -> int:
+    """Windows' millisecond tick (what GetLastInputInfo reports in)."""
+    if _WIN:
+        return int(ctypes.windll.kernel32.GetTickCount()) & 0xFFFFFFFF
+    return int(time.monotonic() * 1000) & 0xFFFFFFFF
+
+
+def _last_input_tick() -> int | None:
+    """When the last keyboard, mouse, touch or pen input happened (injected included; gamepads don't count)."""
+    if not _WIN:
+        return None
+    try:
+        class LASTINPUTINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+        li = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
+        return int(li.dwTime) if _user32.GetLastInputInfo(ctypes.byref(li)) else None
+    except Exception:
+        return None
+
+
+def _after(a: int, b: int, margin_ms: int = 30) -> bool:
+    """Is tick a later than tick b (by more than the margin), allowing for the 49-day wrap-around?"""
+    d = (a - b) & 0xFFFFFFFF
+    return margin_ms < d < 0x7FFFFFFF
+
+
 def prime_enabled() -> bool:
     """device.json "gamepad_prime" (default true): nudge the right stick when the pad plugs in (see PRIME_STEPS)."""
     return bool(device_settings().get("gamepad_prime", True))
@@ -154,6 +180,8 @@ class VirtualPad:
         self.pinned = False
         self.plugged_at: float | None = None
         self.primed = False
+        self.reprimes = 0
+        self._pad_tick: int | None = None  # when the pad last sent anything (Windows ticks)
 
     def _ensure(self):
         if self._pad is None:
@@ -197,6 +225,18 @@ class VirtualPad:
                 pass
             time.sleep(0.02)
         return False
+
+    def _maybe_reprime(self) -> None:
+        """Keyboard, mouse or touch input since the pad's last input (someone tapped the screen, or a touch tool
+        did) may have switched the game's prompts away from the controller, and its next input would only switch
+        them back (Minecraft does this). Prime again first. Costs a syscall when nothing happened."""
+        if self._pad_tick is None:
+            return
+        last = _last_input_tick()
+        if last is None or not _after(last, self._pad_tick) or not prime_enabled():
+            return
+        if self._prime():
+            self.reprimes += 1
 
     def _prime(self) -> bool:
         """So the first real press lands in games that only wake up to a new controller (see PRIME_STEPS)."""
@@ -315,11 +355,13 @@ class VirtualPad:
         pad.left_trigger_float(value_float=_clamp(lt, 0, 1))
         pad.right_trigger_float(value_float=_clamp(rt, 0, 1))
         pad.update()
+        self._pad_tick = _tick_now()
 
     def stick(self, side: str, x: float, y: float) -> None:
         """Hold one stick where it is told (behaviors steer with this); the rest of the pad stays neutral."""
         with self._lock:
             self._ensure()
+            self._maybe_reprime()
             left = (x, y) if side == "left_stick" else (0.0, 0.0)
             right = (x, y) if side == "right_stick" else (0.0, 0.0)
             self._apply(0, left, right, 0.0, 0.0)
@@ -333,6 +375,7 @@ class VirtualPad:
         rs = state.get("right_stick") or [0, 0]
         with self._lock:
             self._ensure()
+            self._maybe_reprime()
             self._apply(mask, (float(ls[0]), float(ls[1])), (float(rs[0]), float(rs[1])),
                         max(lt, float(state.get("left_trigger", 0) or 0)), max(rt, float(state.get("right_trigger", 0) or 0)))
             self._touch()
@@ -385,12 +428,16 @@ class VirtualPad:
         with self._lock:
             newly_plugged = self._pad is None
             self._ensure()
+            reprimes = self.reprimes
+            self._maybe_reprime()
             try:
                 late = self._play(parsed)
             finally:
                 self._apply(0, (0, 0), (0, 0), 0, 0)
                 self._touch()
         result = {"steps": len(parsed), "total_ms": total, "xinput_slot": self.index()}
+        if self.reprimes > reprimes:
+            result["reprimed"] = "touch, mouse or keyboard input came in since the last controller input"
         if len(late) >= 4:
             result["timing_ms_p95"] = round(sorted(late)[int(len(late) * 0.95)], 1)
         if newly_plugged:
