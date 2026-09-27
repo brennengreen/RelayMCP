@@ -56,6 +56,13 @@ handheld itself.
     (calibrate camera turns), `sees` text in a region, `frame`/`diff`/`color`, `guard` stops on danger, `log`,
     `result`). `params.wait: true` returns when it ends, so one call plays one sub-goal. Loops that never wait
     are interrupted at the time limit.
+- **Camera control the robotics way (any game, drone feed or robot camera):** `behavior` kind `calibrate` identifies
+  the look stick once per app (HUD overlay, latency, coast after release, deadzone and response curve, px/degree by
+  loop closure over a full turn, focal length, vertical gain, pitch limit) and saves a profile on the handheld;
+  it backs off to the fastest deflection visual odometry can follow. Programs then get `turn(yaw, pitch)`,
+  `level()`, `look_at(x, y)`, `scan(score_fn)` and `look_rate()` in degrees, closed on tiled phase-correlation
+  odometry with consensus gating, feedforward through the inverse response curve, coast-aware release and settling.
+  `aim` defaults to the calibrated deadzone.
 - **Found by playing Minecraft:** template matching (aim, track at) no longer locks onto open sky: its running sums
   are float64 and flat windows can't match (float32 rounding had bright, nearly flat sky scoring in the thousands).
   `aim` and `track at` learn a game's stick deadzone (Minecraft ignores deflections under ~0.4) and report it, and

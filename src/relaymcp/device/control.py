@@ -58,14 +58,23 @@ def _hanning(shape):
     return np.outer(np.hanning(shape[0]), np.hanning(shape[1])).astype(np.float32)
 
 
+def spectrum(a, weight, total: float | None = None):
+    """The weighted, mean-removed spectrum of a picture, for shift_between (cache it for a picture used often)."""
+    np = _np()
+    total = float(weight.sum()) + 1e-6 if total is None else total
+    return np.fft.rfft2((a - float((a * weight).sum()) / total) * weight)
+
+
 def image_shift(a, b, weight) -> tuple[float, float, float]:
     """(dx, dy, peak): how far picture b is shifted from picture a (same shape), weighted (0 = ignore), sub-pixel."""
-    np = _np()
     total = float(weight.sum()) + 1e-6
-    fa = np.fft.rfft2((a - float((a * weight).sum()) / total) * weight)
-    fb = np.fft.rfft2((b - float((b * weight).sum()) / total) * weight)
+    return shift_between(spectrum(a, weight, total), spectrum(b, weight, total), a.shape)
+
+
+def shift_between(fa, fb, shape) -> tuple[float, float, float]:
+    np = _np()
     cross = fb * np.conj(fa)
-    r = np.fft.irfft2(cross / (np.abs(cross) + 1e-9), s=a.shape)
+    r = np.fft.irfft2(cross / (np.abs(cross) + 1e-9), s=shape)
     h, w = r.shape
     y, x = np.unravel_index(int(np.argmax(r)), r.shape)
     peak = float(r[y, x])
@@ -175,14 +184,26 @@ class Odometry:
             tiles = [(x0 + c * tw, y0 + r * th, 1.0, 1.0) for r in range(rows) for c in range(cols)]
         self.tiles, self.tw, self.th = tiles, tw, th
         self.window = _hanning((th, tw))
-        self.ref = g
+        self._total = float(self.window.sum()) + 1e-6
+        self._np = np
+        self._key(g)
         self.base, self.cur = [0.0, 0.0], [0.0, 0.0]
         self.peak, self.used, self.lost = 1.0, len(tiles), 0
+        self.updates, self.lost_total = 0, 0  # measured frames, and how many of them couldn't be measured
         self.tile_shifts: list = []  # (tile x, tile y, raw dx, raw dy) from the last measurement, for calibration
         self.size = (w, h)
-        self.samples: collections.deque = collections.deque(maxlen=16)
+        self.samples: collections.deque = collections.deque(maxlen=64)
         self.samples.append((time.perf_counter(), 0.0, 0.0))
-        self._np = np
+        self._last = frame
+
+    def _key(self, g) -> None:
+        """Make g the keyframe: its tiles' spectra are computed once, not on every frame."""
+        self.ref = g
+        self._ref_tiles = []
+        for tx, ty, _gx, _gy in self.tiles:
+            a = g[ty:ty + self.th, tx:tx + self.tw]
+            flat = float(a.std()) < 2.0  # plain sky or a flat wall: nothing to lock onto
+            self._ref_tiles.append(None if flat else spectrum(a, self.window, self._total))
 
     @property
     def x(self) -> float:
@@ -200,14 +221,12 @@ class Odometry:
         h, w = g.shape
         ix, iy = int(round(pred[0])), int(round(pred[1]))
         found = []
-        for tx, ty, gx, gy in self.tiles:
+        for (tx, ty, gx, gy), fa in zip(self.tiles, self._ref_tiles):
             bx, by = tx + ix, ty + iy
-            if bx < 0 or by < 0 or bx + self.tw > w or by + self.th > h:
+            if fa is None or bx < 0 or by < 0 or bx + self.tw > w or by + self.th > h:
                 continue
-            a = self.ref[ty:ty + self.th, tx:tx + self.tw]
-            if float(a.std()) < 2.0:  # plain sky or a flat wall: nothing to lock onto
-                continue
-            rx, ry, peak = image_shift(a, g[by:by + self.th, bx:bx + self.tw], self.window)
+            fb = spectrum(g[by:by + self.th, bx:bx + self.tw], self.window, self._total)
+            rx, ry, peak = shift_between(fa, fb, (self.th, self.tw))
             found.append(((ix + rx) / gx, (iy + ry) / gy, peak, tx, ty, ix + rx, iy + ry))
         if len(found) < 2:
             return None
@@ -229,8 +248,13 @@ class Odometry:
         return self.cur[0] + 2 * dx, self.cur[1] + 2 * dy
 
     def update(self, frame) -> tuple[float, float]:
-        g = gray(frame, self.k)
         now = time.perf_counter()
+        if frame is self._last:  # no new frame yet (capture hands back the same image): nothing to measure, but
+            self.samples.append((now, self.x, self.y))  # the time counts: a view that stopped reads as stopped
+            return self.x, self.y
+        self._last = frame
+        self.updates += 1
+        g = gray(frame, self.k)
         vx, vy = self.rate(0.05)
         gap = now - self.samples[-1][0]
         dt = min(gap, 0.05)
@@ -245,6 +269,7 @@ class Odometry:
                 break
         if got is None:
             self.lost += 1
+            self.lost_total += 1
             self.peak, self.used = 0.0, 0
             if gap < 0.1:
                 self.cur = list(guesses[0])  # dead reckoning across a frame or two
@@ -254,9 +279,14 @@ class Odometry:
         h, w = g.shape
         if self.lost > 3 or abs(self.cur[0]) > 0.18 * w or abs(self.cur[1]) > 0.12 * h:
             self.base = [self.base[0] + self.cur[0], self.base[1] + self.cur[1]]
-            self.cur, self.ref, self.lost = [0.0, 0.0], g, 0
+            self.cur, self.lost = [0.0, 0.0], 0
+            self._key(g)
         self.samples.append((now, self.x, self.y))
         return self.x, self.y
+
+    def health(self) -> float:
+        """The fraction of frames it could measure (1 = all)."""
+        return 1.0 - self.lost_total / max(1, self.updates)
 
     def rate(self, span: float = 0.1) -> tuple[float, float]:
         """Picture motion (screen px/s) over about the last `span` seconds."""
@@ -338,6 +368,7 @@ def summary(profile: dict) -> dict:
     return {"app": profile.get("app"), "px_per_deg": profile.get("px_per_deg"),
             "deadzone": look.get("deadzone"), "max_deg_s": look.get("max_deg_s"),
             "latency_ms": round(1000 * look.get("latency_s", 0)), "accel_ms": round(1000 * look.get("accel_s", 0)),
+            "coast_ms": round(1000 * look.get("coast_s", 0)),
             "y_gain": look.get("y_gain"), "overlay": profile.get("overlay_fraction"),
             "curve": look.get("curve")}
 
@@ -506,31 +537,49 @@ def calibrate(io: PlantIO, points=(0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.8
                            "gameplay view, and is the right stick its camera?)")
     io.log("overlay", fraction=round(overlay.fraction(), 3))
 
-    odo = Odometry(io.frame(), overlay)
-    io.stick(1.0, 0.0)
-    tiles: list = []
-    trace = _trace(io, odo, 1.0, tiles=tiles)
-    io.stick(0.0, 0.0)
+    # Step response, at full deflection unless the picture then moves too fast to follow between frames (a fast
+    # camera, or a slow capture): then at the fastest deflection that can be followed, which control never exceeds.
+    for step_d in (1.0, 0.7, 0.5, 0.35):
+        odo = Odometry(io.frame(), overlay)
+        io.stick(step_d, 0.0)
+        tiles: list = []
+        trace = _trace(io, odo, 1.0, tiles=tiles)
+        io.stick(0.0, 0.0)
+        tail = _trace(io, odo, 0.6)  # after letting go: how far it coasts (latency, then slowing down)
+        if odo.health() >= 0.9:
+            break
+        io.log("too fast to follow", deflection=step_d, measured=round(odo.health(), 2))
+    else:
+        raise RuntimeError("the picture moves too fast to follow even at a third of the stick (a very slow capture?)")
     latency, top_px, ramp = step_response(trace, k)
     if top_px <= 0:
-        raise RuntimeError("no steady turn at full deflection")
+        raise RuntimeError("no steady turn when the right stick was pushed")
+    released_at = trace[-1][1]
+    coast_s = max(latency, (tail[-1][1] - released_at) / top_px) if tail else latency + ramp / 3
     focal = focal_from_flow(tiles, odo.k, odo.size)
-    io.log("step", latency_ms=round(latency * 1000), top_px_s=round(top_px), ramp_ms=round(ramp * 1000),
-           focal_px=focal and round(focal))
-    io.sleep(0.25 + latency)
+    io.log("step", deflection=step_d, latency_ms=round(latency * 1000), top_px_s=round(top_px),
+           ramp_ms=round(ramp * 1000), coast_ms=round(coast_s * 1000), focal_px=focal and round(focal))
 
     window = max(hold_s, 2 * ramp + 0.25)
     curve_px = []
     for d in points:
-        rates = []
+        if d > step_d + 1e-9:
+            break
+        rates, health = [], 1.0
         for sign in (1, -1):
             odo = Odometry(io.frame(), overlay, focal)
             io.stick(sign * d, 0.0)
             tr = _trace(io, odo, window)
             io.stick(0.0, 0.0)
             rates.append(abs(_steady_rate(tr, window * 0.45)))
+            health = min(health, odo.health())
             io.sleep(latency + 0.12)
+        if health < 0.85:  # faster than it can follow: the curve (and control) stops below this
+            io.log("too fast to follow", deflection=d, measured=round(health, 2))
+            break
         curve_px.append((d, sum(rates) / 2))
+    if not curve_px:
+        raise RuntimeError("couldn't measure any turn rate")
     io.log("curve", px_s=[[d, round(r)] for d, r in curve_px])
 
     ppd = None
@@ -544,7 +593,7 @@ def calibrate(io: PlantIO, points=(0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.8
         io.sleep(latency + 0.2)
 
     look: dict[str, Any] = {"stick": "right_stick", "latency_s": round(latency, 3), "accel_s": round(ramp, 3),
-                            "y_gain": 1.0}
+                            "coast_s": round(coast_s, 3), "y_gain": 1.0, "max_deflection": curve_px[-1][0]}
     profile: dict[str, Any] = {"app": app, "screen": [W, H], "px_per_deg": ppd and round(ppd, 4),
                                "focal_px": focal and round(focal, 1),
                                "overlay": overlay.to_json(), "overlay_fraction": round(overlay.fraction(), 3),
@@ -557,7 +606,7 @@ def calibrate(io: PlantIO, points=(0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.8
         look["curve_px"] = [[d, round(r, 1)] for d, r in curve_px]
 
     if pitch and ppd:
-        trace = _drive_to_limit(io, overlay, -1.0, top_px)
+        trace = _drive_to_limit(io, overlay, -step_d, top_px)  # the same deflection as the yaw step: compare rates
         moving = [(t, v) for t, v in trace if t <= trace[-1][0] - 0.1]
         vy = _steady_rate(moving, 0.3) if len(moving) > 4 else 0.0
         if abs(vy) > 0.05 * top_px:
@@ -582,6 +631,9 @@ class Camera:
         self.latency = float(look.get("latency_s", 0.05))
         self.accel = max(0.03, float(look.get("accel_s", 0.1)))
         self.y_gain = float(look.get("y_gain", 1.0)) or 1.0
+        self.max_d = float(look.get("max_deflection", 1.0))  # faster than this, odometry can't follow
+        # how far (in seconds of the current speed) it keeps turning after the stick lets go
+        self.coast = float(look.get("coast_s") or (self.latency + self.accel / 3))
         ov = profile.get("overlay")
         self.overlay = Overlay.from_json(ov) if ov else None
 
@@ -592,12 +644,26 @@ class Camera:
 
     def _want(self, err: float, speed: float, tol: float) -> float:
         """The turn rate (deg/s) to ask for with `err` degrees to go, turning at `speed` now."""
-        coming = abs(speed) * (self.latency + self.accel / 3)  # already on its way: inputs show late, and it slows gradually
+        coming = abs(speed) * self.coast  # already on its way: it keeps turning this far after letting go
         left = abs(err) - coming
         if abs(err) <= tol or left <= 0:
             return 0.0
-        decel = self.curve.max_rate / (self.accel + self.latency)
+        decel = self.curve.max_rate / max(self.coast, 0.03)
         return math.copysign(min(self.curve.max_rate, math.sqrt(1.2 * decel * left), 5.0 * left), err)
+
+    def _settle(self, odo: Odometry, timeout: float = 0.8) -> None:
+        """Wait until the view has stopped (a servo's in-position check): the last input only shows after the
+        latency, and then the camera slows down gradually."""
+        io = self.io
+        io.sleep(self.latency)
+        t0, still = time.perf_counter(), 0
+        while time.perf_counter() - t0 < timeout:
+            odo.update(io.frame())
+            vx, vy = odo.rate(0.04)
+            still = still + 1 if math.hypot(vx, vy) < self.ppd else 0  # under 1 deg/s
+            if still >= 3:
+                return
+            io.sleep(0.008)
 
     def turn(self, yaw: float = 0.0, pitch: float = 0.0, tol: float = 1.0, timeout: float = 6.0) -> dict:
         """Turn by yaw (right +) and pitch (up +) degrees, closed on odometry. Returns what it measured."""
@@ -617,27 +683,27 @@ class Camera:
                     io.stick(0.0, 0.0)  # coasting in on the inputs already sent
                 else:
                     io.stick(self.curve.deflection(ry), self.curve.deflection(rp / self.y_gain) if rp else 0.0)
-                still = still + 1 if rp and abs(vy) < 0.03 * self.curve.max_rate * self.ppd else 0
+                started = time.perf_counter() - t0 > self.latency + self.accel + 0.1  # (not moving yet is not a limit)
+                still = still + 1 if started and rp and abs(vy) < 0.03 * self.curve.max_rate * self.ppd else 0
                 if still >= 8:  # pushing the pitch and the picture doesn't move: a pitch limit
                     at_limit = True
                 io.sleep(1 / 120)
             io.stick(0.0, 0.0)
-            io.sleep(self.latency + 0.06)
-            odo.update(io.frame())
-            for _ in range(4):  # finish with short pulses sized to what's left
+            self._settle(odo)
+            for _ in range(4):  # finish with short pulses sized to what's left, settling after each
                 ey = yaw - (-odo.x / self.ppd)
                 ep = 0.0 if at_limit else pitch - odo.y / self.ppd
                 if abs(ey) <= tol and abs(ep) <= tol:
                     break
                 for axis, err in ((0, ey), (1, ep)):
                     if abs(err) > tol:
-                        rate = min(0.3 * self.curve.max_rate, max(self.curve.min_rate, abs(err) / 0.1))
-                        d = self.curve.deflection(math.copysign(rate, err))
+                        want = min(0.3 * self.curve.max_rate, max(self.curve.min_rate, abs(err) / 0.15))
+                        d = self.curve.deflection(math.copysign(want, err))
+                        rate = max(abs(self.curve.rate(d)), 1e-6)  # what that deflection really turns
                         io.stick(d if axis == 0 else 0.0, (d / self.y_gain) if axis == 1 else 0.0)
-                        io.sleep(min(0.3, abs(err) / rate + self.accel / 3))  # plus the ramp up to speed
+                        io.sleep(min(0.4, abs(err) / rate))  # a lagging camera still turns rate x time in all
                         io.stick(0.0, 0.0)
-                io.sleep(self.latency + self.accel / 3 + 0.05)
-                odo.update(io.frame())
+                self._settle(odo)
         finally:
             io.stick(0.0, 0.0)
         got_y, got_p = -odo.x / self.ppd, odo.y / self.ppd
@@ -650,8 +716,8 @@ class Camera:
     def level(self, pitch: float = 0.0) -> dict:
         """Look straight ahead (or at `pitch` degrees): down to the pitch limit as a reference, then up."""
         top = self.curve.max_rate * self.ppd
-        _drive_to_limit(self.io, self.overlay, -math.copysign(1.0, self.y_gain), top)
-        self.io.sleep(self.latency + 0.06)
+        _drive_to_limit(self.io, self.overlay, -math.copysign(self.max_d, self.y_gain), top)
+        self.io.sleep(self.latency + self.coast)
         return self.turn(pitch=pitch - float(self.profile.get("pitch_bottom_deg", -90.0)), tol=1.5)
 
     def angles_to(self, x: float, y: float, w: int, h: int) -> tuple[float, float]:
@@ -711,8 +777,7 @@ class Camera:
                 io.sleep(0.002)
         finally:
             io.stick(0.0, 0.0)
-        io.sleep(self.latency + 0.06)
-        odo.update(io.frame())
+        self._settle(odo)
         if not seen:
             return {"heading": None, "score": None, "samples": 0}
         i = max(range(len(seen)), key=lambda j: seen[j][1])

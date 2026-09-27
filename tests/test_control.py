@@ -31,19 +31,40 @@ class CameraSim:
     W, H = 480, 270
 
     def __init__(self, ppd=4.0, max_rate=240.0, deadzone=0.3, expo=2.0, accel_s=0.12, latency_s=0.04,
-                 limit=90.0, invert_y=False, hud=True, seed=11):
+                 limit=90.0, invert_y=False, hud=True, seed=11, fps=None):
+        self.fps, self._vsync, self._shown = fps, None, None  # fps: new frames only this often, like a real capture
         self.ppd, self.max_rate, self.deadzone, self.expo = ppd, max_rate, deadzone, expo
         self.accel_s, self.latency_s, self.limit, self.invert = accel_s, latency_s, limit, invert_y
         self.pw = int(round(360 * ppd))
         ph = int(round(2 * limit * ppd)) + self.H + 8
         self.pano = _texture(ph, self.pw, 6, seed)
         self.hud = _texture(40, 90, 5, seed + 1) if hud else None
-        self.yaw = self.pitch = self.vx = self.vy = 0.0
-        self.turned = 0.0  # total yaw, unwrapped
+        self.yaw = self._pitch = self.vx = self.vy = 0.0
+        self._turned = 0.0  # total yaw, unwrapped
         self.cmds = deque([(0.0, 0.0, 0.0)])
         self.t = time.perf_counter()
         self.lock = threading.Lock()
         self._wrap()
+
+    # The simulated clock only runs when something looks at it: reading the state has to advance it too (a turn
+    # still coasting when a test reads its angle would otherwise be missed).
+    @property
+    def turned(self):
+        with self.lock:
+            self._advance()
+            return self._turned
+
+    @property
+    def pitch(self):
+        with self.lock:
+            self._advance()
+            return self._pitch
+
+    @pitch.setter
+    def pitch(self, value):
+        with self.lock:
+            self._advance()
+            self._pitch = float(value)
 
     def _wrap(self):
         self.view = np.concatenate([self.pano, self.pano[:, :self.W]], axis=1)
@@ -82,11 +103,11 @@ class CameraSim:
             self.vx += (tx - self.vx) * a
             self.vy += (ty - self.vy) * a
             self.yaw = (self.yaw + self.vx * dt) % 360
-            self.turned += self.vx * dt
-            p = self.pitch + self.vy * dt
+            self._turned += self.vx * dt
+            p = self._pitch + self.vy * dt
             if abs(p) > self.limit:
                 p, self.vy = math.copysign(self.limit, p), 0.0
-            self.pitch = p
+            self._pitch = p
         while len(self.cmds) > 2 and self.cmds[1][0] <= now - self.latency_s - 0.5:
             self.cmds.popleft()
 
@@ -98,8 +119,13 @@ class CameraSim:
     def frame(self):
         with self.lock:
             self._advance()
+            if self.fps:
+                n = int(time.perf_counter() * self.fps)
+                if n == self._vsync:
+                    return self._shown  # the same image object, as the capture hands back between frames
+                self._vsync = n
             x0 = int(round(self.yaw * self.ppd)) % self.pw
-            y0 = int(round((self.limit - self.pitch) * self.ppd))
+            y0 = int(round((self.limit - self._pitch) * self.ppd))
         out = np.empty((self.H, self.W, 4), np.uint8)
         out[..., :3] = self.view[y0:y0 + self.H, x0:x0 + self.W]
         out[..., 3] = 255
@@ -107,6 +133,7 @@ class CameraSim:
             out[222:262, 380:470, :3] = self.hud                       # a HUD panel
             out[self.H // 2 - 1:self.H // 2 + 2, self.W // 2 - 8:self.W // 2 + 8, :3] = 255  # crosshair
             out[self.H // 2 - 8:self.H // 2 + 8, self.W // 2 - 1:self.W // 2 + 2, :3] = 255
+        self._shown = out
         return out
 
 
@@ -289,3 +316,36 @@ def test_calibrate_kind_saves_the_profile_for_the_app_in_front(tmp_path):
     assert saved and saved["look"]["curve_px"] and saved["px_per_deg"] is None
     st = behave.run_tool(rt, "start", "program", {"code": "turn(yaw=10)", "wait": True}, max_s=5)
     assert st["state"] == "failed" and "degrees" in st["reason"], st
+
+
+def test_a_camera_too_fast_to_follow_is_calibrated_and_driven_at_speeds_it_can_follow():
+    """60 frames a second, and a stick whose full deflection turns 100 px a frame (more than a tile): calibration
+    has to notice it lost track, measure at a lower deflection, and control has to stay below that."""
+    sim = CameraSim(max_rate=1500.0, fps=60)
+    events = []
+    io = control.PlantIO(frame=sim.frame, stick=sim.stick, sleep=time.sleep,
+                         log=lambda msg, **d: events.append((msg, d)))
+    prof = control.calibrate(io, points=(0.3, 0.4, 0.5, 0.6, 0.7, 0.85, 1.0), hold_s=0.35, pitch=False)
+    assert any(m == "too fast to follow" for m, _ in events), events
+    assert prof["px_per_deg"] == pytest.approx(4.0, rel=0.03), (prof["px_per_deg"], events)
+    assert prof["look"]["max_deflection"] < 1.0, prof["look"]
+    start = sim.turned
+    control.Camera(io, prof).turn(yaw=120)
+    assert abs((sim.turned - start) - 120) < 2.5, sim.turned - start
+
+
+def test_duplicate_frames_cost_nothing_and_a_stopped_view_reads_as_stopped():
+    sim = CameraSim(fps=30)
+    odo = control.Odometry(sim.frame())
+    sim.stick(0.8, 0.0)
+    time.sleep(0.3)
+    for _ in range(40):
+        odo.update(sim.frame())
+        time.sleep(0.004)
+    sim.stick(0.0, 0.0)
+    assert odo.updates < 30  # ~30 new frames in that time, not 40 measurements
+    time.sleep(0.4)
+    for _ in range(30):
+        odo.update(sim.frame())
+        time.sleep(0.004)
+    assert abs(odo.rate(0.08)[0]) < 5, odo.rate(0.08)

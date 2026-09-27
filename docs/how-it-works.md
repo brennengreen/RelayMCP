@@ -86,12 +86,40 @@ fast reactions on the handheld:
 | See graphics | `screenshot` | DXGI capture, small JPEG: ~70 ms and ~730 tokens; `only_if_changed` costs nothing when nothing moved |
 | Do a sub-goal | `act` | one call for "focus the game, tap *Play*, wait for *Servers*", stopping at the first failure |
 | React, repeat, follow | `behavior` | loops on the handheld at up to 240 Hz: react in ~35 ms, track a target, walk a menu to an item by its text, or run a small `script` state machine |
+| Play in real time | `behavior` kind `program` | a short Python program at frame rate: hold several controls at once, aim, wait for text, stop on danger; one call per sub-goal |
 | Talk to a console | `proc` | a game server or build: send a command, get its reply, wait for a log line |
 | Exact game state | `state` inbox | a game server script or add-on POSTs JSON to the handheld; agents read or wait for it |
 | Scripting | `powershell` | a warm, DPI-aware session: ~50 ms per call instead of 1.5-2.5 s, errors as plain text |
 
 Behaviors are bounded: each has a time limit, releases every held input when it ends, and stops as soon as a real
-controller moves (you can always take over). The `handheld` custom agent and the `relaymcp-handheld` skill
+controller moves (you can always take over).
+
+### Real-time control, the robotics way
+
+A model decides every 10-20 s; a game (or a drone's camera feed, or a robot) doesn't wait. RelayMCP splits control
+the way dual-system robots do (a slow planner over a fast controller) and treats whatever is on the other end as an
+unknown *plant* with a camera: nothing below is specific to one game.
+
+1. **Stop the world when you can.** `focus_window(..., pause={"button": "start", "text": "Game is paused"})` makes a
+   single-player game turn-based: it runs only while the agent's input runs, and screenshots show the frozen frame.
+2. **Plan slow, act fast.** The model writes a short `program` per sub-goal (code as policy). It runs on the handheld
+   at frame rate with a controller and perception API, and every wait checks its guards, the time limit and your
+   hands on the controller.
+3. **Identify the plant once.** `behavior` kind `calibrate` (about 30 s, once per game) probes the look stick and
+   learns which pixels are HUD, the input-to-picture latency, how far it coasts after letting go, the deadzone and
+   response curve, pixels per degree (it turns all the way round and recognizes where it started), the focal length
+   and the pitch limit. It never drives the camera faster than it can follow.
+4. **Close the loop on pixels.** Visual odometry (tiled phase correlation over the middle of the picture, HUD
+   tiles skipped, a consensus of tiles, keyframes) turns the picture into yaw and pitch, so programs get `turn`,
+   `level`, `look_at` (put a screen point under the crosshair) and `scan` in degrees. Turns feed forward through the
+   inverse response curve, release early by the measured coast, and wait until the view has settled before
+   correcting, like a servo's in-position check.
+
+Built-in pieces were checked against existing libraries first: OpenCV, scikit-image, SLAM packages, system
+identification toolkits, motion-profile and behavior-tree libraries, and LLM game-agent frameworks. None covers
+rotation-only odometry with HUD masking, a deadzone-and-lag stick model, or servoing through a virtual gamepad, and
+the numpy odometry costs ~2.5 ms per 1080p frame, so RelayMCP owns this layer. OpenCV's learned trackers, ruckig and
+on-device open-vocabulary detection are candidates for later. The `handheld` custom agent and the `relaymcp-handheld` skill
 (`relaymcp agent install`) teach these patterns to Copilot sessions.
 
 ### Home and away

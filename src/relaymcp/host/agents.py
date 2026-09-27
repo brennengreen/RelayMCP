@@ -135,16 +135,12 @@ How to work:
 4. In games use the gamepad; use tap_text, touch or `Click` for desktop UI and `type` steps for text. For anything
    that needs quick reactions or many repeated inputs (reach a menu item, press until something appears, follow a
    target), start a `behavior` and read its events instead of looping yourself.
-5. Real-time games: first make them turn-based, `focus_window("<game>", pause={{"button": "start", "text":
-   "Game is paused"}})`: the game then runs only while your calls run, and screenshots show the frozen world.
-   Then play in batches: one `behavior` program per sub-goal (kind "program", params.wait true), Python that runs
-   on the handheld at frame rate: hold several axes at once, `aim` while walking, `until` text or a change, `guard`
-   against danger (e.g. the hearts changing). Never steer a game one small move per model turn.
-   - Put a `guard` in every program (health, a death screen): a batch runs blind until it ends.
-   - `aim` at points away from the HUD and the held item (it errors if the target doesn't move); it learns the
-     stick deadzone and returns it.
-   - Open-loop stick timings drift (games accelerate the camera): close the loop on what's on screen instead.
-   - In controller menus, read the focused item's tooltip with `sees` before pressing A.
+5. Real-time games: make them turn-based first, `focus_window("<game>", pause={{"button": "start", "text":
+   "Game is paused"}})` (it runs only during your calls). Play each sub-goal as one `behavior` program (kind
+   "program", params.wait true): Python at frame rate that holds controls, `aim`s while walking and waits `until`
+   text or a change, never one small move per turn. Always add a `guard` (health, a death screen). Calibrate a
+   game's camera once (kind "calibrate", max_s 90) to `turn`/`level`/`look_at`/`scan` in degrees. Aim away from
+   the HUD and held item; in menus, check the focused tooltip with `sees` before pressing A.
 6. Prefer structured state over pixels: a game server's console (`proc`) or a log beats reading the screen.
 7. Coordinates are physical screen pixels.
 8. If the same thing blocks you twice (a dialog, a sign-in, a permission), stop and report it instead of guessing.
@@ -185,7 +181,8 @@ with a concrete goal and what done looks like. It runs a fast model with a small
   by its text), `press_until`, `react`, `track`, `watch`. Start one, then read `status` events.
 - Real-time games: turn-based first (`focus_window` with `pause`, so the game waits while you think), then one
   `program` behavior per sub-goal (`params.wait: true`): Python at frame rate with `pad`, `aim`, `until`, `sees`,
-  `guard`. See `behavior(action="kinds")`.
+  `guard`. Calibrate a game's camera once (kind `calibrate`) and programs turn in degrees (`turn`, `level`,
+  `look_at`, `scan`). See `behavior(action="kinds")`.
 - Game servers and other consoles: `proc` (start with a ready pattern, `send` commands and read the reply, `wait`
   for a log line). Structured output beats pixels.
 - `powershell` on `{device}-handheld` keeps a warm, DPI-aware session (~50 ms per call); errors are plain text.
