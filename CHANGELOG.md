@@ -40,6 +40,17 @@ handheld itself.
 - **SSH sessions no longer drop each other:** the shared SSH connection is owned by the background service and runs
   detached from it; commands reuse it but never become it (a connection born in a short-lived shell used to take
   every session riding on it down when that shell ended). `relaymcp trust` only stops it taking new sessions.
+- **Real-time games, played in batches:** a model thinks for seconds between steps, and in Minecraft night fell and a
+  zombie killed the player during a few pauses for thought. Now:
+  - **Turn-based play:** `focus_window(..., pause={"button": "start", "text": "Game is paused"})` keeps the game
+    paused whenever none of the agent's input is running: every input call and behavior resumes it first and pauses
+    it after (checking the pause text, so a game that paused itself or a menu that ate the press are handled), and
+    screenshots/observe taken while paused show the frame from just before the pause.
+  - **`program` behaviors:** a short Python program runs on the handheld at frame rate with a controller and
+    perception API (`pad` holds a whole controller state, `press`, `seq`, `wait`, `until`, `aim` steers the camera
+    onto a screen point while walking, `sees` text in a region, `frame`/`diff`/`color`, `guard` stops on danger,
+    `log`, `result`). `params.wait: true` returns when it ends, so one call plays one sub-goal. Loops that never wait
+    are interrupted at the time limit.
 - **Found by playing Minecraft:** text matching tolerates stylized game fonts (Minecraft's "Resume" reads as
   "fiesume" to OCR, "Quit" as "auit"); `track` can aim at whatever is at a screen point (template matching, e.g. a
   tree seen in a screenshot) and turns the camera until it's under the crosshair; behaviors can keep a controller

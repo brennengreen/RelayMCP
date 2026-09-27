@@ -1,0 +1,131 @@
+"""Turn-based play: a real-time game stays paused whenever the agent isn't acting.
+
+A model thinks for seconds between calls, and a game doesn't wait: playing Minecraft, night fell and a zombie killed
+the player during a few pauses for thought. With a pause profile ({"button": "start", "text": "Game is paused"}),
+every input call (act, gamepad and touch tools, behaviors) resumes the game first and pauses it again when nothing of
+the agent's is running, and screenshots taken while it's paused show the frame from just before the pause: the frozen
+world, not the pause menu.
+
+The pause text is what makes this safe: it's checked before resuming (the game, or the user, may have paused or
+resumed it meanwhile; Minecraft pauses itself when it loses focus) and after pausing (a menu that doesn't pause the game
+may have eaten the press). Without one, the pause state is only what these presses assume.
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+from typing import Any, Callable
+
+WAIT_S = 1.5      # longest wait for the pause text to show up or go away
+SETTLE_S = 0.3    # without a pause text: how long a pause menu takes to open or close
+FADE_S = 0.1      # after the pause text is gone, the menu may still be fading out
+
+
+def _buttons(value) -> list[str]:
+    return [value] if isinstance(value, str) else list(value)
+
+
+class Turns:
+    """press(buttons) sends a gamepad press; grab() returns the current frame; sees(text) -> is it on screen;
+    in_use() -> who is using a real controller (then the game isn't paused under their hands), or None."""
+
+    def __init__(self, press: Callable[[list[str]], Any], grab: Callable[[], Any], sees: Callable[[str], bool],
+                 in_use: Callable[[], Any] = lambda: None):
+        self._press, self._grab, self._sees, self._in_use = press, grab, sees, in_use
+        self._lock = threading.RLock()
+        self.profile: dict | None = None
+        self.paused = False
+        self.frame = None
+        self.paused_at: float | None = None
+        self.busy = 0
+        self.note: str | None = None
+
+    def configure(self, profile: dict | None) -> dict | None:
+        with self._lock:
+            if profile:
+                button = profile.get("button")
+                if not button:
+                    raise ValueError('pause needs "button": the game\'s pause button, e.g. "start"')
+                self.profile = {"button": button, "resume": profile.get("resume") or button,
+                                "text": str(profile.get("text") or ""),
+                                "settle_ms": max(0, min(int(profile.get("settle_ms", 300)), 3000))}
+                self.paused = bool(self.profile["text"]) and bool(self._sees(self.profile["text"]))
+                self.frame, self.note = None, None
+            else:
+                self.profile, self.paused, self.frame, self.note = None, False, None, None
+            return self.status()
+
+    def status(self) -> dict | None:
+        if not self.profile:
+            return None
+        out: dict[str, Any] = {"pause": self.profile, "paused": self.paused}
+        if self.note:
+            out["note"] = self.note
+        return out
+
+    def frozen(self):
+        """The frame from just before the game was paused (the world as it is), or None while it runs."""
+        return self.frame if self.profile and self.paused else None
+
+    def begin(self) -> None:
+        """An input call starts: make sure the game runs."""
+        with self._lock:
+            self.busy += 1
+            if self.profile and self.busy == 1:
+                self._resume()
+
+    def end(self) -> None:
+        """An input call finished: pause the game unless something else of the agent's is still running."""
+        with self._lock:
+            self.busy = max(0, self.busy - 1)
+            if self.profile and not self.busy:
+                self._pause()
+
+    def _wait(self, cond: Callable[[], bool]) -> bool:
+        end = time.monotonic() + WAIT_S
+        while True:
+            if cond():
+                return True
+            if time.monotonic() >= end:
+                return False
+            time.sleep(0.05)
+
+    def _resume(self) -> None:
+        text = self.profile["text"]
+        paused = bool(self._sees(text)) if text else self.paused
+        if not paused:
+            self.paused, self.note = False, None
+            return
+        self._press(_buttons(self.profile["resume"]))
+        if text:
+            if not self._wait(lambda: not self._sees(text)):
+                self.note = f"pressed {self.profile['resume']} but {text!r} still shows: the game may still be paused"
+                return
+            time.sleep(FADE_S)
+        else:
+            time.sleep(SETTLE_S)
+        self.paused, self.frame, self.note = False, None, None
+
+    def _pause(self) -> None:
+        if self.paused:
+            return
+        who = self._in_use()
+        if who:
+            self.note = f"left running: {who} is in use"
+            return
+        text, button = self.profile["text"], self.profile["button"]
+        time.sleep(self.profile["settle_ms"] / 1000)  # let the last input play out, so the frozen frame shows its result
+        frame = self._grab()
+        presses = 2 if text else 1  # a second press when the first only closed a menu (games that don't pause in menus)
+        for _ in range(presses):
+            self._press(_buttons(button))
+            if not text:
+                time.sleep(SETTLE_S)
+                break
+            if self._wait(lambda: self._sees(text)):
+                break
+        else:
+            self.note = f"pressed {button} {presses} times but {text!r} didn't show: the game may still be running"
+            return
+        self.frame, self.paused_at, self.paused, self.note = frame, time.monotonic(), True, None

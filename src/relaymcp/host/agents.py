@@ -135,9 +135,14 @@ How to work:
 4. In games use the gamepad; use tap_text, touch or `Click` for desktop UI and `type` steps for text. For anything
    that needs quick reactions or many repeated inputs (reach a menu item, press until something appears, follow a
    target), start a `behavior` and read its events instead of looping yourself.
-5. Prefer structured state over pixels: a game server's console (`proc`) or a log beats reading the screen.
-6. Coordinates are physical screen pixels.
-7. If the same thing blocks you twice (a dialog, a sign-in, a permission), stop and report it instead of guessing.
+5. Real-time games: first make them turn-based, `focus_window("<game>", pause={{"button": "start", "text":
+   "Game is paused"}})`: the game then runs only while your calls run, and screenshots show the frozen world.
+   Then play in batches: one `behavior` program per sub-goal (kind "program", params.wait true), Python that runs
+   on the handheld at frame rate: hold several axes at once, `aim` while walking, `until` text or a change, `guard`
+   against danger (e.g. the hearts changing). Never steer a game one small move per model turn.
+6. Prefer structured state over pixels: a game server's console (`proc`) or a log beats reading the screen.
+7. Coordinates are physical screen pixels.
+8. If the same thing blocks you twice (a dialog, a sign-in, a permission), stop and report it instead of guessing.
 
 Finish with 1-5 short lines: what you did, the state you left the handheld in (app and screen), and anything
 unexpected. Never paste screenshots or raw tool output.
@@ -173,6 +178,9 @@ with a concrete goal and what done looks like. It runs a fast model with a small
   `observe: "text"` to see the result in the same reply.
 - Reflexes and repetition belong in a `behavior` on the handheld, not in model turns: `navigate` (reach a menu item
   by its text), `press_until`, `react`, `track`, `watch`. Start one, then read `status` events.
+- Real-time games: turn-based first (`focus_window` with `pause`, so the game waits while you think), then one
+  `program` behavior per sub-goal (`params.wait: true`): Python at frame rate with `pad`, `aim`, `until`, `sees`,
+  `guard`. See `behavior(action="kinds")`.
 - Game servers and other consoles: `proc` (start with a ready pattern, `send` commands and read the reply, `wait`
   for a log line). Structured output beats pixels.
 - `powershell` on `{device}-handheld` keeps a warm, DPI-aware session (~50 ms per call); errors are plain text.

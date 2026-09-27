@@ -489,3 +489,89 @@ def test_press_until_can_hold_a_state_until_the_block_breaks():
     s = wait_state(rt, rt.start("press_until", {"do": {"hold": {"right_trigger": 1.0}}, "every_ms": 50,
                                                 "until": {"change": 30, "region": [0, 0, 120, 120]}}, max_s=5)["id"])
     assert s["state"] == "done" and held["state"] == "released", s
+
+
+class ProgramOutputs(PanOutputs):
+    """Records the full controller states a program holds (and sequences), on top of the panning camera."""
+
+    def __init__(self, w):
+        super().__init__(w)
+        self.states, self.seqs, self.released = [], [], 0
+
+    def hold(self, state):
+        self.states.append({k: (list(v) if isinstance(v, list) else v) for k, v in state.items()})
+        rs = state.get("right_stick") or [0, 0]
+        self.w.stick("right_stick", rs[0], rs[1])
+
+    def seq(self, steps):
+        self.seqs.append(steps)
+
+    def release(self, used=()):
+        self.released += 1
+        super().release(used)
+
+
+def run_program(code, max_s=5, world=None, **kw):
+    world = world or PanWorld()
+    out = ProgramOutputs(world)
+    rt = behave.Runtime(world.frame, out, **kw)
+    return behave.run_tool(rt, "start", "program", {"code": code, "wait": True}, max_s=max_s), out, world
+
+
+def test_a_program_holds_whole_controller_states_and_returns_a_result():
+    status, out, _ = run_program(
+        "pad(ls=(0, 1), buttons=['left_thumb'])\n"          # sprint forward...
+        "press('a', ms=30)\n"                                 # ...jump without letting go
+        "seq([{'buttons': ['x'], 'ms': 20}])\n"
+        "wait(30)\n"
+        "log('walked', steps=3)\n"
+        "result = {'ok': True}\n")
+    assert status["state"] == "done" and status["result"] == {"ok": True}, status
+    held = out.states[0]
+    assert held["left_stick"] == [0.0, 1.0] and held["buttons"] == ["left_thumb"]
+    jump = next(s for s in out.states if "a" in s["buttons"])
+    assert jump["left_stick"] == [0.0, 1.0] and "left_thumb" in jump["buttons"]  # the tap rides on the held state
+    assert out.states[-1]["buttons"] == ["left_thumb"] and out.seqs == [[{"buttons": ["x"], "ms": 20}]]
+    assert any(e["event"] == "log" and e["msg"] == "walked" for e in status["events"]) and out.released == 1
+
+
+def test_until_returns_the_value_or_none_and_guards_stop_the_program():
+    status, _, _ = run_program("t0 = elapsed()\nv = until(lambda: elapsed() - t0 > 0.1 and 'late', timeout=1)\n"
+                               "none = until(lambda: False, timeout=0.05)\nresult = [v, none]")
+    assert status["result"] == ["late", None], status
+    status, out, _ = run_program("guard(lambda: elapsed() > 0.15, 'hurt')\npad(rt=1)\nwait(3000)\nresult = 'never'")
+    assert status["state"] == "stopped" and status["reason"] == "guard: hurt" and "result" not in status
+    assert out.released == 1 and status["seconds"] < 1.5
+
+
+def test_programs_end_at_their_limit_even_in_a_loop_that_never_waits():
+    status, _, _ = run_program("while True:\n    wait(10)", max_s=0.5)
+    assert status["state"] == "stopped" and "time limit" in status["reason"]
+    status, _, _ = run_program("x = 0\nwhile True:\n    x += 1", max_s=0.5)
+    assert status["state"] == "stopped" and "interrupted" in status["reason"], status
+    assert status["seconds"] < 3
+
+
+def test_program_errors_name_the_line():
+    status, _, _ = run_program("wait(1)\nundefined_thing()\n")
+    assert status["state"] == "failed" and "NameError" in status["reason"] and "line 2" in status["reason"]
+    status, _, _ = run_program("if True\n  pass")
+    assert status["state"] == "failed" and "line 1" in status["reason"]
+
+
+def test_a_program_aims_while_it_walks():
+    world = PanWorld()
+    start = world.x
+    status, out, _ = run_program("pad(ls=(0, 1))\nr = aim(1500, 540, timeout=6)\nresult = r", max_s=8, world=world)
+    assert status["state"] == "done" and status["result"]["on_target"], status
+    assert abs((world.x - start) - 540) < 40
+    steering = [s for s in out.states if s["right_stick"][0] > 0]
+    assert steering and all(s["left_stick"] == [0.0, 1.0] for s in steering)  # kept walking the whole time
+    assert out.states[-1]["right_stick"] == [0.0, 0.0] and out.states[-1]["left_stick"] == [0.0, 1.0]
+
+
+def test_start_and_end_hooks_wrap_every_run():
+    calls = []
+    status, _, _ = run_program("wait(20)", on_start=lambda run: calls.append("start"),
+                               on_end=lambda run: calls.append("end"))
+    assert status["state"] == "done" and calls == ["start", "end"]

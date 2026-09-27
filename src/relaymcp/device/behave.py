@@ -7,6 +7,8 @@ Built-in behaviors:
 - track: steer the mouse or a stick until a colored target sits at an aim point (the cursor, or a crosshair)
 - press_until: repeat an input until text, a color or a change appears
 - watch: report when a region changes or shows a color (no input)
+- program: a short Python program (the model writes it) with a controller and perception API, for real-time play:
+  hold several axes at once, aim while walking, wait for text or a change, guard against danger; one call per batch
 
 Safety: every run has a time limit, all held input is released when it ends (however it ends), and input on a
 physical controller (someone picked up the handheld) stops it. Perception uses numpy on DXGI frames; no model runs.
@@ -42,6 +44,18 @@ KINDS = {
     "script": 'a small state machine: start (state name); states {name: {do (as react, repeated every_ms 250), until '
               '(text | color | change | {"state": {"topic", "match"}}), ms (instead of until: stay this long), next '
               '(state or "done"), timeout_s (30), on_timeout (state, else stop)}}',
+    "program": 'code: Python run on the handheld, for real-time play in one call (params.wait = true returns when it '
+               'ends, with its events). Controller: pad(buttons=[], ls=(x,y), rs=(x,y), lt=0, rt=0) holds that whole '
+               'state until changed; press("a", ms=80) taps on top of it; seq([gamepad_sequence steps]); release(). '
+               'Time: wait(ms); until(fn, timeout=5, hz=30) -> fn\'s value or None; elapsed(). Screen (px, region '
+               '[l,t,r,b]): frame(region) -> BGRA numpy array; diff(a, b) -> 0-255; text(region) -> [[text, x, y]]; '
+               'sees("Mine", region) -> [x, y] or None (OCR, ~50 ms for a small region); color([r,g,b], region, tol=40) '
+               '-> fraction. aim(x, y, within=24, timeout=3, until=None) turns the right stick until what is at (x, y) '
+               'sits at the screen center (the crosshair), keeping the held left stick and buttons (walk while '
+               'aiming); until = keep steering until fn() is truthy -> {"on_target", "error_px", "match"}. '
+               'guard(fn, "hurt"): checked during every wait, stops the program when fn() is truthy. log(msg, **data) '
+               '-> an event; result = {...} is returned. Also W, H, CX, CY, np, math. Everything held is released '
+               'when it ends; a stop request, max_s or a real controller moving ends it.',
 }
 
 
@@ -121,6 +135,42 @@ def matches(when: dict, frame, previous) -> tuple[bool, dict]:
 
 # ---------------------------------------------------------------------------------------------------- runs
 
+class Aimer:
+    """Follow whatever was at a screen point (a tree, a door): a patch of the screen around it, found again in each
+    new frame (normalized cross-correlation at 1/4 scale) and refreshed as the view changes."""
+
+    def __init__(self, frame, at, size: int = 120, k: int = 4):
+        self.k = k
+        img = gray_small(frame, k)
+        size = max(32, min(int(size), 400))
+        self.half = half = size // (2 * k)
+        cx, cy = int(at[0]) // k, int(at[1]) // k
+        if not (half <= cx < img.shape[1] - half and half <= cy < img.shape[0] - half):
+            raise ValueError("at is too close to the edge of the screen for its size")
+        self.tmpl = img[cy - half:cy + half, cx - half:cx + half].copy()
+        if float(self.tmpl.std()) < 3:
+            raise ValueError("nothing distinctive at that point to follow (a flat area)")
+        self.n = 0
+
+    def find(self, frame, refresh: bool = True) -> tuple[float, float, float]:
+        """(x, y) of the patch's center in this frame (screen px) and the match score (0-1)."""
+        img = gray_small(frame, self.k)
+        x, y, score = match_template(img, self.tmpl)
+        self.n += 1
+        if refresh and score > 0.8 and self.n % 10 == 0:  # only on a confident match
+            self.tmpl = img[y:y + 2 * self.half, x:x + 2 * self.half].copy()
+        return (x + self.half) * self.k, (y + self.half) * self.k, score
+
+
+def deflection(error_px: float, full_px: float, gain: float, within: float, nudge: float) -> float:
+    """Stick deflection that turns toward a target error_px away: proportional, at least `nudge` (games ignore small
+    deflections), zero once close."""
+    if abs(error_px) <= within / 2:
+        return 0.0
+    d = max(-1.0, min(1.0, error_px / full_px * gain * 2))
+    return d if abs(d) >= nudge else nudge * (1 if d > 0 else -1)
+
+
 class Run:
     def __init__(self, kind: str, params: dict, max_s: float):
         self.id = uuid.uuid4().hex[:8]
@@ -136,6 +186,7 @@ class Run:
         self.ended: float | None = None
         self._frame_ms: collections.deque = collections.deque(maxlen=240)
         self._lock = threading.Lock()
+        self.thread_id: int | None = None
 
     def emit(self, kind: str, **data) -> None:
         with self._lock:
@@ -167,8 +218,10 @@ class Runtime:
     [{"text", "box"}]; cursor() -> [x, y]."""
 
     def __init__(self, grab: Callable, outputs, takeover: Callable | None = None, read_text: Callable | None = None,
-                 cursor: Callable | None = None, state_events: Callable | None = None):
+                 cursor: Callable | None = None, state_events: Callable | None = None,
+                 on_start: Callable | None = None, on_end: Callable | None = None):
         self.grab, self.out = grab, outputs
+        self.on_start, self.on_end = on_start, on_end  # e.g. resume a paused game, and pause it again (turns.py)
         self.takeover = takeover or (lambda: None)
         self.read_text = read_text
         self.cursor = cursor
@@ -190,8 +243,24 @@ class Runtime:
                 del self.runs[rid]  # keep the last few finished ones for status
             run = Run(kind, params, max_s)
             self.runs[run.id] = run
+        if self.on_start:
+            try:
+                self.on_start(run)
+            except Exception as e:
+                run.emit("note", text=f"before starting: {e}")
+        run.started = time.perf_counter()  # the time limit counts from now (resuming a game can take a moment)
         threading.Thread(target=self._thread, args=(run,), name=f"behavior-{run.id}", daemon=True).start()
         return {"id": run.id, "kind": kind, "max_s": run.max_s}
+
+    def wait(self, run_id: str, events: int = 40) -> dict:
+        """Block until a run ends; its summary and last events."""
+        r = self.runs[run_id]
+        end = r.started + r.max_s + 10
+        while r.state == "running" and time.perf_counter() < end:
+            time.sleep(0.02)
+        while r.ended is None and time.perf_counter() < end + 2:  # the end event comes right after the state changes
+            time.sleep(0.01)
+        return {**r.summary(), "events": r.since(0)[-events:]}
 
     def stop(self, run_id: str = "") -> list[str]:
         stopped = []
@@ -204,6 +273,8 @@ class Runtime:
                 if r.state != "running":
                     break
                 time.sleep(0.02)
+            if r.state == "running":
+                _interrupt(r)  # a program busy in a loop that never waits
         return stopped
 
     def status(self, run_id: str = "", since: int = 0) -> dict:
@@ -225,11 +296,16 @@ class Runtime:
         except Exception as e:
             run.state, run.reason = "failed", f"{type(e).__name__}: {e}"
         finally:
-            run.ended = time.perf_counter()
             try:
                 self.out.release(run.used)  # only what this run holds: other runs and the agent's input are theirs
             except Exception:
                 pass
+            if self.on_end:
+                try:
+                    self.on_end(run)
+                except Exception as e:
+                    run.emit("note", text=f"after ending: {e}")
+            run.ended = time.perf_counter()
             run.emit("end", state=run.state, reason=run.reason)
 
     # --- shared loop pieces -----------------------------------------------------------------------------------------
@@ -366,29 +442,19 @@ class Runtime:
         around it, find it again in every frame, and turn (stick or mouse) until it sits at the aim point, by
         default the middle of the screen, where 3D games put the crosshair."""
         np = _np()
-        k = 4
         frame, _ = self._frame(run, None)
         h, w = frame.shape[:2]
-        size = max(32, min(int(p.get("size", 120)), 400))
-        half = size // (2 * k)
-        cx, cy = int(p["at"][0]) // k, int(p["at"][1]) // k
-        img = gray_small(frame, k)
-        if not (half <= cx < img.shape[1] - half and half <= cy < img.shape[0] - half):
-            raise ValueError("at is too close to the edge of the screen for its size")
-        tmpl = img[cy - half:cy + half, cx - half:cx + half].copy()
-        if float(tmpl.std()) < 3:
-            raise ValueError("nothing distinctive at that point to follow (a flat area)")
+        aimer = Aimer(frame, p["at"], p.get("size", 120))
         aim = p.get("aim") or [w / 2, h / 2]
         output, gain = p.get("output", "right_stick"), float(p.get("gain", 0.8))
         within, hold = float(p.get("within", 24)), int(p.get("hold_frames", 3))
         scale, nudge = float(p.get("full_deflection_px", 500)), float(p.get("min_deflection", 0.22))
         min_score = float(p.get("min_score", 0.45))
-        on_target, lost, errors = 0, 0, collections.deque(maxlen=600)
+        on_target, lost = 0, 0
         run.used.add("mouse" if output == "mouse" else "stick")
-        for n, _ in enumerate(self._ticks(run, p.get("hz", 30))):
+        for _ in self._ticks(run, p.get("hz", 30)):
             frame, _ = self._frame(run, None)
-            img = gray_small(frame, k)
-            x, y, score = match_template(img, tmpl)
+            tx, ty, score = aimer.find(frame, refresh=on_target == 0)
             run.stats["match"] = round(score, 2)
             if score < min_score:
                 lost += 1
@@ -396,10 +462,8 @@ class Runtime:
                 if output != "mouse":
                     self.out.stick(output, 0.0, 0.0)
                 continue
-            tx, ty = (x + half) * k, (y + half) * k
             ex, ey = tx - aim[0], ty - aim[1]
             err = (ex * ex + ey * ey) ** 0.5
-            errors.append(err)
             run.stats.update(error_px=round(err, 1), target=[int(tx), int(ty)])
             if err <= within:
                 on_target += 1
@@ -411,16 +475,35 @@ class Runtime:
                     return
                 continue
             on_target = 0
-            if score > 0.8 and n % 10 == 9:  # refresh the patch as the view changes (only on a confident match)
-                tmpl = img[y:y + 2 * half, x:x + 2 * half].copy()
             if output == "mouse":
                 self.out.mouse(int(round(np.clip(ex * gain * 0.5, -200, 200))), int(round(np.clip(ey * gain * 0.5, -200, 200))))
             else:
-                def deflect(e):
-                    d = max(-1.0, min(1.0, e / scale * gain * 2))
-                    return 0.0 if abs(e) <= within / 2 else (d if abs(d) >= nudge else nudge * (1 if d > 0 else -1))
-                self.out.stick(output, deflect(ex), -deflect(ey))
+                self.out.stick(output, deflection(ex, scale, gain, within, nudge), -deflection(ey, scale, gain, within, nudge))
             run.stats["actions"] += 1
+
+    def _run_program(self, run: Run, p: dict) -> None:
+        code = str(p.get("code") or "")
+        if not code.strip():
+            raise ValueError("program needs code")
+        try:
+            compiled = compile(code, "<program>", "exec")
+        except SyntaxError as e:
+            raise ValueError(f"program line {e.lineno}: {e.msg}") from None
+        api = Program(self, run)
+        ns = api.namespace()
+        run.thread_id = threading.get_ident()
+        _interrupt_after_deadline(run)
+        try:
+            exec(compiled, ns)
+        except _Stopped:
+            raise
+        except Exception as e:
+            line = next((f.lineno for f in reversed(_frames(e.__traceback__)) if f.filename == "<program>"), None)
+            raise RuntimeError(f"{type(e).__name__}: {e}" + (f" (program line {line})" if line else "")) from None
+        finally:
+            run.thread_id = None
+        if "result" in ns:
+            run.stats["result"] = _jsonable(ns["result"])
 
     def _run_navigate(self, run: Run, p: dict) -> None:
         if not self.read_text:
@@ -565,6 +648,213 @@ class _Stopped(Exception):
     pass
 
 
+class _Interrupted(_Stopped):
+    def __init__(self, *args):
+        super().__init__(*(args or ("interrupted: the program kept running without waiting",)))
+
+
+def _interrupt(run: Run) -> None:
+    """Raise _Interrupted inside a program's thread (for loops that never call wait/until)."""
+    import ctypes
+    if run.thread_id is not None:
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(run.thread_id), ctypes.py_object(_Interrupted))
+
+
+def _interrupt_after_deadline(run: Run, grace_s: float = 1.0) -> None:
+    def watch():
+        while run.state == "running" and not run.stop_evt.is_set() and time.perf_counter() < run.started + run.max_s:
+            time.sleep(0.05)
+        end = time.perf_counter() + grace_s  # waits notice the limit themselves; this is for loops that never wait
+        while run.state == "running" and time.perf_counter() < end:
+            time.sleep(0.05)
+        if run.state == "running":
+            _interrupt(run)
+    threading.Thread(target=watch, name=f"watchdog-{run.id}", daemon=True).start()
+
+
+def _frames(tb):
+    import traceback
+    return traceback.extract_tb(tb)
+
+
+def _jsonable(value):
+    import json
+    try:
+        json.dumps(value)
+        return value
+    except (TypeError, ValueError):
+        return str(value)[:500]
+
+
+class Program:
+    """What a program may use (KINDS["program"]). Every wait checks the stop request, the time limit, a takeover and
+    the program's guards, so a program can't outlive its limits or keep pressing after something went wrong."""
+
+    def __init__(self, rt: Runtime, run: Run):
+        self.rt, self.run = rt, run
+        self.state: dict = {"buttons": [], "left_stick": [0.0, 0.0], "right_stick": [0.0, 0.0],
+                            "left_trigger": 0.0, "right_trigger": 0.0}
+        self.guards: list[tuple[Callable, str]] = []
+        self._guarding = False
+        frame0, _ = rt._frame(run, None)
+        self.h, self.w = frame0.shape[:2]
+
+    def namespace(self) -> dict:
+        import math
+        return {"pad": self.pad, "press": self.press, "seq": self.seq, "release": self.release, "wait": self.wait,
+                "until": self.until, "elapsed": self.elapsed, "frame": self.frame, "diff": difference,
+                "text": self.text, "sees": self.sees, "color": self.color, "aim": self.aim, "guard": self.guard,
+                "log": self.log, "W": self.w, "H": self.h, "CX": self.w // 2, "CY": self.h // 2, "np": _np(),
+                "math": math, "time": time}
+
+    # --- limits ---------------------------------------------------------------------------------------------------
+
+    def check(self) -> None:
+        run = self.run
+        if run.stop_evt.is_set():
+            raise _Stopped("stopped on request")
+        if time.perf_counter() >= run.started + run.max_s:
+            raise _Stopped(f"time limit ({run.max_s:g} s)")
+        who = self.rt.takeover()
+        if who:
+            raise _Stopped(f"you took over ({who})")
+        if self.guards and not self._guarding:
+            self._guarding = True
+            try:
+                for cond, name in self.guards:
+                    if cond():
+                        run.emit("guard", name=name)
+                        raise _Stopped(f"guard: {name}")
+            finally:
+                self._guarding = False
+
+    def guard(self, cond: Callable, name: str = "guard") -> None:
+        self.guards.append((cond, str(name)))
+
+    def elapsed(self) -> float:
+        return round(time.perf_counter() - self.run.started, 3)
+
+    def log(self, msg="", **data) -> None:
+        self.run.emit("log", msg=str(msg), **{k: _jsonable(v) for k, v in data.items()})
+
+    # --- controller -----------------------------------------------------------------------------------------------
+
+    def _apply(self, state: dict) -> None:
+        self.run.used.add("hold")
+        self.rt.out.hold(state)
+        self.run.stats["actions"] += 1
+
+    def pad(self, buttons=(), ls=(0, 0), rs=(0, 0), lt: float = 0.0, rt: float = 0.0) -> None:
+        self.check()
+        self.state = {"buttons": [buttons] if isinstance(buttons, str) else list(buttons),
+                      "left_stick": [float(ls[0]), float(ls[1])], "right_stick": [float(rs[0]), float(rs[1])],
+                      "left_trigger": float(lt), "right_trigger": float(rt)}
+        self._apply(self.state)
+
+    def release(self) -> None:
+        self.pad()
+
+    def press(self, *buttons, ms: float = 80) -> None:
+        self.check()
+        self._apply({**self.state, "buttons": list(self.state["buttons"]) + list(buttons)})
+        try:
+            self.wait(ms)
+        finally:
+            self._apply(self.state)
+
+    def seq(self, steps: list) -> None:
+        """Timed gamepad_sequence steps (runs to the end), then back to the held state."""
+        self.check()
+        self.run.used.add("hold")
+        self.rt.out.seq(steps)
+        self._apply(self.state)
+
+    # --- time -----------------------------------------------------------------------------------------------------
+
+    def wait(self, ms: float) -> None:
+        end = time.perf_counter() + max(0.0, float(ms)) / 1000
+        while True:
+            self.check()
+            left = end - time.perf_counter()
+            if left <= 0.004:
+                break
+            if self.run.stop_evt.wait(min(left - 0.002, 1 / 30)):
+                continue
+        sleep_until(end)
+
+    def until(self, cond: Callable, timeout: float = 5.0, hz: float = 30):
+        end = time.perf_counter() + float(timeout)
+        period_ms = 1000 / max(1.0, min(float(hz), 120.0))
+        while True:
+            self.check()
+            value = cond()
+            if value:
+                return value
+            if time.perf_counter() >= end:
+                return None
+            self.wait(period_ms)
+
+    # --- screen ---------------------------------------------------------------------------------------------------
+
+    def frame(self, region=None):
+        return self.rt._frame(self.run, region)[0]
+
+    def _lines(self, region):
+        if not self.rt.read_text:
+            raise RuntimeError("text needs OCR")
+        return self.rt.read_text(region)
+
+    def text(self, region=None) -> list:
+        return [[ln["text"], *(int(v) for v in center_of(ln["box"]))] for ln in self._lines(region)]
+
+    def sees(self, query: str, region=None):
+        from .ocr import find
+        hit = find(self._lines(region), str(query))
+        return [int(v) for v in center_of(hit["box"])] if hit else None
+
+    def color(self, rgb, region=None, tol: int = 40) -> float:
+        return float(color_mask(self.frame(region), rgb, tol).mean())
+
+    def aim(self, x: float, y: float, within: float = 24, timeout: float = 3.0, until: Callable | None = None,
+            size: int = 120, gain: float = 0.8, min_deflection: float = 0.22, full_deflection_px: float = 500,
+            min_score: float = 0.45, hz: float = 30) -> dict:
+        aimer = Aimer(self.frame(), (x, y), size)
+        end = time.perf_counter() + float(timeout)
+        period_ms = 1000 / max(1.0, min(float(hz), 120.0))
+        on_target, out = 0, {"on_target": False, "error_px": None, "match": 0.0}
+        try:
+            while True:
+                self.check()
+                tx, ty, score = aimer.find(self.frame(), refresh=on_target == 0)
+                out["match"] = round(score, 2)
+                rs = [0.0, 0.0]
+                if score >= min_score:
+                    ex, ey = tx - self.w / 2, ty - self.h / 2
+                    err = (ex * ex + ey * ey) ** 0.5
+                    out.update(error_px=round(err, 1), target=[int(tx), int(ty)])
+                    if err <= within:
+                        on_target += 1
+                    else:
+                        on_target = 0
+                        rs = [deflection(ex, full_deflection_px, gain, within, min_deflection),
+                              -deflection(ey, full_deflection_px, gain, within, min_deflection)]
+                out["on_target"] = on_target > 0
+                self._apply({**self.state, "right_stick": rs})
+                if until is not None:
+                    if until():
+                        out["until"] = True
+                        break
+                elif on_target >= 3:
+                    break
+                if time.perf_counter() >= end:
+                    out["timed_out"] = True
+                    break
+                self.wait(period_ms)
+        finally:
+            self._apply(self.state)
+        return out
+
+
 def center_of(box) -> tuple[float, float]:
     return (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
 
@@ -620,7 +910,8 @@ def run_tool(rt: Runtime, action: str, kind: str = "", params: dict | None = Non
              since: int = 0, max_s: float = 30.0) -> dict:
     action = (action or "").lower()
     if action == "start":
-        return rt.start(kind, params, max_s)
+        started = rt.start(kind, params, max_s)
+        return rt.wait(started["id"]) if (params or {}).get("wait") else started
     if action == "status":
         return rt.status(run_id, since)
     if action == "stop":

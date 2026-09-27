@@ -205,10 +205,12 @@ class Grabber:
 
     # --- what the tool returns --------------------------------------------------------------------------------------
 
-    def screenshot(self, region=None, max_side: int = 960, quality: int = 70, only_if_changed: bool = False) -> dict:
-        """{"jpeg": bytes | None, "meta": {...}}; jpeg is None when only_if_changed and nothing changed."""
+    def screenshot(self, region=None, max_side: int = 960, quality: int = 70, only_if_changed: bool = False,
+                   frame: Frame | None = None) -> dict:
+        """{"jpeg": bytes | None, "meta": {...}}; jpeg is None when only_if_changed and nothing changed. frame: use
+        this one instead of grabbing (a paused game's last frame)."""
         t0 = time.monotonic()
-        frame = self.grab()
+        frame = frame or self.grab()
         grabbed = time.monotonic()
         jpeg, meta = encode(frame, region, max_side, quality)
         key = f"{region}|{max_side}|{quality}"

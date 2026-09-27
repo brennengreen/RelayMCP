@@ -37,7 +37,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from . import (__version__, audio, behave, capture, focus, gamepad, inbox, lean, ocr, procs, pshost, speech, system,
-               tts, updates, voice, win_input)
+               tts, turns, updates, voice, win_input)
 from .lean import compact, lean_result, lean_schema
 from .paths import USER_DIR, VOICE_HEADER, device_settings
 
@@ -83,10 +83,25 @@ class _BehaviorOutputs:
     def hold(self, state):
         gamepad.PAD.hold(state)
 
+    def seq(self, steps):
+        gamepad.PAD.run_steps(steps)
+
     def release(self, used=()):
         # Key taps, pad presses, clicks and mouse moves are momentary; a steered stick or a held state stays put.
         if "stick" in used or "hold" in used:
             gamepad.PAD.neutral()
+
+
+def _on_screen(text: str) -> bool:
+    return ocr.find(ocr.recognize(GRABBER.grab(), None), text) is not None
+
+
+TURNS = turns.Turns(  # turn-based play (focus_window pause): the game runs only while the agent's input runs
+    press=lambda buttons: gamepad.PAD.run_steps([{"buttons": buttons, "ms": 100}]),
+    grab=lambda: SCREEN.submit(GRABBER.grab).result(timeout=5),
+    sees=lambda text: SCREEN.submit(_on_screen, text).result(timeout=10),
+    in_use=lambda: gamepad.physical_active(),
+)
 
 
 BEHAVIORS = behave.Runtime(
@@ -97,6 +112,8 @@ BEHAVIORS = behave.Runtime(
         region, 0, 0, *win_input.screen_size()) if region else None)).result(timeout=10),
     cursor=lambda: capture.cursor_pos(),
     state_events=lambda topic, since: (lambda r: (r["events"], r["cursor"]))(inbox.INBOX.read(topic, since, 200)),
+    on_start=lambda run: (focus.before_input(), TURNS.begin()),  # a paused game must be in front to resume
+    on_end=lambda run: TURNS.end(),
 )
 
 
@@ -109,12 +126,22 @@ def _in_worker(pool: ThreadPoolExecutor, fn, *args, **kwargs):
             gc.collect()
 
 
-def _focused(fn):
-    """Input goes to whatever is in front: refocus the remembered input target first, then report what had focus."""
+def _focused(fn, turn: bool = True):
+    """Input goes to whatever is in front: refocus the remembered input target first, then report what had focus.
+    In turn-based play the game is resumed first and paused again after (turn=False: not for this call)."""
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         pre = focus.before_input()
-        return focus.annotate(fn(*args, **kwargs), pre)
+        if turn:
+            TURNS.begin()
+        try:
+            result = focus.annotate(fn(*args, **kwargs), pre)
+        finally:
+            if turn:
+                TURNS.end()
+        if turn and TURNS.profile and isinstance(result, dict):
+            result["game"] = "paused" if TURNS.paused else (TURNS.note or "running")
+        return result
     return wrapper
 
 
@@ -142,6 +169,9 @@ controller, speakers, mic). Pair with the `{screen}` server (screen control): lo
 - The gamepad is a VIRTUAL Xbox controller (games see a second controller). gamepad_connect before playing; it stays
   plugged while a game is in front. Armoury Crate's "external controller" notice is closed for you (nothing disabled).
 - key_* send scan codes (work in games); mouse_look turns game cameras; touch_* inject real multi-touch.
+- Real-time games: focus_window(pause={{"button": "start", "text": "<its pause text>"}}) makes them turn-based (they
+  run only during your calls), then play each sub-goal as one behavior program (Python at frame rate), never one
+  small move per call.
 - Restore what you change (volume, brightness, display/power mode). Use keep_awake for long unattended work.
 - Voice prompts from the handheld (hold View + Menu) arrive as separate agent sessions."""
 
@@ -190,8 +220,12 @@ def build_server(port: int, record_tools: bool = False, upgraded: bool = False) 
             if not info:
                 raise ValueError(f"no window matches {window!r}")
             region = info["rect"]
-        shot = await _run(SCREEN, GRABBER.screenshot, region, max_side, quality, only_if_changed)
+        frozen = TURNS.frozen()
+        shot = await _run(SCREEN, GRABBER.screenshot, region, max_side, quality, only_if_changed, frozen)
         meta = {**shot["meta"], "foreground": focus.short(focus.foreground()), "cursor": capture.cursor_pos()}
+        if frozen is not None:
+            meta["paused"] = "the game is paused; this is the frame from just before"
+
         text = TextContent(type="text", text=json.dumps(compact(meta), separators=(",", ":")))
         if shot["jpeg"] is None:
             return [text]
@@ -200,7 +234,7 @@ def build_server(port: int, record_tools: bool = False, upgraded: bool = False) 
     def read_text(region=None) -> dict:
         """Grab and OCR (on SCREEN): {"lines", "frame", "box", "ms"}."""
         t0 = time.monotonic()
-        frame = GRABBER.grab()
+        frame = TURNS.frozen() or GRABBER.grab()  # paused (turn-based play): the world as it was, not the pause menu
         box = capture.clamp_region(region, frame.left, frame.top, frame.width, frame.height)
         return {"lines": ocr.recognize(frame, box), "frame": frame, "box": box, "ms": round((time.monotonic() - t0) * 1000)}
 
@@ -245,6 +279,24 @@ def build_server(port: int, record_tools: bool = False, upgraded: bool = False) 
             raise ValueError("at most 40 steps per call")
         t_start, notes, failed = time.monotonic(), [], None
         pre = await _run(INPUT, focus.before_input)
+        await _run(INPUT, TURNS.begin)
+        ended = False
+        try:
+            out, img = await act_steps(steps, observe, t_start, notes, failed, pre)
+            await _run(INPUT, TURNS.end)
+            ended = True
+            return with_image(with_game_state(out), img)
+        finally:
+            if not ended:
+                await _run(INPUT, TURNS.end)
+
+    def with_game_state(out: Any) -> Any:
+        """Turn-based play: say whether the game is paused now (or why not)."""
+        if TURNS.profile and isinstance(out, dict):
+            out["game"] = "paused" if TURNS.paused else (TURNS.note or "running")
+        return out
+
+    async def act_steps(steps, observe, t_start, notes, failed, pre) -> tuple[dict, Any]:
         for i, step in enumerate(steps):
             if time.monotonic() - t_start > 90:
                 failed = {"step": i, "error": "act ran out of time (90 s)"}
@@ -263,7 +315,7 @@ def build_server(port: int, record_tools: bool = False, upgraded: bool = False) 
         img = None
         if observe in ("text", "image"):
             out["observe"], img = await observe_impl(image=observe == "image")
-        return with_image(out, img)
+        return out, img
 
     async def act_step(step: dict) -> str | None:
         """Run one act step; returns a short note worth reporting (or None)."""
@@ -327,8 +379,10 @@ def build_server(port: int, record_tools: bool = False, upgraded: bool = False) 
                        max_s: float = 30.0) -> dict:
         """Real-time loops on the handheld (react in tens of ms, no model round trips). action: start (kind, params,
         max_s) -> id | status (id, since) | stop (id or all) | kinds (their params): react, track, press_until,
-        navigate, watch, script. A real controller moving stops them."""
-        return await _run(PROC, behave.run_tool, BEHAVIORS, action, kind, params, id, since, max_s)
+        navigate, watch, script, program (Python at frame rate, for real-time play). params.wait = return when
+        done. A real controller moving stops them."""
+        out = await _run(PROC, behave.run_tool, BEHAVIORS, action, kind, params, id, since, max_s)
+        return with_game_state(out) if action == "start" and (params or {}).get("wait") else out
 
     # ------------------------------------------------------------------------------------------ processes
     @tool()
@@ -398,9 +452,9 @@ def build_server(port: int, record_tools: bool = False, upgraded: bool = False) 
     @tool()
     async def gamepad_connect(keep_plugged: bool = True) -> dict:
         """Plug the virtual controller in ahead of time so the first press lands (waits for Windows, closes Armoury
-        Crate's notice, restores focus, nudges the right stick so the game switches to controller mode).
-        keep_plugged: stays until gamepad_unplug; else unplugs when idle, never while a game is in front."""
-        return await _run(INPUT, _focused(gamepad.PAD.connect), keep_plugged)
+        Crate's notice, restores focus, wakes the game's controller mode). keep_plugged: stays until gamepad_unplug;
+        else unplugs when idle, never while a game is in front."""
+        return await _run(INPUT, _focused(gamepad.PAD.connect, turn=False), keep_plugged)
 
     @tool()
     async def gamepad_unplug() -> dict:
@@ -408,20 +462,25 @@ def build_server(port: int, record_tools: bool = False, upgraded: bool = False) 
         return {"unplugged": await _run(INPUT, gamepad.PAD.disconnect)}
 
     @tool()
-    async def focus_window(target: str = "", remember: bool = True) -> dict:
+    async def focus_window(target: str = "", remember: bool = True, pause: dict | None = None) -> dict:
         """Bring a window to the front and verify it (past Windows' foreground lock). target = title or process
         ("Minecraft"); remember = input tools refocus it. No target = what has focus and why input may not
-        register; "none" clears the target."""
+        register; "none" clears the target. pause = {"button": "start", "text": "Game is paused"}: turn-based, the
+        game runs only during your input calls; {} = off."""
         def run() -> dict:
             if not target:
-                return {**focus.diagnose(), "windows": [focus.short(w) for w in focus.windows(8)]}
+                return {**focus.diagnose(), "windows": [focus.short(w) for w in focus.windows(8)],
+                        "turns": TURNS.status()}
             if target.strip().lower() == "none":
                 focus.set_target(None)
+                TURNS.configure(None)
                 return {"input_target": None, "foreground": focus.short(focus.foreground())}
             result = focus.focus_window(target)
             if remember and result.get("ok"):
                 focus.set_target(target)
                 result["input_target"] = target
+            if pause is not None:
+                result["turns"] = TURNS.configure(pause or None)
             return result
         return await _run(INPUT, run)
 
