@@ -57,8 +57,10 @@ if $restart_service || $update_device; then
 fi
 
 say "Updating $PROD: $(git rev-list --count "$old..$new") commit(s)"
-git -C "$PROD" merge --ff-only -q perf
-git -C "$PROD" push -q origin main
+# Publish first: if GitHub's main has moved on (someone pushed there), stop before production changes at all.
+git push -q origin "$new:refs/heads/main" || { echo "GitHub's main has commits perf doesn't; merge origin/main into perf first" >&2; exit 1; }
+git -C "$PROD" fetch -q origin
+git -C "$PROD" merge --ff-only -q "$new"
 
 if grep -q '^pyproject.toml$' <<<"$changed"; then
   say "Dependencies or entry points changed: reinstalling the relaymcp command"

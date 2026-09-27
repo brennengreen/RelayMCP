@@ -109,12 +109,16 @@ def run(cfg: dict, rounds: int = 15, with_input: bool = False, with_screen: bool
     ui.step("Calls")
     calls = [("handheld_status", hw, "handheld_status", {}), ("gamepad_status", hw, "gamepad_status", {})]
     if with_screen:
-        calls.append(("screenshot", screen, "Screenshot", {}))
+        calls += [("screenshot", screen, "Screenshot", {}),            # Windows-MCP (the `ally` server)
+                  ("screenshot_fast", hw, "screenshot", {}),           # RelayMCP's DXGI capture
+                  ("observe", hw, "observe", {})]                      # OCR text of the screen
     for label, url, tool, args in calls:
         try:
             samples, last = [], {}
             for _ in range(3 if label == "screenshot" else 5):
                 dt, last, _ = _call(url, tool, args)
+                if (last.get("result") or {}).get("isError"):
+                    raise RuntimeError("".join(c.get("text", "") for c in last["result"].get("content", []))[:160])
                 samples.append(dt)
             out[label] = {**_stats(samples), **result_tokens(last)}
             ui.ok(f"{label}: p50 {out[label]['p50_ms']} ms, ~{out[label]['est_tokens']} tokens per result")
