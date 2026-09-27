@@ -108,14 +108,18 @@ unknown *plant* with a camera: nothing below is specific to one game.
 3. **Identify the plant once.** `behavior` kind `calibrate` (about 20-30 s, once per game) probes the look stick
    and learns which pixels are HUD, the focal length, the response curve and deadzone (slow to fast), the
    input-to-picture latency, the ramp up and how far it coasts after letting go, pixels per degree (it turns all
-   the way round and recognizes where it started) and the vertical gain. It never drives the camera faster than it
+   the way round and recognizes where it started, solving the focal length that makes that turn exactly 360
+   degrees; a turn that lost track or missed its start is redone slower) and the vertical gain. It never drives the
+   camera faster than it
    can follow: past about 8% of the picture per captured frame, image matching aliases (a big miss reads as a
    small one, consistently: measured +44% at 41 degrees a frame with every frame "tracked"), so the curve, and
-   control, stop below that.
+   control, stop below that, judged at the frame rate of the moment (a busy handheld captures fewer frames).
 4. **Close the loop on pixels.** A visual gyro turns the picture into yaw and pitch: tiles over the middle of the
    picture (none on the HUD) are phase-correlated with a keyframe, each searched where the current estimate says it
    went, and the camera rotation that explains their shifts is fitted exactly (a pure rotation maps the picture by
-   a homography, whatever the depth), robustly (a mob walking through a tile is dropped). A tilted camera's picture
+   a homography, whatever the depth), robustly (a mob walking through a tile is dropped). When the predicted motion
+   turns or stretches a tile (yawing while looking straight down is mostly roll), the tile is sampled through that
+   local warp first, so matching still only has a small shift to find. A tilted camera's picture
    rolls as it yaws; that roll also gives its pitch, so `level` needs no pitch limit. Programs get `turn`,
    `level`, `look_at` (put a screen point under the crosshair) and `scan` in degrees. Turns feed forward through
    the inverse response curve, release early by the measured coast, keep following the picture through every

@@ -64,7 +64,10 @@ handheld itself.
   `turn(yaw, pitch)`, `level()`, `look_at(x, y)`, `scan(score_fn)` and `look_rate()` in degrees, closed on a visual
   gyro (tile shifts fitted with the exact rotation homography, robust to things moving through the view, its roll
   while yawing giving the camera's pitch), with feedforward through the inverse response curve, coast-aware release,
-  tracking through every correction and settling. `aim` defaults to the calibrated deadzone.
+  tracking through every correction and settling. `aim` defaults to the calibrated deadzone. The gyro samples tiles
+  through the predicted local warp when the view rolls (yawing while looking down no longer drifts the pitch), and
+  the full turn solves the focal length that makes it exactly 360 degrees (a rough first focal length no longer
+  biases pixels per degree by 2-3%), redoing the turn slower if tracking broke or the start view was missed.
 - **The controller re-primes after touch, mouse or keyboard input:** tapping the screen switched Minecraft to its
   touch controls, and the next controller press only switched it back. The virtual pad now checks Windows' last-input
   time and nudges the right stick (net zero) first when anything but a controller came in since its last input.

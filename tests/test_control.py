@@ -34,8 +34,9 @@ class CameraSim:
     TW, TH = 3072, 1536  # the world's texture (equirectangular)
 
     def __init__(self, hfov=90.0, max_rate=240.0, deadzone=0.3, expo=2.0, accel_s=0.12, latency_s=0.04,
-                 limit=80.0, invert_y=False, hud=True, seed=11, fps=None, pitch=0.0):
+                 limit=80.0, invert_y=False, hud=True, seed=11, fps=None, pitch=0.0, slow_ms=0.0):
         self.fps, self._vsync, self._shown = fps, None, None
+        self.slow_ms = slow_ms  # extra time per new frame, like a slow machine or capture
         self.max_rate, self.deadzone, self.expo = max_rate, deadzone, expo
         self.accel_s, self.latency_s, self.limit, self.invert = accel_s, latency_s, limit, invert_y
         self.focal = (self.W / 2) / math.tan(math.radians(hfov / 2))
@@ -146,6 +147,8 @@ class CameraSim:
                     return self._shown  # the same image object, as the capture hands back between frames
                 self._vsync = n
             yaw, pitch = self.yaw, self._pitch
+        if self.slow_ms:
+            time.sleep(self.slow_ms / 1000)
         self._shown = self.render(yaw, pitch)
         return self._shown
 
@@ -401,3 +404,30 @@ def test_calibration_from_a_tilted_view_and_level_without_a_pitch_limit():
     sim.pitch = -33.0
     out = control.Camera(io, prof).level()
     assert abs(sim.pitch) < 1.5 and abs(out["was_deg"] + 33.0) < 2.0, (sim.pitch, out)
+
+
+def test_a_slow_capture_is_calibrated_at_speeds_it_can_follow():
+    """A slow machine or capture (~20 new frames a second): the same plant allows less speed, and nothing may read
+    wrong because of it (shared CI runners are like this)."""
+    sim = CameraSim(slow_ms=40.0)
+    events = []
+    io = control.PlantIO(frame=sim.frame, stick=sim.stick, sleep=time.sleep,
+                         log=lambda msg, **d: events.append((msg, d)))
+    prof = control.calibrate(io, points=(0.3, 0.4, 0.5, 0.6, 0.7, 0.85, 1.0), hold_s=0.35, pitch=False)
+    assert prof["px_per_deg"] == pytest.approx(sim.ppd, rel=0.04), (prof["px_per_deg"], events)
+    assert prof["look"]["capture_fps"] < 30
+    start = sim.turned
+    control.Camera(io, prof).turn(yaw=-70)
+    assert abs((sim.turned - start) + 70) < 3.0, sim.turned - start
+
+
+def test_pitch_stopping_at_its_limit_mid_turn_doesnt_run_on():
+    sim = CameraSim(deadzone=0.0, expo=1.0, slow_ms=25.0)
+    odo = control.Odometry(sim.frame(), focal_px=sim.focal)
+    sim.stick(0.6, -0.5)  # yaw right and pitch down, into the -80 limit
+    t0 = time.perf_counter()
+    while time.perf_counter() - t0 < 1.4:
+        if time.perf_counter() - t0 > 1.1:
+            sim.stick(0.0, 0.0)
+        odo.update(sim.frame())
+    assert abs(math.degrees(odo.pitch) - sim.pitch) < 3.0, (math.degrees(odo.pitch), sim.pitch)
