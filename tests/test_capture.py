@@ -162,3 +162,18 @@ def test_ocr_crop_bgra():
     data, w, h, left, top = ocr.crop_bgra(f, (8, 4, 16, 12))
     assert (w, h, left, top) == (8, 8, 8, 4) and len(data) == 8 * 8 * 4
     assert np.frombuffer(data, np.uint8).reshape(8, 8, 4)[0, 0].tolist() == [0, 0, 255, 0]
+
+
+def test_merge_rows_joins_split_phrases_but_not_separate_buttons():
+    from relaymcp.device import ocr
+    lines = [{"text": "Launch Mission", "box": [420, 238, 596, 274]},
+             {"text": "Button", "box": [388, 352, 492, 386]},       # one label that OCR split in two
+             {"text": "pressed", "box": [502, 355, 634, 389]},
+             {"text": "Play", "box": [100, 600, 160, 630]},         # two buttons in a row, far apart
+             {"text": "Settings", "box": [400, 600, 520, 630]}]
+    merged = ocr.merge_rows(lines)
+    texts = [ln["text"] for ln in merged]
+    assert texts == ["Launch Mission", "Button pressed", "Play", "Settings"]
+    assert merged[1]["box"] == [388, 352, 634, 389]
+    assert ocr.find(merged, "Button pressed")["text"] == "Button pressed"
+    assert ocr.merge_rows([]) == []

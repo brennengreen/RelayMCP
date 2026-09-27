@@ -54,6 +54,37 @@ def lines_from(ocr_lines, left: int = 0, top: int = 0) -> list[dict]:
     return out
 
 
+def _same_row(a, b) -> bool:
+    overlap = min(a[3], b[3]) - max(a[1], b[1])
+    return overlap >= 0.6 * min(a[3] - a[1], b[3] - b[1])
+
+
+def merge_rows(lines: list[dict], gap_ratio: float = 0.8) -> list[dict]:
+    """Join pieces of one visual line: the OCR engine sometimes splits a phrase ("Button" | "pressed") into separate
+    lines. Pieces merge when they share a row and the gap between them is under gap_ratio x the text height, which
+    keeps separate buttons in a row apart."""
+    out = [dict(ln) for ln in lines]
+    merged = True
+    while merged:
+        merged = False
+        for i, a in enumerate(out):
+            for j, b in enumerate(out):
+                if i == j or not _same_row(a["box"], b["box"]):
+                    continue
+                gap = b["box"][0] - a["box"][2]  # b starts right after a
+                height = max(a["box"][3] - a["box"][1], b["box"][3] - b["box"][1])
+                if -0.2 * height <= gap <= gap_ratio * height:
+                    a["text"] = f"{a['text']} {b['text']}"
+                    a["box"] = [min(a["box"][0], b["box"][0]), min(a["box"][1], b["box"][1]),
+                                max(a["box"][2], b["box"][2]), max(a["box"][3], b["box"][3])]
+                    del out[j]
+                    merged = True
+                    break
+            if merged:
+                break
+    return out
+
+
 def center(box) -> list[int]:
     return [(box[0] + box[2]) // 2, (box[1] + box[3]) // 2]
 
@@ -70,7 +101,7 @@ def recognize(frame, box=None) -> list[dict]:
         return await engine.recognize_async(bitmap)
 
     result = asyncio.run(run())
-    return lines_from(result.lines, left, top)
+    return merge_rows(lines_from(result.lines, left, top))
 
 
 def find(lines: list[dict], query: str) -> dict | None:
