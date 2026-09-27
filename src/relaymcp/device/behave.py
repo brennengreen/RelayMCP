@@ -77,7 +77,9 @@ KINDS = {
                'degrees=360): turn round calling score_fn(frame), end facing the best view -> {"heading", "score"}; '
                'look_rate(yaw_dps, pitch_dps): hold a turn rate (walk and turn); camera: the profile summary; '
                'set_pitch(deg): the pitch now, if known (after holding the stick into a limit), so turns looking '
-               'straight down or up read right. '
+               'straight down or up read right; turn_open(yaw, pitch): the same turn from the calibrated curve alone, '
+               'without watching the picture (repeating textures, static overlays; best from an exact reference like '
+               'a pitch limit). A turn that loses the picture stops and says tracking_lost. '
                'Chunks: params.after = a run id queues this program to start the moment that run finishes (plan the '
                'next chunk while one plays; cancelled if that one fails or is stopped); params.replace = a run id '
                'stops that run and starts this one at once, keeping what it holds (no snap to neutral).',
@@ -1140,6 +1142,7 @@ class Program:
         return {**seeing, "pad": self.pad, "press": self.press, "seq": self.seq, "release": self.release,
                 "wait": self.wait, "until": self.until, "aim": self.aim, "guard": self.guard, "skill": self.skill,
                 "turn": lambda yaw=0.0, pitch=0.0, tol=1.0: self.cam().turn(yaw, pitch, tol),
+                "turn_open": lambda yaw=0.0, pitch=0.0: self.cam().turn_open(yaw, pitch),
                 "level": lambda pitch=0.0: self.cam().level(pitch),
                 "look_at": lambda x, y, **kw: self.cam().look_at(x, y, **kw),
                 "scan": lambda score, degrees=360.0: self.cam().scan(score, degrees),
@@ -1353,7 +1356,7 @@ class Program:
 
 Program.NAMES = {"elapsed", "frame", "diff", "text", "sees", "color", "track", "shift", "log", "W", "H", "CX", "CY",
                  "np", "math", "time", "numbers", "pixel_text", "grid_angle", "pad", "press", "seq", "release", "wait", "until", "aim", "guard", "skill",
-                 "turn", "level", "look_at", "scan", "look_rate", "camera", "set_pitch"}
+                 "turn", "level", "look_at", "scan", "look_rate", "camera", "set_pitch", "turn_open"}
 
 
 def center_of(box) -> tuple[float, float]:

@@ -87,6 +87,13 @@ handheld itself.
 - **Turn mode is sturdier:** a dropped resume press is tried again (then the close button) instead of letting a
   program play into the pause menu for its whole run, and a pause profile's `dead` text (e.g. "Respawn") keeps it
   from pressing pause on a death screen, where it only opened a menu that ate the next presses.
+- **Turns that can't be fooled into spinning, and turns without the picture:** a `turn` whose error grows well past
+  where it started (the picture says it's going the wrong way: a repeating texture locked on wrong, a static overlay)
+  stops and says `tracking_lost` instead of spinning for its whole timeout (on the Ally a 27-degree turn went 32
+  degrees the other way). A pitch limit only counts when pushing into it (starting up from Minecraft's -90 clamp
+  with a sluggish first moment was taken for "at the limit"). `turn_open(yaw, pitch)` turns from the calibrated curve
+  alone, one axis at a time (rotation = rate x (hold + coast - ramp): within 0.3 degrees of the flat world's horizon
+  over 64 degrees), for scenes the picture can't be followed in and from exact references.
 - **Programs remember where the camera looks:** the next program's camera starts knowing the pitch the last one
   left it at (turn-based play runs one program per call; yaws seen straight down need it), not after you take over;
   and with the pitch known, a stalled picture only counts as a pitch limit near straight up or down (right after a

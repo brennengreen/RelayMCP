@@ -564,3 +564,42 @@ def test_a_stalled_picture_away_from_a_limit_is_not_a_limit():
     t0 = time.perf_counter()
     out = cam.turn(pitch=40)
     assert "pitch_limit" not in out and abs(sim.pitch - 40) < 2.0, (out, sim.pitch)
+
+
+def test_open_loop_turns_land_from_the_curve_alone():
+    sim = CameraSim(deadzone=0.3, expo=2.0, y_gain=0.67, hud=False)
+    prof = true_profile(sim)
+    prof["look"]["coast_s"] = prof["look"]["accel_s"]  # the simulator's lag is symmetric: coasting gives back the ramp
+    cam = control.Camera(io_for(sim), prof)
+    for yaw, pitch in ((40.0, 0.0), (-25.0, 0.0), (0.0, 30.0), (12.0, -18.0)):
+        y0, p0 = sim.turned, sim.pitch
+        out = cam.turn_open(yaw=yaw, pitch=pitch)
+        assert out["open_loop"] and abs((sim.turned - y0) - yaw) < 1.5 and abs((sim.pitch - p0) - pitch) < 1.5, (
+            yaw, pitch, sim.turned - y0, sim.pitch - p0, out)
+
+
+def test_a_turn_whose_picture_goes_the_wrong_way_stops_instead_of_spinning():
+    sim = CameraSim(hud=False)
+    io = io_for(sim)
+    real = io.stick
+    io.stick = lambda x, y: real(-x, y)  # the camera turns the other way from what the picture model expects
+    cam = control.Camera(io, true_profile(sim))
+    t0, start = time.perf_counter(), sim.turned
+    out = cam.turn(yaw=30)
+    assert out.get("tracking_lost") and time.perf_counter() - t0 < 4.0, out
+    assert abs(sim.turned - start) < 45, sim.turned - start
+
+
+def test_pushing_away_from_a_pitch_limit_is_never_the_limit():
+    """From Minecraft's -90 clamp, pitching up with a sluggish start (the game ignores the stick for a moment) must
+    still pitch up, not stop there as if at a limit."""
+    sim = CameraSim(limit=90.0, pitch=-90.0, hud=False)
+    io = io_for(sim)
+    real = io.stick
+    t0 = [time.perf_counter()]
+    io.stick = lambda x, y: real(x, y) if time.perf_counter() - t0[0] > 0.35 else real(0.0, 0.0)
+    cam = control.Camera(io, true_profile(sim))
+    cam.set_pitch(-90.0)
+    t0[0] = time.perf_counter()
+    out = cam.turn(pitch=50)
+    assert "pitch_limit" not in out and abs(sim.pitch + 40) < 2.0, (out, sim.pitch)

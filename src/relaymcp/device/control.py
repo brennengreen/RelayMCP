@@ -1079,7 +1079,8 @@ class Camera:
     def turn(self, yaw: float = 0.0, pitch: float = 0.0, tol: float = 1.0, timeout: float = 6.0) -> dict:
         """Turn by yaw (right +) and pitch (up +) degrees, closed on odometry. Returns what it measured."""
         io, odo = self.io, self.odometry()
-        t0, at_limit, still, timed_out = time.perf_counter(), False, 0, True
+        t0, at_limit, still, timed_out, lost = time.perf_counter(), False, 0, True, False
+        worst = max(abs(yaw), abs(pitch))
         try:
             while time.perf_counter() - t0 < timeout:
                 odo.update(io.frame())
@@ -1087,6 +1088,11 @@ class Camera:
                 ey, ep = yaw - done_y, (0.0 if at_limit else pitch - done_p)
                 if abs(ey) <= tol and abs(ep) <= tol:
                     timed_out = False
+                    break
+                if max(abs(ey), abs(ep)) > max(10.0, 1.5 * worst + 3.0):
+                    # the picture says it's going the wrong way or far past: the tracking broke (a repeating texture
+                    # locked on wrong, something big moving): stop pushing rather than spin (seen on the Ally)
+                    lost = True
                     break
                 vx, vy = odo.rate(0.06)
                 cap_y, cap_p = self._caps(odo)
@@ -1099,16 +1105,17 @@ class Camera:
                 started = time.perf_counter() - t0 > self.latency + self.accel + 0.1  # (not moving yet is not a limit)
                 still = still + 1 if started and rp and abs(vy) < 0.03 * self.curve.max_rate * self.ppd else 0
                 if still >= 8:  # pushing the pitch and the picture doesn't move: a pitch limit (when the pitch is
-                    # known, only near straight up or down: right after a jump's landing the picture also stalls)
+                    # known, only when pushing into one near straight up or down: right after a jump's landing, or
+                    # starting up from a -90 clamp, the picture also stalls for a moment)
                     now_p = None if self._tilt is None else self._tilt + odo.y / self.ppd
-                    if now_p is None or abs(now_p) > 80:
+                    if now_p is None or (now_p < -80 and rp < 0) or (now_p > 80 and rp > 0):
                         at_limit = True
                     else:
                         still = 0
                 io.sleep(1 / 120)
             io.stick(0.0, 0.0)
             self._settle(odo)
-            for _ in range(4):  # finish with short pulses sized to what's left, settling after each
+            for _ in range(0 if lost else 4):  # finish with short pulses sized to what's left, settling after each
                 ey = yaw - (-odo.x / self.ppd)
                 ep = 0.0 if at_limit else pitch - odo.y / self.ppd
                 if abs(ey) <= tol and abs(ep) <= tol:
@@ -1131,8 +1138,41 @@ class Camera:
                "error": round(max(abs(yaw - got_y), 0.0 if at_limit else abs(pitch - got_p)), 1)}
         if at_limit:
             out["pitch_limit"] = True
-        if timed_out:
+        if timed_out and not lost:
             out["timed_out"] = True  # didn't get within tol in time (the pulses after may still have finished it)
+        if lost:
+            out["tracking_lost"] = True  # stopped: the picture couldn't be followed (turn_open doesn't need it)
+            self._tilt = None  # where it looks is unknown now
+        return out
+
+    def turn_open(self, yaw: float = 0.0, pitch: float = 0.0) -> dict:
+        """Turn by yaw and pitch degrees without watching the picture: one axis at a time, a steady deflection held
+        for a time worked out from the calibrated response curve (rotation = rate x (hold + coast - ramp), within
+        ~0.3 degrees on Minecraft over 64 degrees). For scenes the picture can't be followed in (a repeating texture,
+        a static overlay), and from exact references (a pitch limit, a compass)."""
+        io = self.io
+        out: dict[str, Any] = {"yaw": 0.0, "pitch": 0.0, "open_loop": True, "held_ms": []}
+        lag = max(-0.1, min(0.2, self.coast - self.accel))
+        for axis, want in ((1, pitch), (0, yaw)):
+            if abs(want) < 0.05:
+                continue
+            gain = abs(self.y_gain) if axis == 1 else 1.0
+            rate = max(1.5 * self.curve.min_rate, min(0.6 * self.curve.max_rate, abs(want) / 0.4 / gain))
+            d = abs(self.curve.deflection(rate))
+            real = abs(self.curve.rate(d)) * gain  # what that deflection turns this axis at (deg/s)
+            if real <= 0:
+                continue
+            hold = max(0.03, abs(want) / real - lag)
+            sx = math.copysign(d, want) if axis == 0 else 0.0
+            sy = (math.copysign(d, want) * (1 if self.y_gain > 0 else -1)) if axis == 1 else 0.0
+            io.stick(sx, sy)
+            io.sleep(hold)
+            io.stick(0.0, 0.0)
+            io.sleep(self.latency + self.coast + 0.05)  # let it come to rest before the next axis
+            out["held_ms"].append(round(hold * 1000))
+            out["pitch" if axis == 1 else "yaw"] = round(real * (hold + lag), 1)
+        if self._tilt is not None:
+            self._tilt = max(-90.0, min(90.0, self._tilt + out["pitch"]))
         return out
 
     def tilt(self) -> float | None:
