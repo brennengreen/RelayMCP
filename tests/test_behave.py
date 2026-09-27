@@ -496,7 +496,10 @@ class ProgramOutputs(PanOutputs):
 
     def __init__(self, w):
         super().__init__(w)
-        self.states, self.seqs, self.released = [], [], 0
+        self.states, self.seqs, self.released, self.taps = [], [], 0, []
+
+    def tap(self, buttons, ms=60):
+        self.taps.append((tuple(buttons), ms))
 
     def hold(self, state):
         self.states.append({k: (list(v) if isinstance(v, list) else v) for k, v in state.items()})
@@ -820,3 +823,65 @@ def test_a_guard_started_again_under_its_name_replaces_itself():
     states = {r["id"]: r["state"] for r in rt.status()["behaviors"]}
     assert states[a["id"]] == "stopped" and states[b["id"]] == "running" and states[c["id"]] == "running", states
     rt.stop()
+
+
+# --- the 20 fps floor: agentic control looks at least every 50 ms while it acts ------------------------------------
+
+def test_cadence_counts_how_old_the_look_was_when_acting_not_idle_time():
+    c = behave.Cadence()
+    c.observed(0.000)
+    c.observed(0.300)                      # idle: nothing held, doesn't count
+    c.acted("pad", True, now=0.310)        # decided on a 10 ms old look
+    c.observed(0.330)                      # held on it for 30 ms
+    c.acted("pad", False, now=0.550)       # held blind 220 ms, then let go
+    c.observed(0.900)                      # idle again
+    s = c.summary()
+    assert s["worst_ms"] == 220 and s["over_50ms"] == 1 and s["p95_ms"] == 220, s
+    c.acted("tap", None, now=1.000)        # a tap decided on a 100 ms old look counts too
+    assert c.summary()["over_50ms"] == 2
+
+
+def test_a_blind_wait_while_holding_a_stick_breaks_the_floor_and_says_where():
+    out, _, _ = run_program("pad(ls=(0, 1))\nwait(200)\npad()\nframe()\n")
+    c = out["cadence"]
+    assert c["worst_ms"] >= 180 and c["over_50ms"] >= 1, c
+    assert c["worst_at"].startswith("line 2") and "wait 200 ms" in c["worst_at"], c
+
+
+def test_looking_while_holding_keeps_to_the_floor():
+    out, _, _ = run_program("pad(ls=(0, 1))\n"
+                            "until(lambda: frame() is not None and elapsed() > 0.4, timeout=2, hz=60)\n"
+                            "pad()\n")
+    c = out["cadence"]
+    busy = SLOPPY_CLOCK or bool(os.environ.get("CI"))  # shared runners stall now and then
+    assert c["p95_ms"] < (80 if SLOPPY_CLOCK else 50) and c["worst_ms"] < (150 if busy else 50), c
+
+
+def test_tap_lets_the_program_keep_looking():
+    out, outs, _ = run_program("t0 = elapsed()\ntap('a', ms=300)\nresult = {'took': elapsed() - t0}\n")
+    assert out["result"]["took"] < 0.05 and outs.taps == [(("a",), 300.0)], (out, outs.taps)
+
+
+def test_press_until_looks_between_presses(rt, world):
+    rid = rt.start("press_until", {"do": {"key": ["x"]}, "every_ms": 1000, "until": {"text": "Ready"}}, max_s=5)["id"]
+
+    def later():
+        time.sleep(0.25)
+        world.text = [{"text": "Ready", "box": [0, 0, 1, 1]}]
+
+    threading.Thread(target=later).start()
+    s = wait_state(rt, rid)
+    assert s["state"] == "done" and s["presses"] == 1 and s["seconds"] < (0.9 if SLOPPY_CLOCK else 0.5), s
+
+
+def test_script_checks_its_condition_between_actions(rt, world):
+    rid = rt.start("script", {"states": {"a": {"do": {"key": ["x"]}, "every_ms": 1000, "until": {"text": "Ready"}}}},
+                   max_s=5)["id"]
+
+    def later():
+        time.sleep(0.25)
+        world.text = [{"text": "Ready", "box": [0, 0, 1, 1]}]
+
+    threading.Thread(target=later).start()
+    s = wait_state(rt, rid)
+    assert s["state"] == "done" and len(world.keys) == 1 and s["seconds"] < (0.9 if SLOPPY_CLOCK else 0.5), s

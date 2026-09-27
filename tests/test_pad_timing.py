@@ -139,3 +139,31 @@ def test_the_command_center_overlay_is_closed_with_b_before_input(pad, monkeypat
     open_[0] = True
     monkeypatch.setattr(pad._pad, "update", lambda: None)  # B does nothing this time
     assert pad.close_command_center().startswith("WARNING")
+
+
+def test_a_tap_goes_down_on_top_of_what_is_held_and_lets_go_by_itself(pad):
+    a = gamepad.BUTTON_BITS["a"]
+    pad.hold({"left_stick": [0, 1]})
+    t0 = time.perf_counter()
+    pad.tap(["a", "lt"], 60)
+    assert time.perf_counter() - t0 < 0.01  # doesn't wait: the caller keeps looking
+    now = pad._pad.updates[-1][1]
+    assert now["buttons"] & a and now["lt"] == 1.0 and now["left"] == (0.0, 1.0), now
+    pad.hold({"right_stick": [1, 0]})  # a new held state keeps the tap down
+    now = pad._pad.updates[-1][1]
+    assert now["buttons"] & a and now["right"] == (1.0, 0.0) and now["left"] == (0.0, 0.0), now
+    time.sleep(0.25 if SLOPPY_CLOCK else 0.12)
+    last = pad._pad.updates[-1][1]
+    assert not last["buttons"] & a and last["lt"] == 0.0 and last["right"] == (1.0, 0.0), last  # still held
+    released = next(t for t, st in pad._pad.updates if st["buttons"] == 0 and st["right"] == (1.0, 0.0))
+    if not SLOPPY_CLOCK:
+        assert 0.05 <= released - t0 <= 0.08, released - t0
+
+
+def test_neutral_and_sequences_end_taps(pad):
+    pad.tap(["b"], 500)
+    pad.neutral()
+    assert pad._pad.updates[-1][1]["buttons"] == 0 and not pad._taps
+    pad.tap(["b"], 500)
+    pad.run_steps([{"buttons": ["x"], "ms": 10}])
+    assert pad._pad.updates[-1][1]["buttons"] == 0 and not pad._taps

@@ -138,7 +138,8 @@ How to work:
 5. Real-time games: make them turn-based first, `focus_window("<game>", pause={{"button": "start", "text":
    "Game is paused"}})` (it runs only during your calls). Play each sub-goal as one `behavior` program (kind
    "program", params.wait true): Python at frame rate that holds controls, `aim`s while walking and waits `until`
-   text or a change, never one small move per turn; if a game can't pause, queue the next program while one plays
+   text or a change, never one small move per turn; while it holds inputs it looks every <=50 ms (`until`, `tap`;
+   results' `cadence` shows blind spots); if a game can't pause, queue the next program while one plays
    (params.after = its id). Always add a `guard` (health, a death screen). Calibrate a
    game's camera once (kind "calibrate", max_s 90) to `turn`/`level`/`look_at`/`scan` in degrees. Aim away from
    the HUD and held item; in menus, check the focused tooltip with `sees` before pressing A. Keep a standing
@@ -184,7 +185,8 @@ with a concrete goal and what done looks like. It runs a fast model with a small
   by its text), `press_until`, `react`, `track`, `watch`. Start one, then read `status` events.
 - Real-time games: turn-based first (`focus_window` with `pause`, so the game waits while you think), then one
   `program` behavior per sub-goal (`params.wait: true`): Python at frame rate with `pad`, `aim`, `until`, `sees`,
-  `guard`. Calibrate a game's camera once (kind `calibrate`) and programs turn in degrees (`turn`, `level`,
+  `guard`. While it holds inputs it must look at least every 50 ms (the 20 fps floor for agentic control): loop on
+  `until`/frame reads and `tap` instead of `press`; each result's `cadence` names the blind spots. Calibrate a game's camera once (kind `calibrate`) and programs turn in degrees (`turn`, `level`,
   `look_at`, `scan`). A standing `guard` behavior stops everything on danger; `save` programs that worked and look
   in `skills` first. Games that can't pause: queue the next program (`params.after`) while one plays. See
   `behavior(action="kinds")`.

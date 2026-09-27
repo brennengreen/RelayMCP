@@ -43,17 +43,18 @@ KINDS = {
              '"right_stick" | "left_stick"; gain; within px; hold_frames: done when on target that long (follow: true '
              'keeps following until max_s)',
     "press_until": 'do (as react, or {"hold": {"right_trigger": 1}} to keep a controller state, e.g. mining); '
-                   'every_ms (400); until {"text": "Play"} | {"color": [r,g,b], "region": [...]} | {"change": 12, '
-                   '"region": [...]}; max_presses (20)',
-    "watch": 'region; when (as react); every_ms (100): reports each time it happens',
+                   'every_ms (400) between presses (the condition is checked 20+ times a second); until {"text": '
+                   '"Play"} | {"color": [r,g,b], "region": [...]} | {"change": 12, "region": [...]}; max_presses (20)',
+    "watch": 'region; when (as react); every_ms (50): reports each time it happens',
     "navigate": 'text (the menu item to reach); region (the menu); with "pad" (d-pad + A) | "keys" (arrows + Enter); '
                 'confirm (false): press A/Enter on it; direction ("down") while it is off screen; max_moves (30)',
     "script": 'a small state machine: start (state name); states {name: {do (as react, repeated every_ms 250), until '
-              '(text | color | change | {"state": {"topic", "match"}}), ms (instead of until: stay this long), next '
-              '(state or "done"), timeout_s (30), on_timeout (state, else stop)}}',
+              '(text | color | change | {"state": {"topic", "match"}}; checked 20+ times a second), ms (instead of '
+              'until: stay this long), next (state or "done"), timeout_s (30), on_timeout (state, else stop)}}',
     "program": 'code: Python run on the handheld, for real-time play in one call (params.wait = true returns when it '
                'ends, with its events). Controller: pad(buttons=[], ls=(x,y), rs=(x,y), lt=0, rt=0) holds that whole '
-               'state until changed; press("a", ms=80) taps on top of it; seq([gamepad_sequence steps]); release(). '
+               'state until changed; tap("a", ms=60) presses on top of it and lets go by itself without waiting; '
+               'press("a", ms=80) the same but waits; seq([gamepad_sequence steps]); release(). '
                'Time: wait(ms); until(fn, timeout=5, hz=30) -> fn\'s value or None; elapsed(). Screen (px, region '
                '[l,t,r,b]): frame(region) -> BGRA numpy array; diff(a, b) -> 0-255; text(region) -> [[text, x, y]]; '
                'sees("Mine", region) -> [x, y] or None (OCR, ~50 ms for a small region); color([r,g,b], region, tol=40) '
@@ -80,6 +81,11 @@ KINDS = {
                'straight down or up read right; turn_open(yaw, pitch): the same turn from the calibrated curve alone, '
                'without watching the picture (repeating textures, static overlays; best from an exact reference like '
                'a pitch limit). A turn that loses the picture stops and says tracking_lost. '
+               'Agentic control needs a fresh look at least every 50 ms (20 fps) while acting: results carry cadence '
+               '{worst_ms, p95_ms, over_50ms, worst_at}: how old the latest look (frame, text or state read) was at '
+               'each input change and while inputs were held, and where the worst was. Loop on until()/frame reads '
+               'while holding inputs, look right before acting; blind wait(), press(), seq() and turn_open() with '
+               'inputs held count against it. '
                'Chunks: params.after = a run id queues this program to start the moment that run finishes (plan the '
                'next chunk while one plays; cancelled if that one fails or is stopped); params.replace = a run id '
                'stops that run and starts this one at once, keeping what it holds (no snap to neutral).',
@@ -92,7 +98,7 @@ KINDS = {
                  're-time how turn_open turns on the saved profile, ~10 s, from the bottom pitch limit).',
     "guard": 'a standing safety check, separate from programs (they come and go, it stays): setup (code run once: '
              'regions, baselines, e.g. RED0 = color([190,30,30], HEARTS)); when (a Python expression over frame, '
-             'diff, color, sees, text, elapsed: "color([190,30,30], HEARTS) < 0.5 * RED0"); every_ms (100); then '
+             'diff, color, sees, text, elapsed: "color([190,30,30], HEARTS) < 0.5 * RED0"); every_ms (50); then '
              '"stop" (every program and loop stops; a turn-based game pauses) or "note"; program (code: a reflex '
              'started after stopping, e.g. back away; program_max_s 10); repeat (false), cooldown_ms (3000); name. '
              'Checks only while the game runs; fires show as "alerts" in the next tool results. max_s up to 4 h.',
@@ -288,6 +294,175 @@ class Steer:
         self.magnitude, self.stuck, self.pinned = 0.0, 0, 0
 
 
+FLOOR_MS = 50.0  # agentic control: a fresh look at least every 50 ms (20 fps) while acting
+
+
+class Cadence:
+    """How fresh a run's look was whenever it acted. At every input change, and all the time an input is held, its
+    latest observation (a frame, text or state read) should be under FLOOR_MS old: agentic control at 20 fps or
+    better. Idle time with nothing held doesn't count. Also how old frames were when read."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.channels: dict[str, bool] = {}  # what holds input now: "pad" (held state or stick), "key", "seq"
+        self.last: float | None = None  # the latest observation
+        self.samples: collections.deque = collections.deque(maxlen=4096)  # ms since the last look, when acting
+        self.ages: collections.deque = collections.deque(maxlen=4096)
+        self.worst, self.worst_at, self.over = 0.0, None, 0
+        self._mark, self._mark_ms = None, 0.0  # the longest blocking call since the last look (where it is)
+
+    def _held(self) -> bool:
+        return any(self.channels.values())
+
+    def observed(self, now: float, captured: float | None = None) -> None:
+        with self._lock:
+            if captured is not None:
+                self.ages.append(max(0.0, now - captured) * 1000)
+            if self._held() and self.last is not None:
+                self._record(now - self.last)  # held until this look on the previous one
+            self.last = now
+            self._mark, self._mark_ms = None, 0.0
+
+    def acted(self, channel: str, on: bool | None, now: float | None = None, where: Callable | None = None) -> None:
+        """An input change on a channel: held now (True), let go (False), or momentary (None: a tap, a click). The
+        decision was made on the latest look: its age counts."""
+        now = time.perf_counter() if now is None else now
+        with self._lock:
+            if self.last is not None:
+                age = now - self.last
+                if age * 1000 > FLOOR_MS and self._mark is None and where is not None:
+                    self._mark = where()
+                self._record(age)
+            if on is not None:
+                self.channels[channel] = on
+
+    def let_go(self) -> None:
+        with self._lock:
+            self.channels.clear()
+
+    def blocking(self, where: str, ms: float) -> None:
+        with self._lock:
+            if ms >= self._mark_ms:
+                self._mark, self._mark_ms = where, ms
+
+    def finish(self, now: float) -> None:
+        with self._lock:
+            if self._held() and self.last is not None:
+                self._record(now - self.last)
+
+    def _record(self, seconds: float) -> None:
+        ms = seconds * 1000
+        self.samples.append(ms)
+        if ms > FLOOR_MS:
+            self.over += 1
+        if ms > self.worst:
+            self.worst, self.worst_at = ms, self._mark
+
+    def summary(self) -> dict | None:
+        with self._lock:
+            if not self.samples:
+                return None
+            s = sorted(self.samples)
+            out: dict[str, Any] = {"worst_ms": round(self.worst), "p95_ms": round(s[min(len(s) - 1, int(len(s) * 0.95))])}
+            if self.over:
+                out["over_50ms"] = self.over
+                if self.worst_at:
+                    out["worst_at"] = self.worst_at
+            if self.ages:
+                a = sorted(self.ages)
+                out["frame_age_p95_ms"] = round(a[min(len(a) - 1, int(len(a) * 0.95))])
+            return out
+
+
+def _state_active(state: dict) -> bool:
+    if state.get("buttons"):
+        return True
+    for k in ("left_stick", "right_stick"):
+        v = state.get(k) or (0, 0)
+        if abs(float(v[0])) > 1e-3 or abs(float(v[1])) > 1e-3:
+            return True
+    return float(state.get("left_trigger") or 0) > 1e-3 or float(state.get("right_trigger") or 0) > 1e-3
+
+
+def _where(what: str) -> str:
+    """Where a blocking call is in the program or skill (line, function, and the camera skill it is inside)."""
+    import sys
+    f, via = sys._getframe(1), None
+    while f is not None:
+        name = f.f_code.co_filename
+        if name == "<program>" or name.startswith("<skill"):
+            fn = f.f_code.co_name
+            return f"line {f.f_lineno}{'' if fn == '<module>' else ' in ' + fn}: {via + ' ' if via else ''}{what}"
+        if name.endswith("control.py"):
+            via = f.f_code.co_name  # the outermost one: the skill called (turn_open), not its helpers
+        f = f.f_back
+    return what
+
+
+class _Observed:
+    """The outputs, noting on the acting run's cadence what each call does to the controller."""
+
+    def __init__(self, out, rt: "Runtime"):
+        self._out, self._rt = out, rt
+
+    def __getattr__(self, name):
+        return getattr(self._out, name)
+
+    def _note(self, channel: str, on: bool | None) -> None:
+        run = self._rt._by_thread.get(threading.get_ident())
+        if run is not None:
+            run.cadence.acted(channel, on, where=lambda: _where(channel))
+
+    def hold(self, state):
+        self._out.hold(state)
+        self._note("pad", _state_active(state))
+
+    def stick(self, side, x, y):
+        self._out.stick(side, x, y)
+        self._note("pad", abs(float(x)) > 1e-3 or abs(float(y)) > 1e-3)
+
+    def tap(self, buttons, ms=60):
+        fn = getattr(self._out, "tap", None)
+        if fn is None:  # outputs without taps (older kits, tests): a press
+            self._out.pad(buttons)
+        else:
+            fn(buttons, ms)
+        self._note("tap", None)
+
+    def pad(self, buttons):
+        self._out.pad(buttons)
+        self._note("tap", None)
+
+    def key(self, keys):
+        self._note("key", True)
+        try:
+            self._out.key(keys)
+        finally:
+            self._note("key", False)
+
+    def click(self):
+        self._out.click()
+        self._note("click", None)
+
+    def mouse(self, dx, dy):
+        self._out.mouse(dx, dy)
+        self._note("mouse", None)
+
+    def seq(self, steps):
+        self._note("seq", True)
+        try:
+            self._out.seq(steps)
+        finally:
+            self._note("seq", False)
+            self._note("pad", False)  # a sequence ends in neutral
+
+    def release(self, used=()):
+        self._out.release(used)
+        run = self._rt._by_thread.get(threading.get_ident())
+        if run is not None:
+            run.cadence.let_go()
+
+
 class Run:
     def __init__(self, kind: str, params: dict, max_s: float, cap: float = MAX_SECONDS):
         self.id = uuid.uuid4().hex[:8]
@@ -308,6 +483,7 @@ class Run:
         self.next: list["Run"] = []     # runs queued behind this one
         self.handoff: "Run | None" = None  # replaced by this run: it takes over what this one holds
         self.stop_reason = ""  # why it was asked to stop (e.g. "replaced by <id>")
+        self.cadence = Cadence()
 
     def emit(self, kind: str, **data) -> None:
         with self._lock:
@@ -329,6 +505,9 @@ class Run:
         if self._frame_ms:
             s = sorted(self._frame_ms)
             out["frame_ms_p50"] = round(s[len(s) // 2], 1)
+        c = self.cadence.summary()
+        if c:
+            out["cadence"] = c
         for k, v in self.stats.items():
             if k not in ("ticks", "actions") and k not in out:  # never let a behavior's stat hide the run's own fields
                 out[k] = v
@@ -344,7 +523,8 @@ class Runtime:
                  cursor: Callable | None = None, state_events: Callable | None = None,
                  on_start: Callable | None = None, on_end: Callable | None = None,
                  profiles=None, app: Callable | None = None, skills=None, active: Callable | None = None):
-        self.grab, self.out = grab, outputs
+        self.grab, self.out = grab, _Observed(outputs, self)
+        self._by_thread: dict[int, Run] = {}  # behavior threads -> their run (whose cadence an output call counts on)
         self.profiles, self.app = profiles, app  # camera calibrations (control.ProfileStore) by foreground app
         self.skills = skills  # saved programs (skills.SkillStore)
         self.active = active or (lambda: True)  # is the game running (guards don't judge a paused game)?
@@ -352,9 +532,9 @@ class Runtime:
         self._alert_seq, self._alerts_taken = 0, 0
         self.on_start, self.on_end = on_start, on_end  # e.g. resume a paused game, and pause it again (turns.py)
         self.takeover = takeover or (lambda: None)
-        self.read_text = read_text
+        self.read_text = self._looks(read_text)
         self.cursor = cursor
-        self.state_events = state_events  # (topic, since) -> (events [{"n", "topic", "data"}], cursor): the inbox
+        self.state_events = self._looks(state_events)  # (topic, since) -> (events [{"n", "topic", "data"}], cursor)
         self.runs: dict[str, Run] = {}
         self.pitch_known: dict[str, float] = {}  # app -> the camera's pitch when the last program left it (degrees)
         self._lock = threading.Lock()
@@ -505,6 +685,7 @@ class Runtime:
         return {"behaviors": [r.summary() for r in self.runs.values()]}
 
     def _thread(self, run: Run) -> None:
+        self._by_thread[threading.get_ident()] = run
         try:
             with HiResTimer():
                 getattr(self, f"_run_{run.kind}")(run, run.params)
@@ -515,6 +696,7 @@ class Runtime:
         except Exception as e:
             run.state, run.reason = "failed", f"{type(e).__name__}: {e}"
         finally:
+            run.cadence.finish(time.perf_counter())
             with self._lock:  # claimed here, so exactly one side starts what comes next
                 hand, behind, run.next, run.handoff = run.handoff, run.next, [], None
             if hand is not None:  # replaced: the new run takes over what this one holds (no snap to neutral)
@@ -540,6 +722,7 @@ class Runtime:
                     run.emit("note", text=f"after ending: {e}")
             run.ended = time.perf_counter()
             run.emit("end", state=run.state, reason=run.reason)
+            self._by_thread.pop(threading.get_ident(), None)
 
     # --- shared loop pieces -----------------------------------------------------------------------------------------
 
@@ -548,7 +731,10 @@ class Runtime:
         period = 1.0 / max(0.01, min(float(hz), 240.0))  # anything from every 100 s to 240 times a second
         next_t = time.perf_counter()
         deadline = run.started + run.max_s
+        slow = f"{run.kind} looks every {round(period * 1000)} ms" if period * 1000 >= FLOOR_MS / 2 else None
         while True:
+            if slow:
+                run.cadence.blocking(slow, period * 1000)
             if run.stop_evt.is_set():
                 raise _Stopped(run.stop_reason or "stopped on request")
             if time.perf_counter() >= deadline:
@@ -576,10 +762,25 @@ class Runtime:
             if not run.stop_evt.is_set():
                 sleep_until(wake)
 
+    def _looks(self, fn: Callable | None) -> Callable | None:
+        """A reader (OCR, the state inbox) whose every call counts as a fresh look for the run calling it."""
+        if fn is None:
+            return None
+
+        def read(*args, **kwargs):
+            out = fn(*args, **kwargs)
+            run = self._by_thread.get(threading.get_ident())
+            if run is not None:
+                run.cadence.observed(time.perf_counter())
+            return out
+        return read
+
     def _frame(self, run: Run, region):
         t0 = time.perf_counter()
         frame, captured = self.grab(region)
-        run._frame_ms.append((time.perf_counter() - t0) * 1000)
+        now = time.perf_counter()
+        run._frame_ms.append((now - t0) * 1000)
+        run.cadence.observed(now, captured)
         return frame, captured
 
     def _act(self, run: Run, do: dict) -> None:
@@ -624,7 +825,7 @@ class Runtime:
 
     def _run_watch(self, run: Run, p: dict) -> None:
         region, when = p.get("region"), p.get("when") or {}
-        hz = 1000.0 / max(10.0, float(p.get("every_ms", 100)))
+        hz = 1000.0 / max(10.0, float(p.get("every_ms", 50)))
         previous, was = None, False
         for _ in self._ticks(run, hz):
             frame, _captured = self._frame(run, region)
@@ -641,17 +842,21 @@ class Runtime:
         baseline = None
         if "change" in until:
             baseline, _ = self._frame(run, until.get("region"))
-        presses = 0
-        for _ in self._ticks(run, 1 / every):
+        presses, next_press = 0, time.perf_counter()
+        for _ in self._ticks(run, max(1 / every, 1000 / FLOOR_MS)):  # looks 20+ times a second, presses every `every`
             if self._condition(run, until, baseline):
                 run.reason = f"condition met after {presses} presses"
                 run.emit("done", presses=presses)
                 return
+            now = time.perf_counter()
+            if now < next_press - 0.005:
+                continue
             if presses >= max_presses:
                 raise _Stopped(f"gave up after {presses} presses")
             self._act(run, do)
             presses += 1
             run.stats["presses"] = presses
+            next_press = max(next_press + every, now + every * 0.5)
 
     def _condition(self, run: Run, until: dict, baseline, since: int = 0) -> bool:
         if "state" in until:
@@ -787,7 +992,7 @@ class Runtime:
         ready = False  # setup samples baselines: it runs on the first tick the game is running, not on a pause menu
         name = str(p.get("name") or when)[:60]
         repeat, cooldown = bool(p.get("repeat", False)), float(p.get("cooldown_ms", 3000)) / 1000
-        every = max(20.0, float(p.get("every_ms", 100)))
+        every = max(20.0, float(p.get("every_ms", 50)))
         last = -1e9
         run.stats["fired"] = 0
         for _ in self._ticks(run, 1000 / every, takeover_stops=False):
@@ -949,7 +1154,7 @@ class Runtime:
         baseline = self._frame(run, until.get("region"))[0] if until and "change" in until else None
         cursor = self.state_events("", 0)[1] if until and "state" in until and self.state_events else 0
         next_do = entered
-        for _ in self._ticks(run, 1 / every if not hold_s else 50):
+        for _ in self._ticks(run, max(1 / every, 1000 / FLOOR_MS) if not hold_s else 50):  # `do` keeps its schedule
             now = time.perf_counter()
             if hold_s is not None and now - entered >= hold_s:
                 return "next"
@@ -1149,7 +1354,7 @@ class Program:
                   "time": time, "numbers": self.numbers, "pixel_text": self.pixel_text, "grid_angle": self.grid_angle}
         if self.perception_only:  # guards watch; only their reflex program touches the controller
             return seeing
-        return {**seeing, "pad": self.pad, "press": self.press, "seq": self.seq, "release": self.release,
+        return {**seeing, "pad": self.pad, "press": self.press, "tap": self.tap, "seq": self.seq, "release": self.release,
                 "wait": self.wait, "until": self.until, "aim": self.aim, "guard": self.guard, "skill": self.skill,
                 "turn": lambda yaw=0.0, pitch=0.0, tol=1.0: self.cam().turn(yaw, pitch, tol),
                 "turn_open": lambda yaw=0.0, pitch=0.0: self.cam().turn_open(yaw, pitch),
@@ -1235,22 +1440,36 @@ class Program:
 
     def press(self, *buttons, ms: float = 80) -> None:
         self.check()
+        if ms >= FLOOR_MS / 2:
+            self.run.cadence.blocking(_where(f"press {ms:g} ms (tap() doesn't wait)"), float(ms) + 0.001)
         self._apply({**self.state, "buttons": list(self.state["buttons"]) + list(buttons)})
         try:
             self.wait(ms)
         finally:
             self._apply(self.state)
 
+    def tap(self, *buttons, ms: float = 60) -> None:
+        """Press buttons on top of the held state and let them go after ms, without waiting (keep looking)."""
+        self.check()
+        self.run.used.add("hold")
+        self.rt.out.tap(list(buttons), float(ms))
+        self.run.stats["actions"] += 1
+
     def seq(self, steps: list) -> None:
         """Timed gamepad_sequence steps (runs to the end), then back to the held state."""
         self.check()
         self.run.used.add("hold")
+        total = sum(max(0, int(st.get("ms", 100))) for st in steps if isinstance(st, dict))
+        if total >= FLOOR_MS / 2:
+            self.run.cadence.blocking(_where(f"seq {total} ms"), float(total))
         self.rt.out.seq(steps)
         self._apply(self.state)
 
     # --- time -----------------------------------------------------------------------------------------------------
 
     def wait(self, ms: float) -> None:
+        if ms >= FLOOR_MS / 2:
+            self.run.cadence.blocking(_where(f"wait {float(ms):g} ms"), float(ms))
         end = time.perf_counter() + max(0.0, float(ms)) / 1000
         while True:
             self.check()
@@ -1365,7 +1584,7 @@ class Program:
 
 
 Program.NAMES = {"elapsed", "frame", "diff", "text", "sees", "color", "track", "shift", "log", "W", "H", "CX", "CY",
-                 "np", "math", "time", "numbers", "pixel_text", "grid_angle", "pad", "press", "seq", "release", "wait", "until", "aim", "guard", "skill",
+                 "np", "math", "time", "numbers", "pixel_text", "grid_angle", "pad", "press", "tap", "seq", "release", "wait", "until", "aim", "guard", "skill",
                  "turn", "level", "look_at", "scan", "look_rate", "camera", "set_pitch", "turn_open"}
 
 

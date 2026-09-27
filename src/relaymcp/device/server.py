@@ -61,13 +61,17 @@ PS = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ps")  # the persisten
 
 
 class _BehaviorOutputs:
-    """What behaviors may do: short presses, mouse moves, clicks at the cursor, stick positions; and release it all."""
+    """What behaviors may do: short presses (taps that don't wait), mouse moves, clicks at the cursor, stick positions;
+    and release it all."""
 
     def key(self, keys):
         win_input.key_press(keys, 40, 1, 0)
 
     def pad(self, buttons):
-        gamepad.PAD.run_steps([{"buttons": buttons, "ms": 60}])
+        gamepad.PAD.tap(buttons, 60)  # doesn't wait: the behavior keeps looking while the button is down
+
+    def tap(self, buttons, ms=60):
+        gamepad.PAD.tap(buttons, ms)
 
     def click(self):
         x, y = capture.cursor_pos() or (None, None)

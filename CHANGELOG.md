@@ -5,6 +5,16 @@
 Faster, leaner and real-time capable: most of the work moves from model round trips to the
 handheld itself.
 
+- **The 20 fps floor for agentic control, measured on every run:** whatever acts for the agent must act on a look
+  under 50 ms old, at every input change and all the time an input is held. Behavior results carry `cadence`
+  (`worst_ms`, `p95_ms`, `over_50ms`, `worst_at`: the program line and call that went blind, such as a `wait()` or
+  `turn_open` with the stick held). Frame, text (OCR) and state-inbox reads count as looks; idle time with nothing
+  held doesn't. Presses no longer block what issues them: the new program call `tap("a", ms=60)` and every
+  behavior's pad press go down on top of what is held and let go on their own (a 1 ms release timer), so a 120 Hz
+  `react` loop keeps looking while a button is down, and a press no longer drops a stick another behavior holds
+  (the old path returned the whole pad to neutral). `guard` and `watch` now look every 50 ms (was 100), and
+  `script` and `press_until` check their conditions 20+ times a second while their actions keep their schedule
+  (they only looked when acting: 4 and 2.5 times a second).
 - **Focus stealers are caught and undone:** input results name invisible windows that hold focus (like ASUS'
   AsHotplugCtrl) instead of reporting success. The hardware server watches the foreground and, when a pop-up or an
   invisible helper takes focus, gives it back to the last app window before sending input, even with no input

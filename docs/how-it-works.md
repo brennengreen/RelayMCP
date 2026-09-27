@@ -108,6 +108,13 @@ unknown *plant* with a camera: nothing below is specific to one game.
    while one plays (`params.after`: it starts the moment that one finishes, and is dropped if it fails), and a
    running one can be replaced mid-move without letting go of what it holds (`params.replace`), so play doesn't
    stall for a model round trip between chunks.
+   **The 20 fps floor:** whatever acts for the agent must act on a fresh look. At every input change, and all the
+   time an input is held, the latest observation (a frame, text or state read) must be under 50 ms old. Every run
+   measures this and reports `cadence` (`worst_ms`, `p95_ms`, `over_50ms`, and `worst_at`: the program line and
+   call that went blind, e.g. `line 42 in aim: turn_open wait 961 ms`). Taps don't block (`tap()`, and behaviors'
+   presses go down on top of what is held and let go by themselves), and the slower loops (`guard`, `watch`,
+   `script`, `press_until`) check their conditions at least 20 times a second while their actions keep their own
+   schedule. Idle time with nothing held doesn't count.
 3. **Identify the plant once.** `behavior` kind `calibrate` (about 20-30 s, once per game) probes the look stick
    and learns which pixels are HUD, the focal length, the response curve and deadzone (slow to fast), the
    input-to-picture latency, the ramp up and how far it coasts after letting go, pixels per degree (it turns all

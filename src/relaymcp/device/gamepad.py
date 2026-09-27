@@ -218,6 +218,11 @@ class VirtualPad:
         self.primed = False
         self.reprimes = 0
         self._pad_tick: int | None = None  # when the pad last sent anything (Windows ticks)
+        # what is held (hold/stick), and taps pressed on top of it until their release time (tap)
+        self._held: tuple = (0, (0.0, 0.0), (0.0, 0.0), 0.0, 0.0)
+        self._taps: dict = {}  # button bit, "lt" or "rt" -> release time (time.perf_counter)
+        self._tap_wake = threading.Event()
+        self._tap_thread: threading.Thread | None = None
 
     def _ensure(self):
         if self._pad is None:
@@ -376,6 +381,7 @@ class VirtualPad:
             except Exception:
                 pass
             pad, self._pad = self._pad, None
+            self._held, self._taps = (0, (0.0, 0.0), (0.0, 0.0), 0.0, 0.0), {}
             del pad  # vgamepad unplugs the target in __del__
             import gc
             gc.collect()
@@ -410,31 +416,92 @@ class VirtualPad:
         pad.update()
         self._pad_tick = _tick_now()
 
+    def _apply_held(self) -> None:
+        """What is held, with the taps still down on top of it."""
+        mask, left, right, lt, rt = self._held
+        for k in self._taps:
+            if k == "lt":
+                lt = 1.0
+            elif k == "rt":
+                rt = 1.0
+            else:
+                mask |= k
+        self._apply(mask, left, right, lt, rt)
+
     def stick(self, side: str, x: float, y: float) -> None:
         """Hold one stick where it is told (behaviors steer with this); the rest of the pad stays neutral."""
         with self._lock:
             self._ensure()
             self._maybe_reprime()
-            left = (x, y) if side == "left_stick" else (0.0, 0.0)
-            right = (x, y) if side == "right_stick" else (0.0, 0.0)
-            self._apply(0, left, right, 0.0, 0.0)
+            left = (float(x), float(y)) if side == "left_stick" else (0.0, 0.0)
+            right = (float(x), float(y)) if side == "right_stick" else (0.0, 0.0)
+            self._held = (0, left, right, 0.0, 0.0)
+            self._apply_held()
             self._touch()
 
     def hold(self, state: dict) -> None:
         """Keep a controller state ({"buttons", "left_stick", "right_stick", "left_trigger", "right_trigger"}) until
-        told otherwise (neutral(), a sequence, or another hold)."""
+        told otherwise (neutral(), a sequence, or another hold). Taps still down stay down on top of it."""
         mask, lt, rt = _normalize(state.get("buttons"))
         ls = state.get("left_stick") or [0, 0]
         rs = state.get("right_stick") or [0, 0]
         with self._lock:
             self._ensure()
             self._maybe_reprime()
-            self._apply(mask, (float(ls[0]), float(ls[1])), (float(rs[0]), float(rs[1])),
-                        max(lt, float(state.get("left_trigger", 0) or 0)), max(rt, float(state.get("right_trigger", 0) or 0)))
+            self._held = (mask, (float(ls[0]), float(ls[1])), (float(rs[0]), float(rs[1])),
+                          max(lt, float(state.get("left_trigger", 0) or 0)),
+                          max(rt, float(state.get("right_trigger", 0) or 0)))
+            self._apply_held()
             self._touch()
+
+    def tap(self, buttons: list[str], ms: float = 60.0) -> None:
+        """Press buttons on top of what is held and let them go after ms, without waiting: the caller keeps looking
+        and deciding while they are down (agentic control needs a fresh look at least every 50 ms). A hold or stick
+        change meanwhile keeps them down; a sequence or neutral() ends them."""
+        mask, lt, rt = _normalize(buttons)
+        keys = [bit for bit in BUTTON_BITS.values() if mask & bit] + (["lt"] if lt else []) + (["rt"] if rt else [])
+        if not keys:
+            return
+        until = time.perf_counter() + max(0.0, float(ms)) / 1000
+        with self._lock:
+            self._ensure()
+            self._maybe_reprime()
+            for k in keys:
+                self._taps[k] = max(self._taps.get(k, 0.0), until)
+            self._apply_held()
+            self._touch()
+            if self._tap_thread is None or not self._tap_thread.is_alive():
+                self._tap_thread = threading.Thread(target=self._release_taps, name="pad-taps", daemon=True)
+                self._tap_thread.start()
+        self._tap_wake.set()
+
+    def _release_taps(self) -> None:
+        """Let each tap go at its time (1 ms timer while any is down)."""
+        from .timing import HiResTimer, sleep_until
+        while True:
+            with self._lock:
+                due = min(self._taps.values()) if self._taps else None
+            if due is None:
+                self._tap_wake.wait()
+                self._tap_wake.clear()
+                continue
+            with HiResTimer():
+                left = due - time.perf_counter()
+                if left > 0.003 and self._tap_wake.wait(left - 0.002):
+                    self._tap_wake.clear()  # a new tap: it may be due sooner
+                    continue
+                sleep_until(due)
+            with self._lock:
+                now = time.perf_counter() + 0.0005
+                gone = [k for k, t in self._taps.items() if t <= now]
+                for k in gone:
+                    del self._taps[k]
+                if gone and self._pad is not None:
+                    self._apply_held()
 
     def neutral(self) -> None:
         with self._lock:
+            self._held, self._taps = (0, (0.0, 0.0), (0.0, 0.0), 0.0, 0.0), {}
             if self._pad is not None:
                 self._apply(0, (0, 0), (0, 0), 0, 0)
 
@@ -486,6 +553,7 @@ class VirtualPad:
             try:
                 late = self._play(parsed)
             finally:
+                self._held, self._taps = (0, (0.0, 0.0), (0.0, 0.0), 0.0, 0.0), {}
                 self._apply(0, (0, 0), (0, 0), 0, 0)
                 self._touch()
         result = {"steps": len(parsed), "total_ms": total, "xinput_slot": self.index()}
