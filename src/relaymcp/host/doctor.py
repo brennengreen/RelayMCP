@@ -77,13 +77,14 @@ def runtime_check(local_hash: str, local_version: str, remote: dict | None) -> C
     """Is the handheld running the device runtime this computer would deploy? (The kit's zip is deterministic, so
     equal hashes mean identical code.)"""
     remote = remote or {}
-    rh, rv = (remote.get("hash") or "").strip().lower(), remote.get("version") or "?"
+    rh = (remote.get("hash") or "").strip().lower()
     if not rh:
         return Check("Device runtime", False, "unknown (no deployed build recorded on the handheld)", "run `relaymcp setup`")
     if rh == local_hash.lower():  # identical code, so the same version (device.json's is only rewritten by setup)
         return Check("Device runtime", True, f"up to date ({local_version}, build {rh[:8]})")
-    return Check("Device runtime", False, f"outdated: the handheld runs {rv} (build {rh[:8]}), this computer has "
-                 f"{local_version} (build {local_hash[:8]})", "run `relaymcp setup` (or `relaymcp deploy`)")
+    # (No version here: device.json's is only rewritten by setup, so after a deploy it names an older release.)
+    return Check("Device runtime", False, f"outdated: the handheld runs build {rh[:8]}, this computer has "
+                 f"{local_version} (build {local_hash[:8]})", "run `relaymcp deploy` (or `relaymcp setup`)")
 
 
 def run_checks(cfg: dict, deep: bool = True) -> list[Check]:

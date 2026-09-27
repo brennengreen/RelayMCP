@@ -32,5 +32,5 @@ def test_runtime_check():
     # `relaymcp deploy` doesn't rewrite device.json's version; identical builds are the same version
     assert "0.1.1" in runtime_check("abc123", "0.1.1", {"hash": "abc123", "version": "0.1.0"}).detail
     stale = runtime_check("abc123", "0.1.1", {"hash": "fff000", "version": "0.1.0"})
-    assert not stale.ok and "0.1.0" in stale.detail and "relaymcp setup" in stale.fix
+    assert not stale.ok and "fff000" in stale.detail and "0.1.0" not in stale.detail and "relaymcp deploy" in stale.fix
     assert not runtime_check("abc", "0.1.1", {}).ok

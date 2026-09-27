@@ -36,7 +36,7 @@ from mcp.types import ImageContent, TextContent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import (__version__, audio, behave, capture, focus, gamepad, inbox, lean, ocr, procs, pshost, speech, system,
+from . import (__version__, audio, behave, capture, control, focus, gamepad, inbox, lean, ocr, procs, pshost, speech, system,
                tts, turns, updates, voice, win_input)
 from .lean import compact, lean_result, lean_schema
 from .paths import USER_DIR, VOICE_HEADER, device_settings
@@ -131,6 +131,8 @@ BEHAVIORS = behave.Runtime(
     state_events=lambda topic, since: (lambda r: (r["events"], r["cursor"]))(inbox.INBOX.read(topic, since, 200)),
     on_start=lambda run: (focus.before_input(), TURNS.begin()),  # a paused game must be in front to resume
     on_end=lambda run: TURNS.end(),
+    profiles=control.ProfileStore(USER_DIR / "profiles"),
+    app=lambda: (focus.foreground() or {}).get("process") or "unknown",
 )
 
 
@@ -396,8 +398,9 @@ def build_server(port: int, record_tools: bool = False, upgraded: bool = False) 
                        max_s: float = 30.0) -> dict:
         """Real-time loops on the handheld (react in tens of ms, no model round trips). action: start (kind, params,
         max_s) -> id | status (id, since) | stop (id or all) | kinds (their params): react, track, press_until,
-        navigate, watch, script, program (Python at frame rate, for real-time play). params.wait = return when
-        done. A real controller moving stops them."""
+        navigate, watch, script, program (Python at frame rate, for real-time play), calibrate (learn a game's
+        camera once; then programs turn in degrees). params.wait = return when done. A real controller moving stops
+        them."""
         out = await _run(PROC, behave.run_tool, BEHAVIORS, action, kind, params, id, since, max_s)
         return with_game_state(out) if action == "start" and (params or {}).get("wait") else out
 

@@ -35,6 +35,7 @@ def test_device_zip_is_deterministic_and_installable(relay_home):
     assert "relaymcp/device/agent.py" in names and "relaymcp/device/setup/Relay-Setup.ps1" in names
     assert "relaymcp/device/assets/ask-copilot.ico" in names
     assert not [n for n in names if "__pycache__" in n or n.endswith(".pyc")]
+    assert not [n for n in names if n.startswith("relaymcp/host/")]  # host changes don't change the device build
     pyproject = zipfile.ZipFile(io.BytesIO(a)).read("pyproject.toml").decode()
     assert 'name = "relaymcp-device"' in pyproject and '"faster-whisper' in pyproject
     assert 'relaymcp-ask = "relaymcp.device.launcher:main"' in pyproject

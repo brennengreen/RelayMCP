@@ -59,7 +59,16 @@ KINDS = {
                'region (phase correlation; crop away the HUD), e.g. to calibrate camera turns. '
                'guard(fn, "hurt"): checked during every wait, stops the program when fn() is truthy. log(msg, **data) '
                '-> an event; result = {...} is returned. Also W, H, CX, CY, np, math. Everything held is released '
-               'when it ends; a stop request, max_s or a real controller moving ends it.',
+               'when it ends; a stop request, max_s or a real controller moving ends it. Camera skills, in degrees, '
+               'for an app that was calibrated (kind calibrate): turn(yaw=0, pitch=0) right/up +, closed on visual '
+               'odometry; level(pitch=0); look_at(x, y): put a screen point under the crosshair; scan(score_fn, '
+               'degrees=360): turn round calling score_fn(frame), end facing the best view -> {"heading", "score"}; '
+               'look_rate(yaw_dps, pitch_dps): hold a turn rate (walk and turn); camera: the profile summary.',
+    "calibrate": 'learn the camera controls of the app in front, once per app (~30 s: pass max_s 90; somewhere safe '
+                 'with a textured view, in the gameplay view): which pixels are HUD, input latency, acceleration, the '
+                 'right stick\'s deadzone and response curve, degrees per pixel (turns all the way round), focal '
+                 'length, vertical gain and pitch limit. Saved on the handheld; programs then get turn/level/look_at/'
+                 'scan. params: points (deflections to measure), full_turn (true), pitch (true).',
 }
 
 
@@ -280,8 +289,10 @@ class Runtime:
 
     def __init__(self, grab: Callable, outputs, takeover: Callable | None = None, read_text: Callable | None = None,
                  cursor: Callable | None = None, state_events: Callable | None = None,
-                 on_start: Callable | None = None, on_end: Callable | None = None):
+                 on_start: Callable | None = None, on_end: Callable | None = None,
+                 profiles=None, app: Callable | None = None):
         self.grab, self.out = grab, outputs
+        self.profiles, self.app = profiles, app  # camera calibrations (control.ProfileStore) by foreground app
         self.on_start, self.on_end = on_start, on_end  # e.g. resume a paused game, and pause it again (turns.py)
         self.takeover = takeover or (lambda: None)
         self.read_text = read_text
@@ -546,6 +557,39 @@ class Runtime:
                 run.stats["min_deflection"] = round(steer.nudge, 2)
             run.stats["actions"] += 1
 
+    def _run_calibrate(self, run: Run, p: dict) -> None:
+        from . import control
+        if self.profiles is None or self.app is None:
+            raise RuntimeError("calibration needs a profile store")
+        app = self.app() or "unknown"
+        deadline = run.started + run.max_s
+
+        def sleep(seconds: float) -> None:
+            end = time.perf_counter() + seconds
+            while True:
+                if run.stop_evt.is_set():
+                    raise _Stopped("stopped on request")
+                if time.perf_counter() >= deadline:
+                    raise _Stopped(f"time limit ({run.max_s:g} s): calibration takes ~30 s, pass max_s 90")
+                who = self.takeover()
+                if who:
+                    raise _Stopped(f"you took over ({who})")
+                left = end - time.perf_counter()
+                if left <= 0:
+                    return
+                time.sleep(min(left, 0.02))
+
+        run.used.add("stick")
+        io = control.PlantIO(frame=lambda: self._frame(run, None)[0],
+                             stick=lambda x, y: self.out.stick("right_stick", x, y), sleep=sleep,
+                             log=lambda msg, **data: run.emit(msg, **data))
+        points = tuple(p.get("points") or (0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.6, 0.7, 0.85, 1.0))
+        profile = control.calibrate(io, points=points, hold_s=float(p.get("hold_s", 0.5)),
+                                    full_turn=bool(p.get("full_turn", True)), pitch=bool(p.get("pitch", True)), app=app)
+        self.profiles.save(app, profile)
+        run.stats["profile"] = control.summary(profile)
+        run.reason = f"saved the camera profile for {app}"
+
     def _run_program(self, run: Run, p: dict) -> None:
         code = str(p.get("code") or "")
         if not code.strip():
@@ -763,6 +807,26 @@ class Program:
         self._guarding = False
         frame0, _ = rt._frame(run, None)
         self.h, self.w = frame0.shape[:2]
+        self.app = (rt.app() if rt.app else None) or "unknown"
+        self.profile = rt.profiles.load(self.app) if rt.profiles is not None else None
+        self._camera = None
+
+    def cam(self):
+        """The calibrated camera of the app in front (control.Camera), driving the right stick; the held state
+        (left stick, buttons) stays as it is, so it can walk and turn."""
+        from . import control
+        if self._camera is None:
+            if not self.profile:
+                raise RuntimeError(f"no camera profile for {self.app}: run behavior kind calibrate once (max_s 90)")
+            io = control.PlantIO(frame=self.frame,
+                                 stick=lambda x, y: self._apply({**self.state, "right_stick": [x, y]}),
+                                 sleep=lambda seconds: self.wait(seconds * 1000), log=self.log)
+            self._camera = control.Camera(io, self.profile)
+        return self._camera
+
+    def look_rate(self, yaw_dps: float = 0.0, pitch_dps: float = 0.0) -> None:
+        self.state = {**self.state, "right_stick": list(self.cam().rates(yaw_dps, pitch_dps))}
+        self._apply(self.state)
 
     def namespace(self) -> dict:
         import math
@@ -771,7 +835,16 @@ class Program:
                 "text": self.text, "sees": self.sees, "color": self.color, "aim": self.aim, "track": self.track,
                 "shift": phase_shift, "guard": self.guard,
                 "log": self.log, "W": self.w, "H": self.h, "CX": self.w // 2, "CY": self.h // 2, "np": _np(),
-                "math": math, "time": time}
+                "math": math, "time": time,
+                "turn": lambda yaw=0.0, pitch=0.0, tol=1.0: self.cam().turn(yaw, pitch, tol),
+                "level": lambda pitch=0.0: self.cam().level(pitch),
+                "look_at": lambda x, y: self.cam().look_at(x, y),
+                "scan": lambda score, degrees=360.0: self.cam().scan(score, degrees),
+                "look_rate": self.look_rate, "camera": self._summary()}
+
+    def _summary(self):
+        from . import control
+        return control.summary(self.profile) if self.profile else None
 
     # --- limits ---------------------------------------------------------------------------------------------------
 
@@ -890,8 +963,11 @@ class Program:
         return Tracker()
 
     def aim(self, x: float, y: float, within: float = 24, timeout: float = 3.0, until: Callable | None = None,
-            size: int = 120, gain: float = 0.8, min_deflection: float = 0.22, full_deflection_px: float = 500,
+            size: int = 120, gain: float = 0.8, min_deflection: float | None = None, full_deflection_px: float = 500,
             min_score: float = 0.45, hz: float = 30) -> dict:
+        if min_deflection is None:  # just past the calibrated deadzone, if this app was calibrated
+            dz = ((self.profile or {}).get("look") or {}).get("deadzone")
+            min_deflection = min(0.8, dz + 0.05) if dz else 0.22
         aimer = Aimer(self.frame(), (x, y), size)
         steer = Steer(full_deflection_px, gain, within, min_deflection)
         end = time.perf_counter() + float(timeout)
