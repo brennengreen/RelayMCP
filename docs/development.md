@@ -40,6 +40,7 @@ setup skips the reinstall when nothing changed.
 ```sh
 git clone https://github.com/brennengreen/RelayMCP && cd RelayMCP
 uv venv && uv pip install -e ".[dev]"
+. scripts/dev-env.sh        # dev mode: this checkout's relaymcp, its own home, can't touch the real install
 .venv/bin/pytest            # unit tests
 .venv/bin/ruff check src tests
 ```

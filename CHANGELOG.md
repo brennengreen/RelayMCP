@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.1 (2026-09-26)
+
+Input reliability, from real use driving Minecraft Bedrock on a ROG Ally.
+
+- **Input lands in the game:** when the virtual gamepad plugs in, Armoury Crate's notice took the foreground and input
+  was silently dropped. RelayMCP now puts the game back in front after closing the notice.
+- **`focus_window`** brings a window to the front past Windows' foreground lock and reports what *really* has focus.
+  With `remember`, input tools refocus that window if something steals focus.
+- **Every input result** (gamepad, touch, keys, mouse) carries a compact `foreground` report, plus a warning when input
+  probably went nowhere.
+- **`gamepad_connect`** plugs the pad in ahead of time and waits until Windows sees it. The pad no longer unplugs
+  mid-game: the idle timeout is 30 min by default (`gamepad_idle_minutes` in device.json, 0 = never), and it's never
+  applied while a fullscreen game or the input target is in front.
+- **`relaymcp doctor`** checks that the handheld runs the same device build as this computer.
+- **`relaymcp exec --file script.ps1`** (or `-` for stdin) runs a whole script with arguments, with no quoting
+  trouble.
+- **Dev mode** (`scripts/dev-env.sh`): a development checkout can't touch the real installation.
+
 ## 0.1.0 (2026-09-26)
 
 First release.

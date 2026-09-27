@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import urllib.request
 from dataclasses import dataclass
 
-from . import agents, config, daemon, services, sshconf, ui
+import relaymcp
+
+from . import agents, config, daemon, kit, services, sshconf, ui
 
 _NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -47,6 +50,8 @@ $u = Join-Path $env:LOCALAPPDATA 'RelayMCP'; $m = Join-Path $env:ProgramData 'Re
 $o = [ordered]@{ computer = $env:COMPUTERNAME; state = [string](Get-Content (Join-Path $m 'state.txt') -ErrorAction SilentlyContinue | Select-Object -First 1) }
 try { $o.agent = Get-Content (Join-Path $u 'agent-status.json') -Raw | ConvertFrom-Json } catch { $o.agent = $null }
 $t = Get-ScheduledTask -TaskName 'RelayMCP-Agent' -ErrorAction SilentlyContinue; $o.agent_task = if ($t) { [string]$t.State } else { 'missing' }
+$dj = $null; try { $dj = Get-Content (Join-Path $m 'device.json') -Raw -ErrorAction Stop | ConvertFrom-Json } catch { }
+$o.runtime = [ordered]@{ hash = [string](Get-Content (Join-Path $m 'relaymcp-device.sha256') -ErrorAction SilentlyContinue | Select-Object -First 1); version = [string]$dj.version }
 try { $o.defender_detections_24h = @(Get-MpThreatDetection | Where-Object { $_.InitialDetectionTime -gt (Get-Date).AddDays(-1) -and (($_.Resources -join ' ') -match 'relaymcp|windows_mcp') }).Count } catch { }
 $o | ConvertTo-Json -Depth 5 -Compress
 """
@@ -65,6 +70,19 @@ def device_probe(cfg: dict) -> dict | None:
             except ValueError:
                 return None
     return None
+
+
+def runtime_check(local_hash: str, local_version: str, remote: dict | None) -> Check:
+    """Is the handheld running the device runtime this computer would deploy? (The kit's zip is deterministic, so
+    equal hashes mean identical code.)"""
+    remote = remote or {}
+    rh, rv = (remote.get("hash") or "").strip().lower(), remote.get("version") or "?"
+    if not rh:
+        return Check("Device runtime", False, "unknown (no deployed build recorded on the handheld)", "run `relaymcp setup`")
+    if rh == local_hash.lower():
+        return Check("Device runtime", True, f"up to date ({rv}, build {rh[:8]})")
+    return Check("Device runtime", False, f"outdated: the handheld runs {rv} (build {rh[:8]}), this computer has "
+                 f"{local_version} (build {local_hash[:8]})", "run `relaymcp setup` (or `relaymcp deploy`)")
 
 
 def run_checks(cfg: dict, deep: bool = True) -> list[Check]:
@@ -123,6 +141,11 @@ def run_checks(cfg: dict, deep: bool = True) -> list[Check]:
         detail = ", ".join(f"{k} {'up' if v.get('running') else 'down'} (restarts {v.get('restarts', 0)})"
                            for k, v in svcs.items()) or f"task {probe.get('agent_task')}"
         checks.append(Check("Device agent", good, detail, "tap 'Repair RelayMCP' on the handheld"))
+        try:
+            local = hashlib.sha256(kit.build_device_zip()).hexdigest()
+            checks.append(runtime_check(local, relaymcp.__version__, probe.get("runtime")))
+        except Exception as e:
+            checks.append(Check("Device runtime", False, f"couldn't compare builds: {e}", optional=True))
         if agent.get("keep_awake"):
             checks.append(Check("Keep-awake", True, agent["keep_awake"], optional=True))
         det = probe.get("defender_detections_24h")

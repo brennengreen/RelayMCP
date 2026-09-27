@@ -56,10 +56,13 @@ Written by setup; read by the device runtime.
   "host_label": "your Mac",
   "version": "0.1.0",
   "ports": {"screen": 8765, "hardware": 8767, "voice": 8768},
+  "gamepad_idle_minutes": 30,
   "vocabulary": "Copilot, ROG Ally, Minecraft, Steam"
 }
 ```
 
+`gamepad_idle_minutes` (optional) is how long the virtual controller stays plugged in without use (default 30,
+0 = until `gamepad_unplug`). It never unplugs while a fullscreen game or the `focus_window` target is in front.
 `vocabulary` (optional, add it by hand) biases speech recognition toward names you use. Setup updates the managed keys
 and keeps any you added.
 

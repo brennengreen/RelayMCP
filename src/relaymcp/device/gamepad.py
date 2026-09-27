@@ -1,7 +1,9 @@
 """Gamepad: a virtual Xbox 360 controller (ViGEmBus via vgamepad) plus XInput reads/rumble of physical controllers.
 
-The virtual controller is plugged in on first use and unplugged automatically after IDLE_SECONDS without use,
-so it never lingers as a phantom second controller in the user's games.
+The virtual controller plugs in on first use (or ahead of time with connect()). It unplugs itself after the configured
+idle time (device.json "gamepad_idle_minutes", default 30; 0 = never), but never while a fullscreen game or the
+remembered input target is in front, and never when it was connected with keep_plugged. Re-plugging mid-game makes
+games drop or re-assign the controller, and Armoury Crate's notice steals focus.
 """
 
 from __future__ import annotations
@@ -11,18 +13,21 @@ import threading
 import time
 from ctypes import wintypes
 
-IDLE_SECONDS = 300
+DEFAULT_IDLE_MINUTES = 30
 MAX_SEQUENCE_MS = 60000
 NOTICE_WAIT_SECONDS = 4.0
 NOTICE_TITLE_FRAGMENT = "GamepadCustomizeExtCtrlr"  # Armoury Crate's "External controller connected" notice
-from .paths import DISMISS_TASK  # noqa: E402
+from . import focus  # noqa: E402
+from .paths import DISMISS_TASK, device_settings  # noqa: E402
 CREATE_NO_WINDOW = 0x08000000
 
-_user32 = ctypes.WinDLL("user32", use_last_error=True)
-_WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-_user32.EnumWindows.argtypes = [_WNDENUMPROC, wintypes.LPARAM]
-_user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
-_user32.IsWindowVisible.argtypes = [wintypes.HWND]
+_WIN = hasattr(ctypes, "WinDLL")  # the pure helpers below also import (and get tested) off Windows
+_user32 = ctypes.WinDLL("user32", use_last_error=True) if _WIN else None
+_WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM) if _WIN else None
+if _WIN:
+    _user32.EnumWindows.argtypes = [_WNDENUMPROC, wintypes.LPARAM]
+    _user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    _user32.IsWindowVisible.argtypes = [wintypes.HWND]
 
 
 def _armoury_notice_windows() -> list[int]:
@@ -38,6 +43,19 @@ def _armoury_notice_windows() -> list[int]:
 
     _user32.EnumWindows(_WNDENUMPROC(cb), 0)
     return found
+
+
+def idle_limit_s() -> float | None:
+    """Seconds of inactivity before the virtual pad unplugs itself, or None for never."""
+    try:
+        minutes = float(device_settings().get("gamepad_idle_minutes", DEFAULT_IDLE_MINUTES))
+    except (TypeError, ValueError):
+        minutes = DEFAULT_IDLE_MINUTES
+    return None if minutes <= 0 else minutes * 60
+
+
+def should_unplug(idle_s: float, limit_s: float | None, pinned: bool, game_in_front: bool) -> bool:
+    return not pinned and limit_s is not None and idle_s >= limit_s - 1 and not game_in_front
 
 
 def _armoury_crate_running() -> bool:
@@ -57,9 +75,9 @@ def dismiss_armoury_notice(wait_seconds: float = 0.0) -> str | None:
         if _armoury_notice_windows():
             appeared = time.monotonic() - start
             import subprocess
-            subprocess.run(["schtasks.exe", "/Run", "/TN", DISMISS_TASK], capture_output=True, timeout=15,
+            subprocess.run(["schtasks.exe", "/Run", "/TN", DISMISS_TASK], capture_output=True, timeout=8,
                            creationflags=CREATE_NO_WINDOW)
-            for _ in range(60):
+            for _ in range(30):
                 time.sleep(0.1)
                 if not _armoury_notice_windows():
                     return f"dismissed Armoury Crate's external-controller notice (appeared after {appeared:.1f}s)"
@@ -123,6 +141,9 @@ class VirtualPad:
         self._watcher: threading.Thread | None = None
         self.last_rumble: dict | None = None
         self.last_notice: str | None = None
+        self.last_focus_restore: dict | None = None
+        self.pinned = False
+        self.plugged_at: float | None = None
 
     def _ensure(self):
         if self._pad is None:
@@ -130,28 +151,48 @@ class VirtualPad:
                 import vgamepad as vg
             except Exception as e:  # driver missing or DLL load failure
                 raise RuntimeError(f"Virtual gamepad unavailable (is the ViGEmBus driver installed?): {e}") from e
+            before = focus.foreground_hwnd()  # the game, usually; put back in front after Armoury Crate's notice
             self._vg = vg
             self._pad = vg.VX360Gamepad()
+            self.plugged_at = time.monotonic()
             try:
                 self._pad.register_notification(callback_function=self._on_notification)
             except Exception:
                 pass
-            # Armoury Crate asks whether to disable the built-in controller (default: yes) when a controller plugs in.
-            # Close that notice before sending any input, and keep watching for it while the pad is plugged in.
-            notice = dismiss_armoury_notice(NOTICE_WAIT_SECONDS if _armoury_crate_running() else 0.5)
-            self.last_notice = notice
-            time.sleep(0.3)
-            self._watcher = threading.Thread(target=self._watch_notice, daemon=True)
+            self._wait_ready(1.0)
+            # Armoury Crate asks whether to disable the built-in controller (default: yes) when a controller plugs in,
+            # and its notice takes focus. Close it (without choosing) before sending any input, give focus back, and
+            # keep watching while the pad is plugged in.
+            self.last_notice = dismiss_armoury_notice(NOTICE_WAIT_SECONDS if _armoury_crate_running() else 0.3)
+            self.last_focus_restore = focus.restore(before)
+            self._watcher = threading.Thread(target=self._watch_notice, args=(before,), daemon=True)
             self._watcher.start()
         self._touch()
         return self._pad
 
-    def _watch_notice(self) -> None:
+    def _wait_ready(self, seconds: float) -> bool:
+        """Wait until XInput reports the new controller, so the first input isn't lost."""
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            try:
+                slot = int(self._pad.get_index())
+                if 0 <= slot < 4 and _xinput.XInputGetState(slot, ctypes.byref(XINPUT_STATE())) == 0:
+                    return True
+            except Exception:
+                pass
+            time.sleep(0.02)
+        return False
+
+    def _watch_notice(self, last_good: int | None) -> None:
         while self._pad is not None:
             try:
+                fg = focus.foreground()
+                if fg and (fg.get("process") or "").lower() not in focus.FOCUS_STEALERS and not fg.get("desktop"):
+                    last_good = fg["hwnd"]
                 result = dismiss_armoury_notice(0)
                 if result:
                     self.last_notice = result
+                    self.last_focus_restore = focus.restore(last_good)
             except Exception:
                 pass
             time.sleep(0.25)
@@ -162,22 +203,49 @@ class VirtualPad:
 
     def _touch(self) -> None:
         self._last_used = time.monotonic()
+        self._arm(idle_limit_s())
+
+    def _arm(self, seconds: float | None) -> None:
         if self._timer:
             self._timer.cancel()
-        self._timer = threading.Timer(IDLE_SECONDS, self._idle_check)
-        self._timer.daemon = True
-        self._timer.start()
+            self._timer = None
+        if seconds is not None:
+            self._timer = threading.Timer(max(1.0, seconds), self._idle_check)
+            self._timer.daemon = True
+            self._timer.start()
 
     def _idle_check(self) -> None:
         with self._lock:
-            if self._pad is not None and time.monotonic() - self._last_used >= IDLE_SECONDS - 1:
+            if self._pad is None:
+                return
+            limit = idle_limit_s()
+            idle = time.monotonic() - self._last_used
+            if should_unplug(idle, limit, self.pinned, focus.game_in_front()):
                 self.disconnect()
+            elif limit is not None:
+                self._arm(max(60.0, limit - idle))  # a game is in front (or it's kept plugged): check again later
+
+    def connect(self, keep_plugged: bool = True) -> dict:
+        """Plug in ahead of time (e.g. right after launching a game) so the first real press lands."""
+        with self._lock:
+            newly = self._pad is None
+            self._ensure()
+            self.pinned = bool(keep_plugged)
+        out = {"connected": True, "newly_plugged_in": newly, "xinput_slot": self.index(), "kept_plugged": self.pinned}
+        if newly:
+            out["ready_after_ms"] = round((time.monotonic() - (self.plugged_at or time.monotonic())) * 1000)
+            if self.last_notice:
+                out["armoury_crate"] = self.last_notice
+            if self.last_focus_restore:
+                out["focus_restored"] = self.last_focus_restore.get("ok")
+        return out
 
     def disconnect(self) -> bool:
         with self._lock:
             if self._timer:
                 self._timer.cancel()
                 self._timer = None
+            self.pinned = False
             if self._pad is None:
                 return False
             try:
@@ -248,6 +316,8 @@ class VirtualPad:
             result["plugged_in"] = True
             if self.last_notice:
                 result["armoury_crate"] = self.last_notice
+            if self.last_focus_restore:
+                result["focus_restored"] = self.last_focus_restore.get("ok")
         return result
 
 
@@ -274,13 +344,14 @@ class XINPUT_BATTERY_INFORMATION(ctypes.Structure):
     _fields_ = [("BatteryType", ctypes.c_ubyte), ("BatteryLevel", ctypes.c_ubyte)]
 
 
-_xinput = ctypes.WinDLL("xinput1_4")
-_xinput.XInputGetState.argtypes = [wintypes.DWORD, ctypes.POINTER(XINPUT_STATE)]
-_xinput.XInputGetState.restype = wintypes.DWORD
-_xinput.XInputSetState.argtypes = [wintypes.DWORD, ctypes.POINTER(XINPUT_VIBRATION)]
-_xinput.XInputSetState.restype = wintypes.DWORD
-_xinput.XInputGetBatteryInformation.argtypes = [wintypes.DWORD, ctypes.c_ubyte, ctypes.POINTER(XINPUT_BATTERY_INFORMATION)]
-_xinput.XInputGetBatteryInformation.restype = wintypes.DWORD
+_xinput = ctypes.WinDLL("xinput1_4") if _WIN else None
+if _WIN:
+    _xinput.XInputGetState.argtypes = [wintypes.DWORD, ctypes.POINTER(XINPUT_STATE)]
+    _xinput.XInputGetState.restype = wintypes.DWORD
+    _xinput.XInputSetState.argtypes = [wintypes.DWORD, ctypes.POINTER(XINPUT_VIBRATION)]
+    _xinput.XInputSetState.restype = wintypes.DWORD
+    _xinput.XInputGetBatteryInformation.argtypes = [wintypes.DWORD, ctypes.c_ubyte, ctypes.POINTER(XINPUT_BATTERY_INFORMATION)]
+    _xinput.XInputGetBatteryInformation.restype = wintypes.DWORD
 
 _BATTERY_TYPES = {0: "disconnected", 1: "wired", 2: "alkaline", 3: "nimh", 0xFF: "unknown"}
 _BATTERY_LEVELS = {0: "empty", 1: "low", 2: "medium", 3: "full"}

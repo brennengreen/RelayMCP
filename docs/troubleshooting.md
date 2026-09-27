@@ -37,11 +37,25 @@ The handheld treats the new network as "away". Either tap **Repair RelayMCP** on
 answer **Yes** to *trust this network as home*, or re-run `relaymcp setup` on your computer while it's on the new
 network (it records the new router), then `relaymcp setup` again to update the handheld.
 
+## Input doesn't reach the game
+
+Games only read input while their window is in front. Every input tool result has a `foreground` field that shows
+what was in front, plus a `warning` when the input probably went nowhere.
+
+- Call `focus_window("<game>")` once after launching the game. RelayMCP then brings it back in front before each
+  input, if something (like Armoury Crate's controller notice) took focus.
+- `gamepad_connect` plugs the virtual controller in ahead of time. It stays plugged while a game is in front, so games
+  don't lose it mid-session (`gamepad_idle_minutes` in `C:\ProgramData\RelayMCP\device.json`, default 30, 0 = never).
+- Windows' app switching can report success while another window keeps focus (the "foreground lock");
+  `focus_window` verifies the result instead.
+
 ## MCP servers don't respond, but SSH works
 
 - `relaymcp logs --device` shows `agent.log`, `hardware.out.log` and `windows-mcp.out.log`.
 - The agent restarts crashed servers by itself. `Device agent: … restarts N` in `relaymcp doctor` shows how often.
 - Tap **Repair RelayMCP** on the handheld, or run `relaymcp setup` (it updates the handheld over SSH).
+- `Device runtime: outdated` in `relaymcp doctor` means the handheld runs an older build than this computer would
+  deploy. Run `relaymcp setup` (or `relaymcp deploy`).
 
 ## Microsoft Defender
 

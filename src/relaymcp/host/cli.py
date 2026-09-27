@@ -10,9 +10,11 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -420,13 +422,46 @@ def cmd_deploy(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+INLINE_SCRIPT_LIMIT = 6000  # bytes; bigger scripts are copied over and run with -File (command lines max out at 32k)
+
+
+def script_command(text: str, args: list[str]) -> str:
+    """PowerShell that runs `text` as a script block with `args`. The script travels base64-encoded, so no shell or
+    PowerShell quoting can mangle it."""
+    b64 = base64.b64encode(text.encode("utf-8")).decode()
+    return (f"$__relay_src = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{b64}'))\n"
+            f"$__relay_args = @({kit.ps_list(args)})\n"
+            "& ([scriptblock]::Create($__relay_src)) @__relay_args")
+
+
+def run_script(cfg: dict, text: str, args: list[str], timeout: float) -> subprocess.CompletedProcess:
+    if len(text.encode("utf-8")) <= INLINE_SCRIPT_LIMIT:
+        return sshconf.powershell(cfg, script_command(text, args), timeout=timeout)
+    name = f"relaymcp-exec-{secrets.token_hex(4)}.ps1"
+    config.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    local = config.STATE_DIR / name
+    local.write_text(text, encoding="utf-8-sig")  # BOM: Windows PowerShell 5.1 reads BOM-less files as ANSI
+    try:
+        sshconf.powershell(cfg, "New-Item -ItemType Directory -Force -Path (Join-Path $env:USERPROFILE 'relaymcp-deploy') | Out-Null")
+        sshconf.copy_to(cfg, [local], "relaymcp-deploy")
+    finally:
+        local.unlink(missing_ok=True)
+    remote = (f"$__f = Join-Path $env:USERPROFILE 'relaymcp-deploy\\{name}'; $__a = @({kit.ps_list(args)}); "
+              "try { & $__f @__a } finally { Remove-Item $__f -ErrorAction SilentlyContinue }")
+    return sshconf.powershell(cfg, remote, timeout=timeout)
+
+
 def cmd_exec(args: argparse.Namespace) -> None:
     cfg = _need_config()
     parts = args.command[1:] if args.command[:1] == ["--"] else args.command
-    if not parts:
-        ui.fail('usage: relaymcp exec -- <PowerShell command>   e.g. relaymcp exec -- Get-Process pythonw')
+    if args.file:
+        text = sys.stdin.read() if args.file == "-" else Path(args.file).read_text(encoding="utf-8-sig")
+        out = run_script(cfg, text, parts, args.timeout)
+    elif parts:
+        out = sshconf.powershell(cfg, " ".join(parts), timeout=args.timeout)
+    else:
+        ui.fail("usage: relaymcp exec -- <PowerShell command>   or   relaymcp exec --file script.ps1 [-- args]")
         sys.exit(2)
-    out = sshconf.powershell(cfg, " ".join(parts), timeout=args.timeout)
     sys.stdout.write(out.stdout)
     sys.stderr.write(out.stderr)
     sys.exit(out.returncode)
@@ -546,9 +581,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--full", action="store_true", help="re-run the whole setup on the handheld instead")
     s.set_defaults(func=cmd_deploy)
 
-    s = sub.add_parser("exec", help="run a PowerShell command on the handheld")
-    s.add_argument("command", nargs=argparse.REMAINDER)
+    s = sub.add_parser("exec", help="run PowerShell on the handheld: a command, or a script with --file")
+    s.add_argument("-f", "--file", help="a .ps1 script to run ('-' reads it from stdin); words after -- are its arguments")
     s.add_argument("--timeout", type=float, default=300)
+    s.add_argument("command", nargs=argparse.REMAINDER)
     s.set_defaults(func=cmd_exec)
 
     s = sub.add_parser("ssh", help="open an SSH session to the handheld")

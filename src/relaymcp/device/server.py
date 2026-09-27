@@ -33,7 +33,7 @@ from mcp.server.fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import __version__, audio, gamepad, speech, system, tts, voice, win_input
+from . import __version__, audio, focus, gamepad, speech, system, tts, voice, win_input
 from .paths import USER_DIR, VOICE_HEADER, device_settings
 
 LOG_DIR = USER_DIR
@@ -59,6 +59,15 @@ def _in_worker(pool: ThreadPoolExecutor, fn, *args, **kwargs):
             gc.collect()
 
 
+def _focused(fn):
+    """Input goes to whatever is in front: refocus the remembered input target first, then report what had focus."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        pre = focus.before_input()
+        return focus.annotate(fn(*args, **kwargs), pre)
+    return wrapper
+
+
 async def _run(pool: ThreadPoolExecutor, fn, *args, **kwargs) -> Any:
     name = getattr(fn, "__name__", None) or getattr(getattr(fn, "func", None), "__name__", "call")
     start = time.monotonic()
@@ -78,9 +87,11 @@ there, act here.
 - Coordinates are physical screen pixels, the same as `{screen}` Screenshot coordinates. The UI can take 1-2 s to update
   after input; wait briefly before verifying with a screenshot. Keyboard input goes to the focused window, so tap/click
   the target first.
-- Gamepad tools drive a VIRTUAL Xbox controller that plugs in on first use and unplugs after 5 idle minutes; games see it
-  as a second controller. Plugging it in makes Armoury Crate ask whether to disable the built-in controller; the server
-  closes that notice automatically (without disabling anything) before sending input.
+- Input only reaches the window in front. After launching a game, call focus_window("<game>") once: input tools then
+  keep it in front and every input result reports `foreground` (and a warning if input probably went nowhere).
+- Gamepad tools drive a VIRTUAL Xbox controller (games see it as a second controller). gamepad_connect plugs it in
+  ahead of time; it stays plugged while a game is in front. When it plugs in, Armoury Crate asks whether to disable the
+  built-in controller; the server closes that notice (without disabling anything) and gives focus back.
   gamepad_status/gamepad_watch read the real controllers (slot 0 = the handheld's own, in gamepad mode).
 - touch_* tools inject real multi-touch (games' touch controls respond to these, unlike mouse clicks).
 - key_* tools send hardware scan codes (work in games); keep holds short. mouse_look moves the camera in games.
@@ -117,6 +128,7 @@ def build_server(port: int) -> FastMCP:
         out["controllers"] = [s for s in gamepad.xinput_states() if s["connected"]]
         out["virtual_gamepad"] = {"connected": gamepad.PAD.connected(), "xinput_slot": gamepad.PAD.index(),
                                   "idle_seconds": gamepad.PAD.idle_seconds()}
+        out["foreground"] = focus.short(focus.foreground(), focus.target())
         return out
 
     # ------------------------------------------------------------------------------------------ gamepad
@@ -129,7 +141,7 @@ def build_server(port: int) -> FastMCP:
             steps.append({"buttons": buttons, "ms": hold_ms})
             if i < repeat - 1:
                 steps.append({"ms": interval_ms})
-        return await _run(INPUT, gamepad.PAD.run_steps, steps)
+        return await _run(INPUT, _focused(gamepad.PAD.run_steps), steps)
 
     @mcp.tool()
     async def gamepad_hold(duration_ms: int = 500, buttons: list[str] | None = None, left_stick: list[float] | None = None,
@@ -138,14 +150,14 @@ def build_server(port: int) -> FastMCP:
         (y=1 is up/forward); triggers 0-1. Example: walk forward 2s = left_stick [0, 1], duration_ms 2000."""
         step = {"buttons": buttons or [], "left_stick": left_stick, "right_stick": right_stick,
                 "left_trigger": left_trigger, "right_trigger": right_trigger, "ms": duration_ms}
-        return await _run(INPUT, gamepad.PAD.run_steps, [step])
+        return await _run(INPUT, _focused(gamepad.PAD.run_steps), [step])
 
     @mcp.tool()
     async def gamepad_sequence(steps: list[dict]) -> dict:
         """Run timed controller steps in order (max 60s total). Each step replaces the previous state:
         {"buttons": [...], "left_stick": [x,y], "right_stick": [x,y], "left_trigger": 0-1, "right_trigger": 0-1, "ms": 200}.
         A step with only "ms" is a neutral pause. Ends in neutral."""
-        return await _run(INPUT, gamepad.PAD.run_steps, steps)
+        return await _run(INPUT, _focused(gamepad.PAD.run_steps), steps)
 
     @mcp.tool()
     async def gamepad_status() -> dict:
@@ -155,7 +167,9 @@ def build_server(port: int) -> FastMCP:
                 "virtual_gamepad": {"connected": gamepad.PAD.connected(), "xinput_slot": gamepad.PAD.index(),
                                     "idle_seconds": gamepad.PAD.idle_seconds(), "last_rumble_from_game": gamepad.PAD.last_rumble,
                                     "armoury_crate_notice": gamepad.PAD.last_notice,
-                                    "auto_unplug_after_idle_seconds": gamepad.IDLE_SECONDS}}
+                                    "kept_plugged": gamepad.PAD.pinned,
+                                    "auto_unplug_after_idle_seconds": gamepad.idle_limit_s()},
+                "foreground": focus.short(focus.foreground())}
 
     @mcp.tool()
     async def gamepad_watch(seconds: float = 5.0, slot: int | None = None) -> dict:
@@ -163,9 +177,38 @@ def build_server(port: int) -> FastMCP:
         return await _run(STT, gamepad.xinput_watch, seconds, slot)
 
     @mcp.tool()
+    async def gamepad_connect(keep_plugged: bool = True) -> dict:
+        """Plug the virtual controller in ahead of time (e.g. right after launching a game) so the first press lands:
+        waits until Windows sees it, closes Armoury Crate's notice and gives focus back. keep_plugged=True keeps it
+        connected until gamepad_unplug (it otherwise unplugs after idle time, never while a fullscreen game or the
+        focus_window target is in front)."""
+        return await _run(INPUT, _focused(gamepad.PAD.connect), keep_plugged)
+
+    @mcp.tool()
     async def gamepad_unplug() -> dict:
-        """Unplug the virtual controller now (it also unplugs itself after 5 idle minutes)."""
+        """Unplug the virtual controller now."""
         return {"unplugged": await _run(INPUT, gamepad.PAD.disconnect)}
+
+    @mcp.tool()
+    async def focus_window(target: str = "", remember: bool = True) -> dict:
+        """Bring a window to the front and verify it really is (gets around Windows' foreground lock, unlike app
+        switching that only reports success). target: window title or process name, e.g. "Minecraft". remember=True
+        makes it the input target: input tools then refocus it if something steals focus, and their results say
+        whether it was in front. Empty target = what has focus now; target="none" forgets the input target."""
+        def run() -> dict:
+            if not target:
+                t = focus.target()
+                return {"foreground": focus.short(focus.foreground(), t), "input_target": t and {k: t[k] for k in ("query", "title", "app")},
+                        "windows": [focus.short(w) for w in focus.windows(8)]}
+            if target.strip().lower() == "none":
+                focus.set_target(None)
+                return {"input_target": None, "foreground": focus.short(focus.foreground())}
+            result = focus.focus_window(target)
+            if remember and result.get("ok"):
+                focus.set_target(target)
+                result["input_target"] = target
+            return result
+        return await _run(INPUT, run)
 
     @mcp.tool()
     async def controller_rumble(left: float = 0.6, right: float = 0.6, duration_ms: int = 300, slot: int = 0) -> dict:
@@ -177,33 +220,33 @@ def build_server(port: int) -> FastMCP:
     @mcp.tool()
     async def touch_tap(x: int, y: int, count: int = 1, hold_ms: int = 60) -> dict:
         """Tap the touch screen with one finger at (x, y); count=2 double-taps."""
-        return await _run(INPUT, win_input.touch_tap, x, y, count, hold_ms)
+        return await _run(INPUT, _focused(win_input.touch_tap), x, y, count, hold_ms)
 
     @mcp.tool()
     async def touch_long_press(x: int, y: int, duration_ms: int = 900) -> dict:
         """Press and hold one finger at (x, y) (context menus, touch-and-hold game actions)."""
-        return await _run(INPUT, win_input.touch_tap, x, y, 1, duration_ms)
+        return await _run(INPUT, _focused(win_input.touch_tap), x, y, 1, duration_ms)
 
     @mcp.tool()
     async def touch_swipe(x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300, hold_start_ms: int = 0,
                           hold_end_ms: int = 0) -> dict:
         """Swipe/drag one finger from (x1, y1) to (x2, y2). hold_start_ms > ~500 makes it a drag-and-drop;
         hold_end_ms keeps the finger down at the end (e.g. hold a virtual joystick)."""
-        return await _run(INPUT, win_input.touch_swipe, x1, y1, x2, y2, duration_ms, hold_start_ms, hold_end_ms)
+        return await _run(INPUT, _focused(win_input.touch_swipe), x1, y1, x2, y2, duration_ms, hold_start_ms, hold_end_ms)
 
     @mcp.tool()
     async def touch_pinch(x: int, y: int, start_spread: int = 400, end_spread: int = 150, duration_ms: int = 500,
                           angle_deg: float = 0) -> dict:
         """Two-finger pinch centered on (x, y). spread = pixels between the fingers; end > start zooms in,
         end < start zooms out. angle_deg rotates the finger axis (0 = horizontal)."""
-        return await _run(INPUT, win_input.touch_pinch, x, y, start_spread, end_spread, duration_ms, angle_deg)
+        return await _run(INPUT, _focused(win_input.touch_pinch), x, y, start_spread, end_spread, duration_ms, angle_deg)
 
     @mcp.tool()
     async def touch_gesture(fingers: list[list[list[int]]], duration_ms: int = 500) -> dict:
         """Custom multi-touch gesture: up to 10 fingers, each a list of [x, y] points visited evenly over duration_ms.
         All fingers touch down together and lift together. Example two-finger swipe up:
         [[[800,700],[800,300]], [[1000,700],[1000,300]]]"""
-        return await _run(INPUT, win_input.touch_path_gesture, fingers, duration_ms)
+        return await _run(INPUT, _focused(win_input.touch_path_gesture), fingers, duration_ms)
 
     # ------------------------------------------------------------------------------------------ keyboard / mouse
     @mcp.tool()
@@ -212,23 +255,23 @@ def build_server(port: int) -> FastMCP:
         ["w"] with hold_ms 2000 = walk forward 2s. Names: letters, digits, f1-f24, space, enter, esc, tab, shift, ctrl,
         alt, win, up/down/left/right, home, end, pageup, pagedown, insert, delete, backspace, capslock, numpad0-9,
         volumeup/volumedown/volumemute, playpause, and punctuation like - = [ ] ; ' , . / `."""
-        return await _run(INPUT, win_input.key_press, keys, hold_ms, repeat, interval_ms)
+        return await _run(INPUT, _focused(win_input.key_press), keys, hold_ms, repeat, interval_ms)
 
     @mcp.tool()
     async def type_text(text: str, interval_ms: int = 5) -> dict:
         """Type Unicode text into whatever has focus (search boxes, chat, text fields). Newlines press Enter."""
-        return await _run(INPUT, win_input.type_text, text, interval_ms)
+        return await _run(INPUT, _focused(win_input.type_text), text, interval_ms)
 
     @mcp.tool()
     async def mouse_look(dx: int, dy: int, duration_ms: int = 250) -> dict:
         """Relative mouse movement, as games use for camera/aim (absolute clicks don't turn a game camera).
         Positive dx = right, positive dy = down."""
-        return await _run(INPUT, win_input.mouse_move_relative, dx, dy, duration_ms)
+        return await _run(INPUT, _focused(win_input.mouse_move_relative), dx, dy, duration_ms)
 
     @mcp.tool()
     async def mouse_hold(button: str = "left", hold_ms: int = 500) -> dict:
         """Hold a mouse button at the current cursor position for hold_ms (e.g. mine/attack/charge in a game)."""
-        return await _run(INPUT, win_input.mouse_hold, button, hold_ms)
+        return await _run(INPUT, _focused(win_input.mouse_hold), button, hold_ms)
 
     @mcp.tool()
     async def touch_keyboard(action: str = "status") -> dict:
@@ -240,7 +283,7 @@ def build_server(port: int) -> FastMCP:
         """Emergency reset: release any held keys and put the virtual gamepad back to neutral."""
         released = await _run(INPUT, win_input.release_all_keys)
         if gamepad.PAD.connected():
-            await _run(INPUT, gamepad.PAD.run_steps, [{"ms": 0}])
+            await _run(INPUT, _focused(gamepad.PAD.run_steps), [{"ms": 0}])
         return {"released_keys": released, "gamepad_neutral": gamepad.PAD.connected()}
 
     # ------------------------------------------------------------------------------------------ audio

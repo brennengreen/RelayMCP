@@ -19,6 +19,7 @@ DEFAULTS = {
     "name": "handheld",            # the device's name on the controlling computer (MCP servers: <name>, <name>-handheld)
     "host_label": "your computer",  # how messages refer to the controlling computer ("your Mac")
     "ports": {"screen": 8765, "hardware": 8767, "voice": 8768},
+    "gamepad_idle_minutes": 30,  # virtual pad unplugs after this long unused (0 = never); never while a game is in front
 }
 
 

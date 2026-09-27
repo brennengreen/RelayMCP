@@ -139,7 +139,7 @@ things on your computer. Change the voice with `relaymcp voice --voice am_michae
 | `relaymcp mcp [add\|remove\|--print]` | MCP client registration / config snippets |
 | `relaymcp logs [--device] [-f]` | Logs from your computer or the handheld |
 | `relaymcp enroll` / `kit` / `trust` | Re-enroll after a reset, rebuild the kit, trust a new host key |
-| `relaymcp exec -- <PowerShell>` / `ssh` | Run something on the handheld / open a shell |
+| `relaymcp exec -- <PowerShell>` / `exec --file x.ps1` / `ssh` | Run a command or a whole script on the handheld / open a shell |
 | `relaymcp deploy [--full]` | Developers: push your checkout's device code to the handheld |
 | `relaymcp uninstall [--device]` | Remove RelayMCP from your computer (and the handheld) |
 
