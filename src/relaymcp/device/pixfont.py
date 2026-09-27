@@ -35,9 +35,9 @@ def _np():
     return numpy
 
 
-def ink_mask(img, threshold: int = 200):
-    """Text pixels: every colour channel at least `threshold` (white HUD text; its shadow and the box behind are
-    darker). img: BGRA/BGR/gray array."""
+def ink_mask(img, threshold: int = 245):
+    """Text pixels: every colour channel at least `threshold` (white HUD text is pure white; its shadow and the box
+    behind are darker, but bright sky seen through the box reached 200 on the Ally). img: BGRA/BGR/gray array."""
     np = _np()
     a = np.asarray(img)
     if a.ndim == 3:
@@ -114,7 +114,7 @@ def match_glyph(bitmap: list[str], font: dict[str, tuple[str, ...]], max_wrong: 
     return best
 
 
-def read(img, font: str = "minecraft", threshold: int = 200) -> str:
+def read(img, font: str = "minecraft", threshold: int = 245) -> str:
     """The text in an image region drawn in a known pixel font ("?" for glyphs it doesn't know, e.g. letters). The
     font's pixel size is tried three ways (the thinnest strokes; the text's height as 7 rows, or 8 with a descender)
     and the reading with the fewest unknown glyphs wins."""

@@ -162,3 +162,39 @@ def test_the_world_counts_as_running_only_between_switches(monkeypatch):
     assert not t.running() and t.paused
     t.begin()
     assert t.running()
+
+
+
+def test_a_dropped_resume_press_is_tried_again(monkeypatch):
+    """Seen on the Ally: Start didn't take, and a program played into the pause menu for its whole run."""
+    monkeypatch.setattr(turns, "RECHECK_S", 0)
+    monkeypatch.setattr(turns, "WAIT_S", 0.2)
+    game = Game(paused=True)
+    real = game.press
+    dropped = [1]
+
+    def flaky(buttons):
+        if dropped[0]:
+            dropped[0] -= 1
+            game.presses.append(("dropped",) + tuple(buttons))
+            return
+        real(buttons)
+    t = turns.Turns(flaky, game.grab, game.sees, lambda: game.physical)
+    t.configure({"button": "start", "text": "Game is paused", "settle_ms": 0})
+    t.begin()
+    assert not game.paused and not t.paused and t.note is None, (game.presses, t.note)
+
+
+
+def test_a_death_screen_is_left_alone():
+    """Pausing on a death screen opens a menu over it, and the next presses land in that menu."""
+    game = Game()
+    dead = [False]
+    real_sees = game.sees
+    game.sees = lambda text, region=None: dead[0] if text == "Respawn" else real_sees(text, region)
+    t = turns.Turns(game.press, game.grab, game.sees, lambda: game.physical)
+    t.configure({"button": "start", "text": "Game is paused", "settle_ms": 0, "dead": "Respawn"})
+    t.begin()
+    dead[0] = True
+    t.end()
+    assert game.presses == [] and not game.paused and "died" in t.note, (game.presses, t.note)

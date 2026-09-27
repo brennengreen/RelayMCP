@@ -60,6 +60,7 @@ class Turns:
                 self.profile = {"button": button, "resume": profile.get("resume") or button,
                                 "text": str(profile.get("text") or ""), "region": region,
                                 "close": profile.get("close") or None,
+                                "dead": str(profile.get("dead") or ""), "dead_region": profile.get("dead_region"),
                                 "settle_ms": max(0, min(int(profile.get("settle_ms", 300)), 3000))}
                 self.paused = bool(self.profile["text"]) and self._shows()
                 self.frame, self.note = None, None
@@ -128,15 +129,21 @@ class Turns:
         if not paused:
             self.paused, self.note = False, None
             return
-        self._press(_buttons(self.profile["resume"]))
-        if text:
-            if not self._wait(self._gone_twice):
-                self.note = f"pressed {self.profile['resume']} but {text!r} still shows: the game may still be paused"
-                return
-            self._settle()  # the menu fades out: input sent before it's gone lands in the menu
-        else:
+        if not text:
+            self._press(_buttons(self.profile["resume"]))
             time.sleep(SETTLE_S)
-        self.paused, self.frame, self.note = False, None, None
+            self.paused, self.frame, self.note = False, None, None
+            return
+        # a press can be dropped (seen on the Ally: a program then played into the pause menu for its whole run), and
+        # some screens only close with "back": try the resume button twice, then the close button
+        tries = [self.profile["resume"], self.profile["resume"]] + ([self.profile["close"]] if self.profile.get("close") else [])
+        for button in tries:
+            self._press(_buttons(button))
+            if self._wait(self._gone_twice):
+                self._settle()  # the menu fades out: input sent before it's gone lands in the menu
+                self.paused, self.frame, self.note = False, None, None
+                return
+        self.note = f"pressed {', '.join(tries)} but {text!r} still shows: the game may still be paused"
 
     def _pause(self) -> None:
         self.switching = True
@@ -154,6 +161,12 @@ class Turns:
             return
         text, button, close = self.profile["text"], self.profile["button"], self.profile.get("close")
         time.sleep(self.profile["settle_ms"] / 1000)  # let the last input play out, so the frozen frame shows its result
+        dead = self.profile.get("dead")
+        if dead and self._sees(dead, self.profile.get("dead_region")):
+            # a death screen isn't paused by the pause button: it opens a menu over it, and the next call's resume
+            # and its presses land in that menu (seen on the Ally: "Respawn" couldn't be pressed)
+            self.note = f"{dead!r} shows: the player died; respawn to play on (left as is, not paused)"
+            return
         frame = self._grab()
         self._press(_buttons(button))
         if not text:

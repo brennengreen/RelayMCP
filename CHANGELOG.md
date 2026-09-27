@@ -84,6 +84,9 @@ handheld itself.
   through turns, and the gyro takes a yaw's direction from it. Turns also cap their speed by the frame rate of the
   moment (a busy machine captures fewer frames than at calibration, and past ~8% of the picture per frame the gyro
   reads short and the turn overshoots).
+- **Turn mode is sturdier:** a dropped resume press is tried again (then the close button) instead of letting a
+  program play into the pause menu for its whole run, and a pause profile's `dead` text (e.g. "Respawn") keeps it
+  from pressing pause on a death screen, where it only opened a menu that ate the next presses.
 - **Instruments read exactly:** programs get `numbers(region)` and `pixel_text(region)`, which read text drawn in a
   game's pixel font glyph by glyph (Windows OCR read Minecraft's "Position: -11, 100, 0" as "-11, 13B," every time),
   and `grid_angle(region)`, a compass for grid worlds: looking straight down, the texture's straight edges give the

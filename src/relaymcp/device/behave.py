@@ -1249,12 +1249,12 @@ class Program:
     def frame(self, region=None):
         return self.rt._frame(self.run, region)[0]
 
-    def pixel_text(self, region, font: str = "minecraft", threshold: int = 200) -> str:
+    def pixel_text(self, region, font: str = "minecraft", threshold: int = 245) -> str:
         """Text drawn in a game's pixel font, read exactly ("?" for glyphs the font table doesn't have)."""
         from . import pixfont
         return pixfont.read(self.frame(region), font, threshold)
 
-    def numbers(self, region, font: str = "minecraft", threshold: int = 200) -> list:
+    def numbers(self, region, font: str = "minecraft", threshold: int = 245) -> list:
         """Whole numbers in a HUD region drawn in a pixel font (after its last ":"), e.g. [x, y, z]."""
         from . import pixfont
         return pixfont.numbers(self.pixel_text(region, font, threshold))
