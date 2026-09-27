@@ -19,7 +19,7 @@ from typing import Any, Callable
 
 WAIT_S = 1.5      # longest wait for the pause text to show up or go away
 SETTLE_S = 0.3    # without a pause text: how long a pause menu takes to open or close
-FADE_S = 0.1      # after the pause text is gone, the menu may still be fading out
+RECHECK_S = 0.12  # the text must stay gone this long: a fading menu's text stops being readable before it's gone
 
 
 def _buttons(value) -> list[str]:
@@ -36,8 +36,9 @@ class Turns:
     screen; without it a second pause press is tried), settle_ms (let the last input play out before pausing)."""
 
     def __init__(self, press: Callable[[list[str]], Any], grab: Callable[[], Any], sees: Callable[..., bool],
-                 in_use: Callable[[], Any] = lambda: None):
+                 in_use: Callable[[], Any] = lambda: None, settle: Callable[[], Any] = lambda: None):
         self._press, self._grab, self._sees, self._in_use = press, grab, sees, in_use
+        self._settle = settle  # blocks until the screen stops changing (a menu finished fading out), or a timeout
         self._lock = threading.RLock()
         self.profile: dict | None = None
         self.paused = False
@@ -67,6 +68,12 @@ class Turns:
 
     def _shows(self) -> bool:
         return bool(self._sees(self.profile["text"], self.profile.get("region")))
+
+    def _gone_twice(self) -> bool:
+        if self._shows():
+            return False
+        time.sleep(RECHECK_S)
+        return not self._shows()
 
     def status(self) -> dict | None:
         if not self.profile:
@@ -111,10 +118,10 @@ class Turns:
             return
         self._press(_buttons(self.profile["resume"]))
         if text:
-            if not self._wait(lambda: not self._shows()):
+            if not self._wait(self._gone_twice):
                 self.note = f"pressed {self.profile['resume']} but {text!r} still shows: the game may still be paused"
                 return
-            time.sleep(FADE_S)
+            self._settle()  # the menu fades out: input sent before it's gone lands in the menu
         else:
             time.sleep(SETTLE_S)
         self.paused, self.frame, self.note = False, None, None

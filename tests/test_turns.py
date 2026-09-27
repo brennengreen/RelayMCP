@@ -35,7 +35,7 @@ def make(game, text="Game is paused"):
 
 
 def test_the_game_runs_only_during_calls_and_screens_show_the_world(monkeypatch):
-    monkeypatch.setattr(turns, "FADE_S", 0)
+    monkeypatch.setattr(turns, "RECHECK_S", 0)
     game = Game(paused=True)
     t = make(game)
     assert t.paused and t.frozen() is None  # paused before we had a frame: nothing frozen to show yet
@@ -48,7 +48,7 @@ def test_the_game_runs_only_during_calls_and_screens_show_the_world(monkeypatch)
 
 
 def test_overlapping_calls_pause_only_when_the_last_one_ends(monkeypatch):
-    monkeypatch.setattr(turns, "FADE_S", 0)
+    monkeypatch.setattr(turns, "RECHECK_S", 0)
     game = Game()
     t = make(game)
     t.begin()
@@ -60,7 +60,7 @@ def test_overlapping_calls_pause_only_when_the_last_one_ends(monkeypatch):
 
 
 def test_the_screen_is_the_truth_when_someone_else_paused_or_resumed(monkeypatch):
-    monkeypatch.setattr(turns, "FADE_S", 0)
+    monkeypatch.setattr(turns, "RECHECK_S", 0)
     game = Game()
     t = make(game)
     t.begin()
@@ -122,3 +122,27 @@ def test_without_close_a_menu_that_ignores_pausing_is_reported():
     t.begin()
     t.end()
     assert not game.paused and not t.paused and "may still be running" in t.status()["note"]
+
+
+class FadingGame(Game):
+    """Resuming fades the menu out: its text is unreadable before the menu is gone (then it may read again)."""
+
+    def __init__(self):
+        super().__init__(paused=True)
+        self.reads = 0
+
+    def sees(self, text, region=None):
+        self.reads += 1
+        if self.paused:
+            return True
+        return self.reads == 4  # gone on the first read after resuming, then one late read of the fading text
+
+
+def test_resume_waits_until_the_menu_is_really_gone_and_the_screen_settles(monkeypatch):
+    monkeypatch.setattr(turns, "RECHECK_S", 0)
+    game, settled = FadingGame(), []
+    t = turns.Turns(game.press, game.grab, game.sees, lambda: None, settle=lambda: settled.append(True))
+    t.configure({"button": "start", "text": "Game is paused", "settle_ms": 0})
+    t.begin()
+    assert not t.paused and settled == [True] and not game.paused
+    assert game.reads >= 6 and len(game.presses) == 1  # read past the flicker; never pressed resume twice

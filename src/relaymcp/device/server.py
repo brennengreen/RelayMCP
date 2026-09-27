@@ -98,11 +98,26 @@ def _on_screen(text: str, region=None) -> bool:
     return ocr.find(ocr.recognize(frame, box), text) is not None
 
 
+def _screen_settled(timeout: float = 1.0, threshold: float = 2.0) -> bool:
+    """Wait until two grabs ~50 ms apart barely differ (an animation, like a menu fading out, finished)."""
+    import numpy as np
+    end, prev = time.monotonic() + timeout, None
+    while time.monotonic() < end:
+        arr, _ = GRABBER.grab_array(None)
+        small = arr[::8, ::8, :3].astype(np.int16)
+        if prev is not None and float(np.abs(small - prev).mean()) < threshold:
+            return True
+        prev = small
+        time.sleep(0.05)
+    return False
+
+
 TURNS = turns.Turns(  # turn-based play (focus_window pause): the game runs only while the agent's input runs
     press=lambda buttons: gamepad.PAD.run_steps([{"buttons": buttons, "ms": 100}]),
     grab=lambda: SCREEN.submit(GRABBER.grab).result(timeout=5),
     sees=lambda text, region=None: SCREEN.submit(_on_screen, text, region).result(timeout=10),
     in_use=lambda: gamepad.physical_active(),
+    settle=lambda: SCREEN.submit(_screen_settled).result(timeout=5),
 )
 
 

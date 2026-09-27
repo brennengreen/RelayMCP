@@ -47,7 +47,9 @@ handheld itself.
     it after (checking the pause text, so a game that paused itself or a menu that ate the press are handled), and
     screenshots/observe taken while paused show the frame from just before the pause. Optional `region` (where the
     pause text shows: faster checks) and `close` (a button that closes a menu in which the pause button does nothing,
-    like Minecraft's crafting screen).
+    like Minecraft's crafting screen). Resuming waits until the pause text is gone on two reads in a row and the
+    screen has settled (a fading menu's text stops being readable before it's gone, and input sent then lands in
+    the menu).
   - **`program` behaviors:** a short Python program runs on the handheld at frame rate with a controller and
     perception API (`pad` holds a whole controller state, `press`, `seq`, `wait`, `until`, `aim` steers the camera
     onto a screen point while walking, `track` follows one for custom loops, `shift` measures how far the view moved
