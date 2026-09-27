@@ -58,7 +58,9 @@ handheld itself.
     are interrupted at the time limit.
 - **Found by playing Minecraft:** template matching (aim, track at) no longer locks onto open sky: its running sums
   are float64 and flat windows can't match (float32 rounding had bright, nearly flat sky scoring in the thousands).
-  `aim` and `track at` learn a game's stick deadzone (Minecraft ignores deflections under ~0.4) and report it.
+  `aim` and `track at` learn a game's stick deadzone (Minecraft ignores deflections under ~0.4) and report it, and
+  stop with a clear error when the "target" doesn't move even at full deflection (it was the held pickaxe, drawn
+  over the same corner of every frame).
   Text matching accepts a label cut off partway ("Wooden Picl" for "Wooden Pickaxe", a clipped tooltip) and tolerates stylized game fonts (Minecraft's "Resume" reads as
   "fiesume" to OCR, "Quit" as "auit"); `track` can aim at whatever is at a screen point (template matching, e.g. a
   tree seen in a screenshot) and turns the camera until it's under the crosshair; behaviors can keep a controller

@@ -209,22 +209,27 @@ class Steer:
     def __init__(self, full_px: float, gain: float, within: float, nudge: float):
         self.full_px, self.gain, self.within, self.nudge = full_px, gain, within, nudge
         self.last: tuple[float, float] | None = None
-        self.stuck, self.deflected = 0, False
+        self.stuck, self.pinned, self.magnitude = 0, 0, 0.0
 
     def __call__(self, tx: float, ty: float, ex: float, ey: float) -> tuple[float, float]:
         moved = self.last is None or abs(tx - self.last[0]) + abs(ty - self.last[1]) > 3
-        self.stuck = self.stuck + 1 if self.deflected and not moved else 0
+        full = self.magnitude >= 0.95
+        self.stuck = self.stuck + 1 if self.magnitude and not full and not moved else 0
+        self.pinned = self.pinned + 1 if full and not moved else 0
+        if self.pinned >= 8:  # not a deadzone: the stick is all the way over and the "target" stays put
+            raise ValueError("what is at that point doesn't move when the camera turns (part of the HUD or the "
+                             "held item?): aim at a point away from them")
         if self.stuck >= 4 and self.nudge < 0.8:
             self.nudge, self.stuck = min(0.8, self.nudge + 0.06), 0
         self.last = (tx, ty)
         dx = deflection(ex, self.full_px, self.gain, self.within, self.nudge)
         dy = -deflection(ey, self.full_px, self.gain, self.within, self.nudge)
-        self.deflected = bool(dx or dy)
+        self.magnitude = max(abs(dx), abs(dy))
         return dx, dy
 
     def still(self) -> None:
         """The stick went back to center (on target, or the target was lost)."""
-        self.deflected, self.stuck = False, 0
+        self.magnitude, self.stuck, self.pinned = 0.0, 0, 0
 
 
 class Run:

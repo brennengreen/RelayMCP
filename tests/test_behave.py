@@ -615,3 +615,18 @@ def test_aim_learns_a_deadzone_it_was_not_told_about():
     status, _, _ = run_program("r = aim(1500, 540, timeout=8)\nresult = r", max_s=10, world=world)
     assert status["state"] == "done" and status["result"]["on_target"], status
     assert abs((world.x - start) - 540) < 40 and status["result"]["min_deflection"] >= 0.45
+
+
+class HandWorld(PanWorld):
+    """A held item drawn over the bottom right of every frame, like Minecraft's pickaxe: it never moves."""
+
+    def frame(self, region=None):
+        img, t = super().frame(region)
+        img[800:1000, 1300:1500] = _texture(200, 200, block=10, seed=9)
+        return img, t
+
+
+def test_aim_says_so_when_the_target_is_part_of_the_screen_overlay():
+    status, _, world = run_program("r = aim(1400, 900, timeout=6)\nresult = r", max_s=8, world=HandWorld())
+    assert status["state"] == "failed" and "doesn't move when the camera turns" in status["reason"], status
+    assert status["seconds"] < 3
