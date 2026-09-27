@@ -64,6 +64,8 @@ Written by setup; read by the device runtime.
 
 `gamepad_idle_minutes` (optional) is how long the virtual controller stays plugged in without use (default 30,
 0 = until `gamepad_unplug`). It never unplugs while a fullscreen game or the `focus_window` target is in front.
+`gamepad_prime` (optional, default true): when the virtual controller plugs in, it nudges the right stick out and back
+so games that ignore a new controller's first input (Minecraft) switch to controller mode before the first real press.
 `vocabulary` (optional, add it by hand) biases speech recognition toward names you use. Setup updates the managed keys
 and keeps any you added.
 

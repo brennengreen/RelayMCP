@@ -81,3 +81,18 @@ def test_recorded_changes_become_replayable_steps():
     assert steps == [{"buttons": ["a"], "ms": 120}, {"ms": 280}, {"left_stick": [0.0, 1.0], "ms": 500},
                      {"buttons": ["right_shoulder"], "right_trigger": 1.0, "ms": 100}, {"ms": 100}]
     assert gamepad.to_steps([], slot=0) == []
+
+
+def test_a_new_pad_primes_the_game_with_a_net_zero_nudge(pad, monkeypatch):
+    monkeypatch.setattr(gamepad, "PRIME_SETTLE_S", 0.0)
+    assert pad._prime() is True
+    rights = [u[1]["right"][0] for u in pad._pad.updates]
+    assert rights[0] > 0.3 and rights[1] < -0.3 and rights[-1] == 0.0  # out and back: the camera ends where it was
+    assert all(u[1]["buttons"] == 0 and u[1]["rt"] == 0 for u in pad._pad.updates)  # nothing that acts in a game
+
+
+def test_priming_can_be_turned_off(monkeypatch):
+    monkeypatch.setattr(gamepad, "device_settings", lambda: {"gamepad_prime": False})
+    assert gamepad.prime_enabled() is False
+    monkeypatch.setattr(gamepad, "device_settings", lambda: {})
+    assert gamepad.prime_enabled() is True

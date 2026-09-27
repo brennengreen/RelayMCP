@@ -46,6 +46,8 @@ what was in front, plus a `warning` when the input probably went nowhere.
   input, if something (like Armoury Crate's controller notice) took focus.
 - `gamepad_connect` plugs the virtual controller in ahead of time. It stays plugged while a game is in front, so games
   don't lose it mid-session (`gamepad_idle_minutes` in `C:\ProgramData\RelayMCP\device.json`, default 30, 0 = never).
+- If a game ignores the first press after the controller plugs in (it only switched its prompts to the controller),
+  check that `gamepad_prime` isn't turned off in device.json: the plug-in nudge exists for exactly this.
 - Windows' app switching can report success while another window keeps focus (the "foreground lock");
   `focus_window` verifies the result instead.
 

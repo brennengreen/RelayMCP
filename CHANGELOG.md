@@ -43,7 +43,9 @@ handheld itself.
 - **Found by playing Minecraft:** text matching tolerates stylized game fonts (Minecraft's "Resume" reads as
   "fiesume" to OCR, "Quit" as "auit"); `track` can aim at whatever is at a screen point (template matching, e.g. a
   tree seen in a screenshot) and turns the camera until it's under the crosshair; behaviors can keep a controller
-  state held (`{"hold": {"right_trigger": 1}}`) until something happens, e.g. mine until the block breaks.
+  state held (`{"hold": {"right_trigger": 1}}`) until something happens, e.g. mine until the block breaks. A newly
+  plugged virtual controller nudges the right stick out and back, because Minecraft spent the first real press
+  switching to controller mode (`gamepad_prime` in device.json turns it off).
 - **`relaymcp-handheld` skill:** `relaymcp agent install` also adds an on-demand Copilot skill with the playbook
   (fast patterns and pitfalls), loaded only when a task involves the handheld.
 - **Hardened by review:** two independent review rounds before release: menu highlights are never guessed,

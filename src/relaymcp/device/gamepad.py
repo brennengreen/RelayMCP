@@ -16,6 +16,10 @@ from ctypes import wintypes
 DEFAULT_IDLE_MINUTES = 30
 MAX_SEQUENCE_MS = 60000
 NOTICE_WAIT_SECONDS = 4.0
+# Many games (Minecraft among them) spend a new controller's first input switching their prompts to gamepad mode, so
+# a freshly plugged pad nudges the right stick out and back first (the camera ends where it was) and then settles.
+PRIME_STEPS = ((0.45, 0.08), (-0.45, 0.08))
+PRIME_SETTLE_S = 0.15
 NOTICE_TITLE_FRAGMENT = "GamepadCustomizeExtCtrlr"  # Armoury Crate's "External controller connected" notice
 from . import focus  # noqa: E402
 from .paths import DISMISS_TASK, device_settings  # noqa: E402
@@ -52,6 +56,11 @@ def idle_limit_s() -> float | None:
     except (TypeError, ValueError):
         minutes = DEFAULT_IDLE_MINUTES
     return None if minutes <= 0 else minutes * 60
+
+
+def prime_enabled() -> bool:
+    """device.json "gamepad_prime" (default true): nudge the right stick when the pad plugs in (see PRIME_STEPS)."""
+    return bool(device_settings().get("gamepad_prime", True))
 
 
 def should_unplug(idle_s: float, limit_s: float | None, pinned: bool, game_in_front: bool) -> bool:
@@ -144,6 +153,7 @@ class VirtualPad:
         self.last_focus_restore: dict | None = None
         self.pinned = False
         self.plugged_at: float | None = None
+        self.primed = False
 
     def _ensure(self):
         if self._pad is None:
@@ -169,6 +179,7 @@ class VirtualPad:
             # keep watching while the pad is plugged in.
             self.last_notice = dismiss_armoury_notice(NOTICE_WAIT_SECONDS if _armoury_crate_running() else 0.3)
             self.last_focus_restore = focus.restore(before)
+            self.primed = self._prime() if prime_enabled() else False
             self._watcher = threading.Thread(target=self._watch_notice, args=(before,), daemon=True)
             self._watcher.start()
         self._touch()
@@ -186,6 +197,18 @@ class VirtualPad:
                 pass
             time.sleep(0.02)
         return False
+
+    def _prime(self) -> bool:
+        """So the first real press lands in games that only wake up to a new controller (see PRIME_STEPS)."""
+        try:
+            for x, seconds in PRIME_STEPS:
+                self._apply(0, (0.0, 0.0), (x, 0.0), 0.0, 0.0)
+                time.sleep(seconds)
+            self._apply(0, (0.0, 0.0), (0.0, 0.0), 0.0, 0.0)
+            time.sleep(PRIME_SETTLE_S)
+            return True
+        except Exception:
+            return False
 
     def _watch_notice(self, last_good: int | None) -> None:
         while self._pad is not None:
@@ -242,6 +265,8 @@ class VirtualPad:
                 out["armoury_crate"] = self.last_notice
             if self.last_focus_restore:
                 out["focus_restored"] = self.last_focus_restore.get("ok")
+            if self.primed:
+                out["primed"] = True
         return out
 
     def disconnect(self) -> bool:

@@ -398,8 +398,8 @@ def build_server(port: int, record_tools: bool = False, upgraded: bool = False) 
     @tool()
     async def gamepad_connect(keep_plugged: bool = True) -> dict:
         """Plug the virtual controller in ahead of time so the first press lands (waits for Windows, closes Armoury
-        Crate's notice, restores focus). keep_plugged: stays until gamepad_unplug; else unplugs when idle, never
-        while a game is in front."""
+        Crate's notice, restores focus, nudges the right stick so the game switches to controller mode).
+        keep_plugged: stays until gamepad_unplug; else unplugs when idle, never while a game is in front."""
         return await _run(INPUT, _focused(gamepad.PAD.connect), keep_plugged)
 
     @tool()
