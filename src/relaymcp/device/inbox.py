@@ -40,6 +40,14 @@ class Inbox:
             self.cond.notify_all()
             return self.n
 
+    def set(self, topic: str, data) -> None:
+        """Update a topic's latest state without an event (a 20 Hz stream would push every other topic's events out
+        of the history within a minute)."""
+        if not TOPIC.fullmatch(topic or ""):
+            raise ValueError("topic: 1-40 letters, digits, '_', '-' or '.'")
+        with self.cond:
+            self.latest[topic] = {"data": data, "at": time.time(), "n": self.n}
+
     def read(self, topic: str = "", since: int = 0, max_items: int = 20) -> dict:
         with self.cond:
             events = [e for e in self.events if e["n"] > since and (not topic or e["topic"] == topic)]

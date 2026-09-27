@@ -5,6 +5,12 @@
 Faster, leaner and real-time capable: most of the work moves from model round trips to the
 handheld itself.
 
+- **Game telemetry as ground truth:** the hardware server follows a game's log for `RELAY {json}` lines and keeps the
+  latest sample and 10 s of history. A Minecraft script pack prints the player's exact position, eye height, yaw,
+  pitch, velocity, looked-at block, health and nearby mobs 20 times a second. Programs read it with `telemetry()`,
+  and a sample under 50 ms old counts as a look. The `state` tool shows it as topic `minecraft`: the inbox's new
+  latest-only updates keep a 20 Hz stream from pushing other topics' events out. `handheld_status` reports its rate
+  and latency.
 - **The 20 fps floor for agentic control, measured on every run:** whatever acts for the agent must act on a look
   under 50 ms old, at every input change and all the time an input is held. Behavior results carry `cadence`
   (`worst_ms`, `p95_ms`, `over_50ms`, `worst_at`: the program line and call that went blind, such as a `wait()` or

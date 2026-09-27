@@ -67,7 +67,10 @@ KINDS = {
                'region (phase correlation; crop away the HUD), e.g. to calibrate camera turns. numbers(region, '
                'font="minecraft") -> ints drawn in a game\'s pixel font (HUD coordinates, counts), read exactly; '
                'pixel_text(region); grid_angle(region) -> (degrees, strength): straight edges\' turn off square, '
-               'modulo 90 (looking straight down at a grid world: the yaw off its axes). '
+               'modulo 90 (looking straight down at a grid world: the yaw off its axes). telemetry() -> the game\'s '
+               'latest sample if a telemetry pack streams one (Minecraft: x, y, z, ey (eye height), yaw (right +), '
+               'pitch (up +), vx, vy, vz, ground, look [x,y,z,face,block], hp, mobs [[type,x,y,z,head_y,id]], age_ms) '
+               'or None. '
                'guard(fn, "hurt"): checked during every wait, stops the program when fn() is truthy. log(msg, **data) '
                '-> an event; result = {...} is returned. Also W, H, CX, CY, np, math. Everything held is released '
                'when it ends; a stop request, max_s or a real controller moving ends it. skill("name", X=1) runs a '
@@ -522,12 +525,14 @@ class Runtime:
     def __init__(self, grab: Callable, outputs, takeover: Callable | None = None, read_text: Callable | None = None,
                  cursor: Callable | None = None, state_events: Callable | None = None,
                  on_start: Callable | None = None, on_end: Callable | None = None,
-                 profiles=None, app: Callable | None = None, skills=None, active: Callable | None = None):
+                 profiles=None, app: Callable | None = None, skills=None, active: Callable | None = None,
+                 telemetry: Callable | None = None):
         self.grab, self.out = grab, _Observed(outputs, self)
         self._by_thread: dict[int, Run] = {}  # behavior threads -> their run (whose cadence an output call counts on)
         self.profiles, self.app = profiles, app  # camera calibrations (control.ProfileStore) by foreground app
         self.skills = skills  # saved programs (skills.SkillStore)
         self.active = active or (lambda: True)  # is the game running (guards don't judge a paused game)?
+        self.telemetry = telemetry  # () -> the game's latest telemetry sample (telemetry.Telemetry.get) or None
         self.alerts: collections.deque = collections.deque(maxlen=20)
         self._alert_seq, self._alerts_taken = 0, 0
         self.on_start, self.on_end = on_start, on_end  # e.g. resume a paused game, and pause it again (turns.py)
@@ -1351,7 +1356,8 @@ class Program:
         seeing = {"elapsed": self.elapsed, "frame": self.frame, "diff": difference, "text": self.text,
                   "sees": self.sees, "color": self.color, "track": self.track, "shift": phase_shift, "log": self.log,
                   "W": self.w, "H": self.h, "CX": self.w // 2, "CY": self.h // 2, "np": _np(), "math": math,
-                  "time": time, "numbers": self.numbers, "pixel_text": self.pixel_text, "grid_angle": self.grid_angle}
+                  "time": time, "numbers": self.numbers, "pixel_text": self.pixel_text, "grid_angle": self.grid_angle,
+                  "telemetry": self.telemetry}
         if self.perception_only:  # guards watch; only their reflex program touches the controller
             return seeing
         return {**seeing, "pad": self.pad, "press": self.press, "tap": self.tap, "seq": self.seq, "release": self.release,
@@ -1497,6 +1503,14 @@ class Program:
     def frame(self, region=None):
         return self.rt._frame(self.run, region)[0]
 
+    def telemetry(self) -> dict | None:
+        """The game's latest telemetry sample (exact pose, looked-at block, nearby mobs; see telemetry.py), with
+        age_ms; None without a telemetry source. A fresh one (under 50 ms old) counts as a look."""
+        s = self.rt.telemetry() if self.rt.telemetry else None
+        if s is not None and s.get("age_ms", 1e9) <= FLOOR_MS:
+            self.run.cadence.observed(time.perf_counter())
+        return s
+
     def pixel_text(self, region, font: str = "minecraft", threshold: int = 245) -> str:
         """Text drawn in a game's pixel font, read exactly ("?" for glyphs the font table doesn't have)."""
         from . import pixfont
@@ -1584,7 +1598,7 @@ class Program:
 
 
 Program.NAMES = {"elapsed", "frame", "diff", "text", "sees", "color", "track", "shift", "log", "W", "H", "CX", "CY",
-                 "np", "math", "time", "numbers", "pixel_text", "grid_angle", "pad", "press", "tap", "seq", "release", "wait", "until", "aim", "guard", "skill",
+                 "np", "math", "time", "numbers", "pixel_text", "grid_angle", "telemetry", "pad", "press", "tap", "seq", "release", "wait", "until", "aim", "guard", "skill",
                  "turn", "level", "look_at", "scan", "look_rate", "camera", "set_pitch", "turn_open"}
 
 

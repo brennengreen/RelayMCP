@@ -37,7 +37,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from . import (__version__, audio, behave, capture, control, focus, gamepad, inbox, lean, ocr, procs, pshost, skills,
-               speech, system, tts, turns, updates, voice, win_input)
+               speech, system, telemetry, tts, turns, updates, voice, win_input)
 from .lean import compact, lean_result, lean_schema
 from .paths import USER_DIR, VOICE_HEADER, device_settings
 
@@ -125,6 +125,16 @@ TURNS = turns.Turns(  # turn-based play (focus_window pause): the game runs only
 )
 
 
+def _telemetry_to_inbox(sample: dict) -> None:
+    inbox.INBOX.set("minecraft", {k: v for k, v in sample.items() if k not in ("recv",)})
+
+
+# Game telemetry (the RelayMCP Telemetry script pack prints a line per tick into Minecraft's content log).
+TELEMETRY = telemetry.Telemetry(on_sample=_telemetry_to_inbox)
+TELEMETRY_FOLLOWER = telemetry.Follower(telemetry.minecraft_log_folders(), "ContentLog*.txt", TELEMETRY.feed,
+                                        on_switch=lambda path: setattr(TELEMETRY, "source", path))
+
+
 BEHAVIORS = behave.Runtime(
     grab=lambda region: SCREEN.submit(GRABBER.grab_array, region).result(timeout=5),
     outputs=_BehaviorOutputs(),
@@ -141,6 +151,7 @@ BEHAVIORS = behave.Runtime(
     app=lambda: (focus.foreground() or {}).get("process") or "unknown",
     skills=skills.SkillStore(USER_DIR / "skills"),
     active=TURNS.running,
+    telemetry=TELEMETRY.get,
 )
 lean.ALERT_HOOK = BEHAVIORS.take_alerts
 
@@ -246,6 +257,8 @@ def build_server(port: int, record_tools: bool = False, upgraded: bool = False) 
         out["virtual_gamepad"] = {"connected": gamepad.PAD.connected(), "xinput_slot": gamepad.PAD.index(),
                                   "idle_seconds": gamepad.PAD.idle_seconds()}
         out["foreground"] = focus.short(focus.foreground(), focus.target())
+        if TELEMETRY.samples:
+            out["telemetry"] = TELEMETRY.status()
         return out
 
     # ------------------------------------------------------------------------------------------ screen
@@ -817,6 +830,7 @@ def main() -> None:
     win_input.set_dpi_awareness()
     focus.TRACKER.start()
     PROCS.reset_state()
+    TELEMETRY_FOLLOWER.start()
     log.info("RelayMCP hardware server %s starting on 127.0.0.1:%d", __version__, args.port)
     if args.parent_pid:
         _exit_with_parent(args.parent_pid)
