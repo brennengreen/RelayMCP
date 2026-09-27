@@ -6,6 +6,7 @@ Keyboard input is sent as hardware scan codes so games that read raw input or Di
 
 from __future__ import annotations
 
+import collections
 import ctypes
 import math
 import threading
@@ -297,7 +298,7 @@ def _send(inputs: list[INPUT]) -> None:
         raise ctypes.WinError(ctypes.get_last_error())
 
 
-_keys_down: set[str] = set()
+_keys_down: collections.Counter = collections.Counter()  # key -> holds in progress
 _key_lock = threading.Lock()
 
 
@@ -310,19 +311,23 @@ def key_press(keys: list[str], hold_ms: int = 50, repeat: int = 1, interval_ms: 
     repeat = max(1, min(int(repeat), 100))
     hold_ms = max(0, min(int(hold_ms), 60000))
     # The lock covers sending and bookkeeping only, never the hold: a 5 s walk mustn't block a quick tap meanwhile.
+    # Keys are counted, so a tap of a key someone else is holding doesn't let go of it.
     for i in range(repeat):
         try:
             for k in keys:
                 with _key_lock:
-                    _send([_key_input(k, False)])
-                    _keys_down.add(k)
+                    if _keys_down[k] == 0:
+                        _send([_key_input(k, False)])
+                    _keys_down[k] += 1
                 time.sleep(0.01)
             time.sleep(hold_ms / 1000)
         finally:
             for k in reversed(keys):
                 with _key_lock:
-                    _send([_key_input(k, True)])
-                    _keys_down.discard(k)
+                    _keys_down[k] -= 1
+                    if _keys_down[k] <= 0:
+                        del _keys_down[k]
+                        _send([_key_input(k, True)])
         if i < repeat - 1:
             time.sleep(max(0, interval_ms) / 1000)
     return {"keys": keys, "hold_ms": hold_ms, "repeat": repeat}
@@ -330,7 +335,7 @@ def key_press(keys: list[str], hold_ms: int = 50, repeat: int = 1, interval_ms: 
 
 def release_all_keys() -> list[str]:
     with _key_lock:
-        released = sorted(_keys_down)
+        released = sorted(k for k, n in _keys_down.items() if n > 0)
         for k in released:
             try:
                 _send([_key_input(k, True)])

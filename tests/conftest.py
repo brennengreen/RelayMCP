@@ -11,6 +11,13 @@ def _no_dev_mode(monkeypatch):
     monkeypatch.delenv("RELAYMCP_DEV_ALLOW", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_handheld(tmp_path, monkeypatch):
+    """No test may reach a real handheld: ssh reads ~/.ssh/config from the account (not $HOME), so a developer's
+    RelayMCP host entry would otherwise work from any test. Every ssh/scp RelayMCP starts is a missing program."""
+    monkeypatch.setenv("RELAYMCP_SSH", str(tmp_path / "ssh-is-disabled-in-tests"))
+
+
 @pytest.fixture()
 def relay_home(tmp_path, monkeypatch):
     """A throwaway ~/.relaymcp (and HOME) so tests never touch the real one."""

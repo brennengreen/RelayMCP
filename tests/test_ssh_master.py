@@ -93,3 +93,10 @@ def test_dev_mode_never_opens_the_real_connection(cfg, monkeypatch):
     monkeypatch.setenv("RELAYMCP_DEV", "1")
     with pytest.raises(RuntimeError, match="dev mode"):
         sshconf.start_master(cfg)
+
+
+def test_tests_can_never_reach_a_real_handheld(cfg):
+    from relaymcp.host import sshconf
+    assert "ssh-is-disabled-in-tests" in sshconf.ssh_exe()
+    with pytest.raises(OSError):
+        sshconf.run(cfg, "hostname", timeout=5)

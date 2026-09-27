@@ -38,7 +38,7 @@ def test_deploy_refuses_while_busy(monkeypatch):
     from relaymcp.host import cli
     monkeypatch.setattr(cli, "_need_config", lambda: {"device": {"name": "ally"}})
     monkeypatch.setattr(cli, "_need_device", lambda cfg: None)
-    monkeypatch.setattr(busy, "probe", lambda cfg: {**QUIET, "ssh_commands": ["bedrock_server.exe since 19:20"]})
+    monkeypatch.setattr("relaymcp.host.busy.probe", lambda cfg: {**QUIET, "ssh_commands": ["bedrock_server.exe since 19:20"]})
     with pytest.raises(SystemExit) as e:
         cli.cmd_deploy(argparse.Namespace(full=False, force=False))
     assert e.value.code == 1
@@ -49,11 +49,11 @@ def test_busy_check_exit_codes(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_need_config", lambda: {"device": {"name": "ally"}})
     monkeypatch.setattr(cli, "_need_device", lambda cfg: None)
     args = argparse.Namespace(minutes=None, note=None, check=True, quiet_seconds=60, ignore_lease=False)
-    monkeypatch.setattr(busy, "probe", lambda cfg: QUIET)
+    monkeypatch.setattr("relaymcp.host.busy.probe", lambda cfg: QUIET)
     with pytest.raises(SystemExit) as e:
         cli.cmd_busy(args)
     assert e.value.code == 0 and "quiet" in capsys.readouterr().out
-    monkeypatch.setattr(busy, "probe", lambda cfg: {**QUIET, "idle_s": 5})
+    monkeypatch.setattr("relaymcp.host.busy.probe", lambda cfg: {**QUIET, "idle_s": 5})
     with pytest.raises(SystemExit) as e:
         cli.cmd_busy(args)
     assert e.value.code == 1 and "busy: an MCP tool call 5 s ago" in capsys.readouterr().out
@@ -61,6 +61,8 @@ def test_busy_check_exit_codes(monkeypatch, capsys):
 
 def test_mark_script_is_safe_with_any_note(monkeypatch):
     import base64
+    import importlib
+    busy = importlib.import_module("relaymcp.host.busy")  # the module cli would use now (other tests reload modules)
     captured = {}
 
     def fake(cfg, script, timeout=0):

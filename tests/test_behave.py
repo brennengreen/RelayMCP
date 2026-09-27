@@ -308,7 +308,7 @@ def test_script_runs_states_until_text_then_inbox_state(world):
     assert [e["name"] for e in s["new_events"] if e["event"] == "state"] == ["find", "attack", "cool_down"]
     assert ("dpad_right",) in world.pads and ("rt",) in world.pads
     rights, rts = world.pads.count(("dpad_right",)), world.pads.count(("rt",))
-    assert 1 <= rights <= 20 and 1 <= rts <= 25, (rights, rts)  # counts depend on machine load; order matters
+    assert 3 <= rights <= 12 and 4 <= rts <= 16, (rights, rts)
 
 
 def test_script_timeouts_branch_or_stop(rt, world):
@@ -372,3 +372,24 @@ def test_every_item_on_a_button_background_still_finds_the_odd_one_out():
         return img, time.perf_counter()
 
     assert behave.highlighted(menu.lines(), frame()[0])["text"] == "Settings"
+
+
+def test_long_intervals_respect_the_time_limit_and_takeover(world):
+    who = {"reason": None}
+    rt = behave.Runtime(world.frame, Outputs(world), takeover=lambda: who["reason"], read_text=lambda r: [])
+    t0 = time.monotonic()
+    s = wait_state(rt, rt.start("press_until", {"do": {"key": ["x"]}, "every_ms": 5000, "until": {"text": "never"}},
+                                max_s=1.0)["id"], 10)
+    assert s["state"] == "done" and time.monotonic() - t0 < 2.0  # not 5 s: the limit cuts the wait short
+    rid = rt.start("press_until", {"do": {"key": ["x"]}, "every_ms": 4000, "until": {"text": "never"}}, max_s=30)["id"]
+    time.sleep(0.3)
+    t1 = time.monotonic()
+    who["reason"] = "controller slot 0"
+    s = wait_state(rt, rid, 5)
+    assert s["state"] == "stopped" and "took over" in s["reason"] and time.monotonic() - t1 < 1.0
+
+
+def test_script_repeats_on_schedule(rt, world):
+    s = wait_state(rt, rt.start("script", {"states": {"a": {"do": {"key": ["x"]}, "every_ms": 100, "ms": 1000}}},
+                                max_s=5)["id"])
+    assert s["state"] == "done" and 9 <= len(world.keys) <= 11, len(world.keys)

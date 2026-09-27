@@ -221,10 +221,16 @@ class Runtime:
             now = time.perf_counter()
             if next_t < now - period:  # fell behind (a slow frame): don't try to catch up in a burst
                 next_t = now
-            left = next_t - now
-            if left > 0.005 and run.stop_evt.wait(left - 0.003):  # long waits wake at once for a stop request
-                continue
-            sleep_until(next_t)
+            wake = min(next_t, deadline)
+            # Long waits go in short slices: a stop request, a takeover or the time limit is noticed within 0.25 s.
+            while wake - time.perf_counter() > 0.005:
+                if run.stop_evt.wait(min(wake - time.perf_counter() - 0.003, 0.25)):
+                    break
+                who = self.takeover()
+                if who:
+                    raise _Stopped(f"you took over ({who})")
+            if not run.stop_evt.is_set():
+                sleep_until(wake)
 
     def _frame(self, run: Run, region):
         t0 = time.perf_counter()
@@ -390,7 +396,7 @@ class Runtime:
         timeout = float(st.get("timeout_s", 30))
         baseline = self._frame(run, until.get("region"))[0] if until and "change" in until else None
         cursor = self.state_events("", 0)[1] if until and "state" in until and self.state_events else 0
-        last_do = 0.0
+        next_do = entered
         for _ in self._ticks(run, 1 / every if not hold_s else 50):
             now = time.perf_counter()
             if hold_s is not None and now - entered >= hold_s:
@@ -399,9 +405,9 @@ class Runtime:
                 return "next"
             if now - entered >= timeout:
                 return "timeout"
-            if do and now - last_do >= every:
+            if do and now >= next_do - 0.005:  # on a schedule: a tick that lands a hair early still counts
                 self._act(run, do)
-                last_do = now
+                next_do = max(next_do + every, now + every * 0.5)
         raise _Stopped("the script ran out of time")
 
     def _run_track(self, run: Run, p: dict) -> None:

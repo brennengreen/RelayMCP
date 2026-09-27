@@ -150,12 +150,20 @@ def _kill_tree(pid: int) -> None:
     if psutil is not None:
         try:
             parent = psutil.Process(pid)
-            for child in parent.children(recursive=True):
-                child.kill()
-            parent.kill()
-            return
+            children = parent.children(recursive=True)
         except psutil.Error:
-            return
+            parent, children = None, []
+        for p in children:  # one that's gone already or can't be killed mustn't spare the rest
+            try:
+                p.kill()
+            except psutil.Error:
+                pass
+        if parent is not None:
+            try:
+                parent.kill()
+                return
+            except psutil.Error:
+                pass
     try:
         if os.name == "nt":
             subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, timeout=15,

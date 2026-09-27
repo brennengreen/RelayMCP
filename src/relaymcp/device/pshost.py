@@ -70,7 +70,7 @@ class PowerShellHost:
         self.lines = queue.Queue()
         threading.Thread(target=self._pump, args=(self.proc, self.lines), name="pshost", daemon=True).start()
         self.started_at = time.time()
-        self._send_and_wait(STARTUP, 60)
+        self._send_and_wait(STARTUP, 60)  # (lines, dropped) ignored
 
     @staticmethod
     def _pump(proc: subprocess.Popen, q: queue.Queue) -> None:
@@ -78,12 +78,13 @@ class PowerShellHost:
             q.put(ANSI.sub("", raw.decode("utf-8", errors="replace").rstrip("\r\n")))
         q.put(None)  # the process ended
 
-    def _send_and_wait(self, script: str, timeout: float) -> list[str]:
+    def _send_and_wait(self, script: str, timeout: float) -> tuple[list[str], int]:
         marker = f"<<<RELAYMCP-END {uuid.uuid4().hex}>>>"
         self.proc.stdin.write((call_line(script, marker) + "\n").encode("ascii"))
         self.proc.stdin.flush()
         from collections import deque
         out: deque = deque(maxlen=MAX_LINES)  # a script printing forever keeps only its latest lines
+        seen = 0
         deadline = time.monotonic() + timeout
         while True:
             left = deadline - time.monotonic()
@@ -97,8 +98,12 @@ class PowerShellHost:
                 raise RuntimeError("the PowerShell session ended")
             if marker in line:
                 before = line.split(marker, 1)[0]
-                return list(out) + [before] if before.strip() else list(out)
+                if before.strip():
+                    out.append(before)
+                    seen += 1
+                return list(out), max(0, seen - len(out))
             out.append(line)
+            seen += 1
 
     def stop(self) -> None:
         proc, self.proc = self.proc, None
@@ -121,13 +126,15 @@ class PowerShellHost:
                 self._start()
             t0 = time.monotonic()
             try:
-                lines = self._send_and_wait(script, timeout)
+                lines, dropped = self._send_and_wait(script, timeout)
             except (TimeoutError, RuntimeError, OSError) as e:
                 self.stop()  # a stuck or dead session can't be trusted with the next call
                 raise RuntimeError(f"{e}; the PowerShell session was reset (variables are gone)") from None
             text, clipped = clip(lines)
+            if dropped:
+                text = f"[{dropped} earlier lines not shown]\n" + text
             return {"output": text, "ms": round((time.monotonic() - t0) * 1000), "new_session": fresh or None,
-                    "clipped": clipped or None}
+                    "clipped": (clipped or bool(dropped)) or None}
 
 
 HOST = PowerShellHost()

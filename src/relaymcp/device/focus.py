@@ -348,6 +348,7 @@ def focus_window(target: str | int, wait_s: float = 0.4) -> dict:
         except Exception:
             continue
         if _wait_front(hwnd, wait_s):
+            _failed.clear()  # it worked: a later steal gets refocused again right away
             return {"ok": True, "method": name, "foreground": short(foreground())}
     fg = foreground()
     who = app_name((fg or {}).get("app")) or "another window"

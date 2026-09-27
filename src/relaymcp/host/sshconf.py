@@ -19,7 +19,13 @@ NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
 def ssh_exe() -> str:
-    return shutil.which("ssh") or "ssh"
+    # RELAYMCP_SSH overrides which ssh is used (tests point it at nothing, so they can never reach a real handheld)
+    return os.environ.get("RELAYMCP_SSH") or shutil.which("ssh") or "ssh"
+
+
+def scp_exe() -> str:
+    override = os.environ.get("RELAYMCP_SSH")
+    return (override + "-scp") if override else (shutil.which("scp") or "scp")
 
 
 def host_key_alias(cfg: dict) -> str:
@@ -174,7 +180,10 @@ def close_master(cfg: dict) -> None:
     running until they finish, then it exits."""
     devguard.check("close the real SSH control connection")
     if os.name != "nt":
-        subprocess.run([ssh_exe(), "-O", "stop", cfg["device"]["name"]], capture_output=True, timeout=10)
+        try:
+            subprocess.run([ssh_exe(), "-O", "stop", cfg["device"]["name"]], capture_output=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            pass  # no ssh or no answer: there's nothing to stop
 
 
 def master_running(cfg: dict) -> bool:
@@ -285,5 +294,5 @@ def clixml_to_text(text: str) -> str:
 def copy_to(cfg: dict, local: list[Path], remote_dir: str, timeout: float = 600) -> None:
     """scp files to a folder (relative to the device user's home)."""
     devguard.check("copy files to the handheld")
-    subprocess.run([shutil.which("scp") or "scp", "-q", "-o", "BatchMode=yes", *[str(p) for p in local],
+    subprocess.run([scp_exe(), "-q", "-o", "BatchMode=yes", *[str(p) for p in local],
                     f"{cfg['device']['name']}:{remote_dir}/"], check=True, timeout=timeout, creationflags=NO_WINDOW)
