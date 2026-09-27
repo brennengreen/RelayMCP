@@ -364,8 +364,8 @@ def test_a_camera_too_fast_to_follow_is_calibrated_and_driven_at_speeds_it_can_f
     assert prof["px_per_deg"] == pytest.approx(sim.ppd, rel=0.03), (prof["px_per_deg"], events)
     assert prof["look"]["max_deflection"] < 1.0, prof["look"]
     start = sim.turned
-    control.Camera(io, prof).turn(yaw=120)
-    assert abs((sim.turned - start) - 120) < 2.5, sim.turned - start
+    out = control.Camera(io, prof).turn(yaw=120)
+    assert abs((sim.turned - start) - 120) < 2.5, (sim.turned - start, out)
 
 
 def test_duplicate_frames_cost_nothing_and_a_stopped_view_reads_as_stopped():
