@@ -376,10 +376,13 @@ Copy-Item $zip (Join-Path $kit 'relaymcp-device.zip') -Force
 Remove-Item -Recurse -Force (Join-Path $kit 'device') -ErrorAction SilentlyContinue
 Expand-Archive -Path $zip -DestinationPath (Join-Path $kit 'device') -Force
 $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
-$out = cmd /c "uv tool install --force --reinstall-package relaymcp-device --python 3.12 `"$kit\device`" 2>&1"
-if ($LASTEXITCODE -ne 0) { throw "uv install failed: $(($out | Select-Object -Last 3) -join ' ')" }
-Set-Content -Path (Join-Path $kit 'relaymcp-device.sha256') -Value (Get-FileHash $zip -Algorithm SHA256).Hash -Encoding ascii
-Start-ScheduledTask -TaskName 'RelayMCP-Agent'
+try {
+    $out = cmd /c "uv tool install --force --reinstall-package relaymcp-device --python 3.12 `"$kit\device`" 2>&1"
+    if ($LASTEXITCODE -ne 0) { throw "uv install failed: $(($out | Select-Object -Last 3) -join ' ')" }
+    Set-Content -Path (Join-Path $kit 'relaymcp-device.sha256') -Value (Get-FileHash $zip -Algorithm SHA256).Hash -Encoding ascii
+} finally {
+    Start-ScheduledTask -TaskName 'RelayMCP-Agent'  # whatever happened, bring the handheld's servers back
+}
 $port = (Get-Content (Join-Path $kit 'device.json') -Raw | ConvertFrom-Json).ports.hardware
 for ($i = 0; $i -lt 60 -and -not (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 500 }
 if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { 'deployed; hardware server listening' } else { 'deployed, but the hardware server is not listening yet:'; Get-Content (Join-Path $env:LOCALAPPDATA 'RelayMCP\hardware.out.log') -Tail 15 -ErrorAction SilentlyContinue }

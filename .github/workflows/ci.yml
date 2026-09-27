@@ -28,6 +28,16 @@ jobs:
           $errs = $null
           [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/src/relaymcp/device/setup/Relay-Setup.ps1", [ref]$null, [ref]$errs)
           if ($errs) { $errs | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }
+      - name: Parse the PowerShell the CLI runs on the handheld (deploy, setup)
+        shell: pwsh
+        run: |
+          python3 -c "import sys; sys.path.insert(0, 'src'); from relaymcp.host import cli; [open(n + '.ps1', 'w').write(getattr(cli, n)) for n in ('DEPLOY_SCRIPT', 'RUN_SETUP_SCRIPT')]"
+          foreach ($f in 'DEPLOY_SCRIPT.ps1', 'RUN_SETUP_SCRIPT.ps1') {
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/$f", [ref]$null, [ref]$errs)
+            if ($errs) { $errs | ForEach-Object { "${f} line $($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }
+          }
+          'parsed OK'
 
   test:
     strategy:
