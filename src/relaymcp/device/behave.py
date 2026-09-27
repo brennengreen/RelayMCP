@@ -83,7 +83,11 @@ KINDS = {
                'set_pitch(deg): the pitch now, if known (after holding the stick into a limit), so turns looking '
                'straight down or up read right; turn_open(yaw, pitch): the same turn from the calibrated curve alone, '
                'without watching the picture (repeating textures, static overlays; best from an exact reference like '
-               'a pitch limit). A turn that loses the picture stops and says tracking_lost. '
+               'a pitch limit). A turn that loses the picture stops and says tracking_lost. With game telemetry, '
+               'a camera servo turns in world angles, closed loop at ~120 Hz on telemetry plus the gyro: '
+               'face(yaw, pitch, tol=0.5) and face_point(x, y, z) return on target (a 90 degree turn in ~0.8 s); '
+               'keep_facing((yaw, pitch) | (x, y, z) | fn) keeps it there or on a moving target while the program '
+               'walks and taps (the servo owns the right stick); stop_facing(); facing() -> (yaw, pitch). '
                'Agentic control needs a fresh look at least every 50 ms (20 fps) while acting: results carry cadence '
                '{worst_ms, p95_ms, over_50ms, worst_at}: how old the latest look (frame, text or state read) was at '
                'each input change and while inputs were held, and where the worst was. Loop on until()/frame reads '
@@ -1071,6 +1075,7 @@ class Runtime:
             raise RuntimeError(outcome) from None
         finally:
             run.thread_id = None
+            api.close()
             if skill_name and self.skills is not None:
                 self.skills.record(app, str(skill_name), outcome)
             # the next program's camera starts out knowing its pitch (yaws seen straight down need it); not after
@@ -1080,6 +1085,8 @@ class Runtime:
                 self.pitch_known[api.app] = cam._tilt
             else:
                 self.pitch_known.pop(api.app, None)
+        if api._servo is not None:
+            run.stats["servo"] = api._servo.summary()
         if "result" in ns:
             run.stats["result"] = _jsonable(ns["result"])
 
@@ -1331,6 +1338,9 @@ class Program:
         self.app = (rt.app() if rt.app else None) or "unknown"
         self.profile = rt.profiles.load(self.app) if rt.profiles is not None else None
         self._camera = None
+        self._servo = None
+        self._servo_rs: tuple[float, float] | None = None  # the servo's right stick while it runs
+        self._apply_lock = threading.Lock()
 
     def cam(self):
         """The calibrated camera of the app in front (control.Camera), driving the right stick; the held state
@@ -1362,11 +1372,13 @@ class Program:
             return seeing
         return {**seeing, "pad": self.pad, "press": self.press, "tap": self.tap, "seq": self.seq, "release": self.release,
                 "wait": self.wait, "until": self.until, "aim": self.aim, "guard": self.guard, "skill": self.skill,
-                "turn": lambda yaw=0.0, pitch=0.0, tol=1.0: self.cam().turn(yaw, pitch, tol),
-                "turn_open": lambda yaw=0.0, pitch=0.0: self.cam().turn_open(yaw, pitch),
-                "level": lambda pitch=0.0: self.cam().level(pitch),
-                "look_at": lambda x, y, **kw: self.cam().look_at(x, y, **kw),
-                "scan": lambda score, degrees=360.0: self.cam().scan(score, degrees),
+                "turn": lambda yaw=0.0, pitch=0.0, tol=1.0: (self._servo_off(), self.cam().turn(yaw, pitch, tol))[1],
+                "turn_open": lambda yaw=0.0, pitch=0.0: (self._servo_off(), self.cam().turn_open(yaw, pitch))[1],
+                "level": lambda pitch=0.0: (self._servo_off(), self.cam().level(pitch))[1],
+                "look_at": lambda x, y, **kw: (self._servo_off(), self.cam().look_at(x, y, **kw))[1],
+                "scan": lambda score, degrees=360.0: (self._servo_off(), self.cam().scan(score, degrees))[1],
+                "face": self.face, "face_point": self.face_point, "keep_facing": self.keep_facing,
+                "stop_facing": self.stop_facing, "facing": self.facing,
                 "look_rate": self.look_rate, "camera": self._summary(),
                 "set_pitch": lambda degrees: self.cam().set_pitch(degrees)}
 
@@ -1430,9 +1442,98 @@ class Program:
     # --- controller -----------------------------------------------------------------------------------------------
 
     def _apply(self, state: dict) -> None:
-        self.run.used.add("hold")
-        self.rt.out.hold(state)
-        self.run.stats["actions"] += 1
+        with self._apply_lock:
+            if self._servo_rs is not None:  # the servo steers the right stick; the rest is the program's
+                state = {**state, "right_stick": list(self._servo_rs)}
+            self.run.used.add("hold")
+            self.rt.out.hold(state)
+            self.run.stats["actions"] += 1
+
+    # --- the camera servo (absolute facing on telemetry, in the background) -----------------------------------------
+
+    def _servo_on(self, tol: float = 0.5):
+        from . import servo
+        if self._servo is None:
+            if not (self.rt.telemetry and self.rt.telemetry()):
+                raise RuntimeError("facing in world angles needs game telemetry (the RelayMCP Telemetry pack); use "
+                                   "turn() for relative turns")
+            run, rt = self.run, self.rt
+
+            def on_thread(ident):
+                rt._by_thread[ident] = run  # its looks and stick moves count on this run's cadence
+
+            def stick(x, y):
+                self._servo_rs = (x, y)
+                self._apply(self.state)
+
+            self._servo = servo.Servo(self.cam(), look=lambda: self.frame(), stick=stick, telemetry=rt.telemetry,
+                                      tol=tol, on_thread=on_thread, stop_evt=run.stop_evt)
+            self._servo.start()
+        self._servo.tol = tol
+        return self._servo
+
+    def _servo_off(self) -> None:
+        sv, self._servo = self._servo, None
+        if sv is not None:
+            sv.stop()
+            if sv._thread is not None:
+                self.rt._by_thread.pop(sv._thread.ident, None)
+            self.run.stats["servo"] = sv.summary()
+            self._servo_rs = None
+            self._apply(self.state)
+
+    def close(self) -> None:
+        self._servo_off()
+
+    def _eye(self):
+        s = self.telemetry()
+        if not s or "ey" not in s:
+            raise RuntimeError("no telemetry eye position (the RelayMCP Telemetry pack)")
+        return float(s["x"]), float(s["ey"]), float(s["z"])
+
+    def _direction(self, target):
+        from . import servo
+        if target is None:
+            return None
+        t = tuple(target)
+        if len(t) == 3:
+            return servo.facing_point(self._eye(), t)
+        return float(t[0]), float(t[1])
+
+    def face(self, yaw: float, pitch: float, tol: float = 0.5, timeout: float = 3.0) -> dict:
+        """Turn to an absolute direction (game yaw, pitch up +) and hold it there; returns when on target."""
+        sv = self._servo_on(tol)
+        sv.set((float(yaw), float(pitch)))
+        t0 = time.perf_counter()
+        self.until(lambda: sv.on_target() or sv.failure, timeout=timeout, hz=120)
+        if sv.failure:
+            raise RuntimeError(f"camera servo: {sv.failure}")
+        return {"on_target": sv.on_target(), "error": sv.error, "seconds": round(time.perf_counter() - t0, 3)}
+
+    def face_point(self, x: float, y: float, z: float, tol: float = 0.5, timeout: float = 3.0) -> dict:
+        """Look at a world point (block coordinates: a face's centre is e.g. (bx + 0.5, by + 1.0, bz + 0.5))."""
+        yaw, pitch = self._direction((x, y, z))
+        return self.face(yaw, pitch, tol, timeout)
+
+    def keep_facing(self, target, tol: float = 0.5) -> None:
+        """Keep facing a direction (yaw, pitch), a world point (x, y, z), or what a function returns each tick
+        (either, or None to let go) while the program walks, taps and looks; stop_facing() ends it."""
+        sv = self._servo_on(tol)
+        if callable(target):
+            sv.set(lambda: self._direction(target()))
+        else:
+            fixed = tuple(target)
+            sv.set(lambda: self._direction(fixed) if len(fixed) == 3 else fixed)
+
+    def stop_facing(self) -> None:
+        self._servo_off()
+
+    def facing(self):
+        """The fused (yaw, pitch) estimate while facing runs (else the latest telemetry's)."""
+        if self._servo is not None:
+            return self._servo.facing()
+        s = self.telemetry()
+        return (s["yaw"], s["pitch"]) if s and "yaw" in s else None
 
     def pad(self, buttons=(), ls=(0, 0), rs=(0, 0), lt: float = 0.0, rt: float = 0.0) -> None:
         self.check()
@@ -1599,7 +1700,8 @@ class Program:
 
 Program.NAMES = {"elapsed", "frame", "diff", "text", "sees", "color", "track", "shift", "log", "W", "H", "CX", "CY",
                  "np", "math", "time", "numbers", "pixel_text", "grid_angle", "telemetry", "pad", "press", "tap", "seq", "release", "wait", "until", "aim", "guard", "skill",
-                 "turn", "level", "look_at", "scan", "look_rate", "camera", "set_pitch", "turn_open"}
+                 "turn", "level", "look_at", "scan", "look_rate", "camera", "set_pitch", "turn_open",
+                 "face", "face_point", "keep_facing", "stop_facing", "facing"}
 
 
 def center_of(box) -> tuple[float, float]:

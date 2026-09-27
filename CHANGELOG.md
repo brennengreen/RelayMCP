@@ -5,6 +5,15 @@
 Faster, leaner and real-time capable: most of the work moves from model round trips to the
 handheld itself.
 
+- **A camera servo in world angles:** with game telemetry, programs `face(yaw, pitch)` or `face_point(x, y, z)`,
+  and `keep_facing(...)` a direction, a point or a moving target while they walk and tap: the servo owns the right
+  stick, and the program keeps the left stick and buttons. It runs closed-loop at ~120 Hz on a fused estimate: the
+  latest telemetry angle plus the turn since then. That turn comes from the visual gyro while it agrees with the
+  calibrated stick model, and from the model alone when it doesn't (the gyro can lock onto a repeating texture). It
+  asks for the rate that closes the error at the moment the next command takes effect: commands still in flight and
+  the target's own motion are fed forward. On the Minecraft-like simulator it faces 90 degrees in 0.75-0.82 s (the
+  fastest the plant allows is 0.69 s), lands within 0.2 degrees, and follows a target moving at 40 degrees/s within
+  0.2 degrees RMS.
 - **Game telemetry as ground truth:** the hardware server follows a game's log for `RELAY {json}` lines and keeps the
   latest sample and 10 s of history. A Minecraft script pack prints the player's exact position, eye height, yaw,
   pitch, velocity, looked-at block, health and nearby mobs 20 times a second. Programs read it with `telemetry()`,

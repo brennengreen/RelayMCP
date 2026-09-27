@@ -139,7 +139,11 @@ unknown *plant* with a camera: nothing below is specific to one game.
    pulse, and wait until the view has settled before correcting, like a servo's in-position check.
    The game's own instruments are sensors too: HUD numbers (Minecraft's coordinates) are read exactly in the game's
    pixel font, and looking straight down at a grid world, the texture's straight edges are a compass
-   (`grid_angle`).
+   (`grid_angle`). With telemetry (a game script's exact pose, 20 times a second, a tick late) a camera servo
+   works in world angles: its estimate is the latest telemetry angle plus the turn since, from the gyro while it
+   agrees with the stick model and from the model otherwise. It runs at ~120 Hz in the background and commands the
+   rate that closes the error when the command lands, feeding forward what is already in flight and the target's
+   own motion. Programs `face`, `face_point` and `keep_facing` while they keep the left stick and buttons.
 5. **Guard separately.** A `guard` behavior is a standing safety monitor, apart from the programs that come and go:
    when its condition holds (health dropping, a death screen) every program stops, a turn-based game pauses, an
    optional reflex program runs, and the next tool results carry an `alerts` entry. Guards only watch; they never
