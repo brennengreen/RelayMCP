@@ -43,10 +43,11 @@ grep -q '^src/relaymcp/device/' <<<"$changed" && update_device=true
 # quiet moment first. Nothing in production changes until then, so giving up leaves everything as it was.
 if $restart_service || $update_device; then
   # The check runs this checkout's code (it's what's being rolled out) against the production settings.
-  check() { "$DEV/.venv/bin/python" -m relaymcp.host.cli busy --check 2>/dev/null; }
+  check() { "$DEV/.venv/bin/python" -m relaymcp.host busy --check 2>&1; }
   tries=$(( ${QUIET_WAIT_MIN:-20} * 3 ))
   for i in $(seq 1 "$tries"); do
-    if why="$(check)"; then break; fi
+    why="$(check)" && [ "$why" = "quiet" ] && break
+    case "$why" in busy:*) ;; *) echo "couldn't check whether the handheld is in use: ${why:-no answer}" >&2; exit 1 ;; esac
     [ "$i" = 1 ] && say "Waiting for the handheld to be free ($why)"
     if [ "$i" = "$tries" ]; then
       echo "the handheld stayed in use for ${QUIET_WAIT_MIN:-20} min ($why); production is unchanged, try again later" >&2
