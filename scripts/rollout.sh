@@ -5,6 +5,7 @@
 #
 #   scripts/rollout.sh            ff main -> perf (CI must be green), push, update what changed, then doctor
 #   scripts/rollout.sh --no-ci    skip the CI check (e.g. docs-only changes)
+#   QUIET_WAIT_MIN=20             how long to wait for a quiet moment before giving up (production stays unchanged)
 set -euo pipefail
 DEV="$(cd "$(dirname "$0")/.." && pwd)"
 PROD="${RELAYMCP_PROD:-$HOME/Projects/RelayMCP}"
@@ -34,6 +35,27 @@ if [ "${1:-}" != "--no-ci" ]; then
 fi
 
 changed="$(git diff --name-only "$old" "$new")"
+restart_service=false; update_device=false
+grep -qE '^src/relaymcp/host/(daemon|tunnel|voice|config|sshconf|services)\.py$' <<<"$changed" && restart_service=true
+grep -q '^src/relaymcp/device/' <<<"$changed" && update_device=true
+
+# Restarting the service drops the tunnels and a device update restarts the handheld's servers, so either waits for a
+# quiet moment first. Nothing in production changes until then, so giving up leaves everything as it was.
+if $restart_service || $update_device; then
+  quiet='$u = Join-Path $env:LOCALAPPDATA "RelayMCP"; $t = @("hardware.log", "windows-mcp.out.log") | ForEach-Object { $p = Join-Path $u $_; if (Test-Path $p) { (Get-Item $p).LastWriteTime } } | Sort-Object -Descending | Select-Object -First 1; if ($t) { [int]((Get-Date) - $t).TotalSeconds } else { 9999 }'
+  tries=$(( ${QUIET_WAIT_MIN:-20} * 3 ))
+  for i in $(seq 1 "$tries"); do
+    idle="$("$RELAY" exec -- "$quiet" 2>/dev/null | tr -dc '0-9' || true)"
+    [ -n "$idle" ] && [ "$idle" -ge 60 ] && break
+    [ "$i" = 1 ] && say "Waiting for a quiet moment on the handheld (last tool call ${idle:-?} s ago)"
+    if [ "$i" = "$tries" ]; then
+      echo "no quiet moment in ${QUIET_WAIT_MIN:-20} min (last tool call ${idle:-?} s ago); production is unchanged, try again later" >&2
+      exit 1
+    fi
+    sleep 20
+  done
+fi
+
 say "Updating $PROD: $(git rev-list --count "$old..$new") commit(s)"
 git -C "$PROD" merge --ff-only -q perf
 git -C "$PROD" push -q origin main
@@ -42,19 +64,11 @@ if grep -q '^pyproject.toml$' <<<"$changed"; then
   say "Dependencies or entry points changed: reinstalling the relaymcp command"
   uv tool install -q -e "$PROD" --force
 fi
-if grep -qE '^src/relaymcp/host/(daemon|tunnel|voice|config|sshconf|services)\.py$' <<<"$changed"; then
+if $restart_service; then
   say "Restarting the background service (tunnels reconnect in a few seconds)"
   "$RELAY" service restart
 fi
-
-if grep -q '^src/relaymcp/device/' <<<"$changed"; then
-  quiet='$u = Join-Path $env:LOCALAPPDATA "RelayMCP"; $t = @("hardware.log", "windows-mcp.out.log") | ForEach-Object { $p = Join-Path $u $_; if (Test-Path $p) { (Get-Item $p).LastWriteTime } } | Sort-Object -Descending | Select-Object -First 1; if ($t) { [int]((Get-Date) - $t).TotalSeconds } else { 9999 }'
-  for i in $(seq 1 30); do
-    idle="$("$RELAY" exec -- "$quiet" 2>/dev/null | tr -dc '0-9' || true)"
-    [ -n "$idle" ] && [ "$idle" -ge 60 ] && break
-    [ "$i" = 1 ] && say "Waiting for a quiet moment on the handheld (last tool call ${idle:-?} s ago)"
-    sleep 20
-  done
+if $update_device; then
   if grep -q 'Relay-Setup.ps1$' <<<"$changed"; then
     say "Updating the handheld (full setup)"
     "$RELAY" deploy --full
@@ -62,6 +76,10 @@ if grep -q '^src/relaymcp/device/' <<<"$changed"; then
     say "Updating the handheld's runtime"
     "$RELAY" deploy
   fi
+fi
+
+if grep -q "written by relaymcp" "$HOME/.copilot/agents/handheld.agent.md" 2>/dev/null; then
+  "$RELAY" agent install >/dev/null && say "Refreshed the handheld custom agent"
 fi
 
 say "Checking everything"
