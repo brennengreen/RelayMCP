@@ -46,6 +46,8 @@ device = [
     "winrt-Windows.Media.Ocr>=3.2,<4",
     "winrt-Windows.Storage.Streams>=3.2,<4",
 ]
+# Faster voice prompts: a warm Copilot runtime instead of starting `copilot -p` for every prompt (Python 3.11+).
+voice = ["github-copilot-sdk>=1.0.14,<2; python_version >= '3.11'"]
 dev = ["pytest>=7", "ruff>=0.6", "pillow>=10.3"]
 
 [project.scripts]

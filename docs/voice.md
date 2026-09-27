@@ -27,7 +27,12 @@ within 20 minutes continue the same one.
    request on a ROG Ally Z1 Extreme.
 4. The text goes through the reverse tunnel to the **voice dispatcher** on your computer. It runs your agent with a
    short preamble: the request was spoken, words may be misheard, and the answer will be read aloud, so it should be
-   1–3 plain sentences.
+   1–3 plain sentences. Only the handheld's tools are loaded, with their definitions in view (no tool-search step),
+   and a fast model answers (`gpt-5.4-mini`, low reasoning).
+   - **Warm runtime** (with `relaymcp[voice]`, Python 3.11+): the background service keeps one Copilot runtime
+     running, so a prompt starts in milliseconds instead of spending ~4–5 s starting `copilot -p`, and it uses a
+     short voice-only system prompt. A one-tool request ("what's my battery?") takes ~3.5 s instead of ~8 s.
+     Follow-ups continue the same session. If the runtime isn't available, the dispatcher uses `copilot -p`.
 5. The reply appears in the overlay and is **spoken on the handheld** by the Kokoro neural voice, streamed sentence by
    sentence. The first word comes about 0.8 s after the reply arrives.
 
@@ -39,7 +44,7 @@ The speech models load while you talk and unload after 15 idle minutes, freeing 
 relaymcp voice                                  # show settings
 relaymcp voice --voice am_michael --speed 1.1   # change the spoken voice
 relaymcp voice --permissions full               # see "Permissions" below
-relaymcp voice --model gpt-5.4                  # model for voice prompts (default: the agent's)
+relaymcp voice --model gpt-5.4                  # model for voice prompts (default: gpt-5.4-mini)
 relaymcp voice --user-name Sam                  # how the agent addresses you
 relaymcp voice --disable                        # turn voice prompts off
 relaymcp voice --test "What's my battery level?"  # run the full pipeline from your computer

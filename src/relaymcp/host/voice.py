@@ -22,7 +22,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import config
+from . import config, voice_warm
 
 log = logging.getLogger("relaymcp.voice")
 VOICE_HEADER = "X-Relay-Voice"  # required on POST /prompt (see Handler._allowed); must match relaymcp.device.paths
@@ -192,6 +192,17 @@ def run_prompt(cfg: dict, text: str) -> dict:
         exe = find_agent("copilot")
         if not exe:
             return {"ok": False, "error": "GitHub Copilot CLI isn't installed on this computer"}
+        if voice_warm.enabled(cfg) and voice_warm.RUNTIME.usable():
+            name, t_warm = cfg["device"]["name"], time.monotonic()
+            try:
+                reply, tools = voice_warm.RUNTIME.ask(cfg, exe, text, sid, fresh, other_copilot_servers((name, f"{name}-handheld")),
+                                                      float(v.get("timeout_minutes") or 10) * 60)
+                return {"ok": True, "reply": reply or "Done.", "session": sid, "new_session": fresh, "tools": tools,
+                        "seconds": round(time.monotonic() - t_warm, 1), "tts": tts_settings(cfg), "runtime": "warm"}
+            except voice_warm.SentError as e:  # the model already had the prompt: don't run it twice
+                return {"ok": False, "error": str(e)[:200], "session": sid, "seconds": round(time.monotonic() - t_warm, 1)}
+            except Exception as e:
+                log.warning("warm voice runtime unavailable, using copilot -p: %s", e)
         cmd = copilot_command(cfg, exe, text, sid, fresh)
     env = dict(os.environ, PATH=os.pathsep.join([*EXTRA_PATH, os.environ.get("PATH", "")]))
     t0 = time.monotonic()
@@ -263,8 +274,10 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/health":
             cfg = config.load()
             agent = cfg["voice"].get("agent", "copilot")
+            runtime = voice_warm.RUNTIME.state() if voice_warm.enabled(cfg) else "cli"
             self._send(200, {"ok": True, "busy": _busy.locked(), "permissions": cfg["voice"].get("permissions"),
-                             "agent": agent, "agent_found": agent == "custom" or bool(find_agent("copilot"))})
+                             "agent": agent, "agent_found": agent == "custom" or bool(find_agent("copilot")),
+                             "runtime": runtime})
         else:
             self._send(404, {"ok": False, "error": "not found"})
 

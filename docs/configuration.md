@@ -24,8 +24,9 @@ then run `relaymcp setup` (for device/port changes) or `relaymcp service restart
     "agent": "copilot",                // copilot | custom
     "custom_command": null,            // for agent=custom, e.g. ["claude", "-p", "{prompt}"]
     "permissions": "handheld",         // handheld | full
-    "model": null,                     // model for voice prompts (agent default if null)
-    "reasoning_effort": null,
+    "model": "gpt-5.4-mini",           // model for voice prompts (null = the agent's default)
+    "reasoning_effort": "low",
+    "warm": true,                      // keep a Copilot runtime running for voice (needs relaymcp[voice], Python 3.11+)
     "timeout_minutes": 10,
     "new_conversation_after_minutes": 20,
     "notify": true,                    // desktop notification when a voice prompt arrives

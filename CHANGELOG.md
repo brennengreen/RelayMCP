@@ -19,6 +19,10 @@ Input reliability, from real use driving Minecraft Bedrock on a ROG Ally.
 - **Faster voice prompts:** voice runs load only the handheld's tools (no built-in MCP servers or custom
   instructions) and default to a fast model (`gpt-5.4-mini`, low reasoning). A one-tool prompt went from ~13 s to
   ~8 s. Models that reject a setting are retried without it.
+- **Warm voice runtime** (`pip install 'relaymcp[voice]'`, Python 3.11+): the background service keeps one Copilot
+  runtime running (github-copilot-sdk), so voice prompts skip `copilot -p`'s ~4–5 s start-up and use a short
+  voice-only system prompt. One-tool requests take ~3.5 s instead of ~8 s. Falls back to `copilot -p` if the runtime
+  isn't available; a prompt the model already received is never run twice.
 - **`handheld_status` ~2 s faster:** brightness is read and set through WMI over COM instead of starting PowerShell.
 - **Leaner tools:** hardware tool definitions are 21% smaller (no schema titles or null defaults, shorter
   descriptions), and results are minified JSON without empty fields.

@@ -49,8 +49,11 @@ network, with [uv](https://docs.astral.sh/uv/) and OpenSSH. Voice prompts use
 **1. Install RelayMCP on your computer**
 
 ```sh
-uv tool install git+https://github.com/brennengreen/RelayMCP
+uv tool install "relaymcp[voice] @ git+https://github.com/brennengreen/RelayMCP"
 ```
+
+(`[voice]` adds a warm Copilot runtime that makes voice prompts about twice as fast; leave it out for a
+standard-library-only install.)
 
 **2. Run setup** (it asks two questions, then builds the handheld's kit and waits for it to check in)
 
@@ -69,7 +72,7 @@ The first run takes a few minutes: it downloads Python, the speech models and th
 ```text
   ✓ Tunnel (tools): up 192.168.1.23
   ✓ MCP 'ally': http://127.0.0.1:8765/mcp (20 tools)
-  ✓ MCP 'ally-handheld': http://127.0.0.1:8767/mcp (35 tools)
+  ✓ MCP 'ally-handheld': http://127.0.0.1:8767/mcp (40 tools)
   ✓ Voice dispatcher: agent=copilot permissions=handheld
   ✓ Device agent: windows-mcp up (restarts 0), hardware up (restarts 0)
 ```
@@ -121,7 +124,7 @@ After a chime, speak. Recording stops when you do. Say *"new conversation"* to s
 | Step | Where | Typical time (ROG Ally Z1 Extreme) |
 |---|---|---|
 | Speech-to-text (Whisper `small.en`, int8) | handheld, local | ~1.2 s |
-| Your agent does the work | your computer | 5–20 s |
+| Your agent does the work | your computer | ~3.5 s for a one-tool request with the warm runtime (`relaymcp[voice]`), ~8 s without |
 | First spoken word (Kokoro neural voice, streamed by sentence) | handheld, local | ~0.8 s |
 
 By default, voice requests can only use the handheld's tools. `relaymcp voice --permissions full` also lets them run

@@ -126,6 +126,12 @@ def run_checks(cfg: dict, deep: bool = True) -> list[Check]:
         h = voice_health(int(d["ports"]["voice"]))
         good = bool(h and h.get("ok") and h.get("agent_found"))
         detail = f"agent={h.get('agent')} permissions={h.get('permissions')}" if h else "not responding"
+        if h and h.get("runtime"):
+            detail += {"warm": ", warm runtime (fast)", "cold": ", warm runtime starting",
+                       "failed": ", warm runtime failed: using copilot -p",
+                       "cli": ""}.get(h["runtime"], "")
+            if h["runtime"] == "cli" and h.get("agent") == "copilot" and h.get("permissions") != "full":
+                detail += " (install relaymcp[voice] for ~2x faster replies)"
         checks.append(Check("Voice dispatcher", good, detail, "`relaymcp service restart`; is Copilot CLI installed?",
                             optional=True))
     if agents.detected()["copilot"]:

@@ -62,7 +62,7 @@ git -C "$PROD" push -q origin main
 
 if grep -q '^pyproject.toml$' <<<"$changed"; then
   say "Dependencies or entry points changed: reinstalling the relaymcp command"
-  uv tool install -q -e "$PROD" --force
+  uv tool install -q -e "$PROD[voice]" --force   # the voice extra: a warm Copilot runtime for voice prompts
 fi
 if $restart_service; then
   say "Restarting the background service (tunnels reconnect in a few seconds)"

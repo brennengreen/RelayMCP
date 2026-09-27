@@ -14,7 +14,7 @@ from logging.handlers import RotatingFileHandler
 
 import relaymcp
 
-from . import config, devguard, tunnel, voice
+from . import config, devguard, tunnel, voice, voice_warm
 
 STATUS_FILE = config.STATE_DIR / "daemon.json"
 log = logging.getLogger("relaymcp")
@@ -53,12 +53,14 @@ def run() -> None:
             server = voice.serve(int(cfg["device"]["ports"]["voice"]))
         except OSError as e:
             log.error("voice dispatcher couldn't start on port %s: %s", cfg["device"]["ports"]["voice"], e)
+    if server and voice_warm.enabled(cfg) and voice.find_agent("copilot"):
+        voice_warm.RUNTIME.prewarm(voice.find_agent("copilot"))
     forwards = tunnel.start_all(cfg)
     config.STATE_DIR.mkdir(parents=True, exist_ok=True)
     try:
         while not stop.is_set():
             status = {"pid": os.getpid(), "version": relaymcp.__version__, "updated": int(time.time()),
-                      "device": cfg["device"]["name"], "voice": bool(server),
+                      "device": cfg["device"]["name"], "voice": bool(server), "voice_runtime": voice_warm.RUNTIME.state(),
                       "tunnels": {f.label: f.status() for f in forwards}}
             tmp = STATUS_FILE.with_suffix(".tmp")
             tmp.write_text(json.dumps(status, indent=1), encoding="utf-8")
@@ -69,6 +71,7 @@ def run() -> None:
             f.stop()
         if server:
             server.shutdown()
+        voice_warm.RUNTIME.stop()
         try:
             STATUS_FILE.unlink()
         except OSError:
