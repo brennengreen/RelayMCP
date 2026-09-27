@@ -32,6 +32,12 @@ Input reliability, from real use driving Minecraft Bedrock on a ROG Ally.
 - **No tool-search round trip:** Copilot hides MCP tool schemas behind a search tool, which cost every voice prompt
   an extra model call. Voice runs and the `handheld` agent keep the handheld's tool schemas in view; other Copilot
   sessions are unchanged.
+- **Updates wait for the handheld to be free:** `relaymcp deploy` and `scripts/rollout.sh` hold off while a tool call
+  happened in the last minute, a keep-awake lease or `relaymcp busy` mark is active, or a command runs over SSH
+  (`deploy --force` overrides). New `relaymcp busy [minutes|off]` marks the handheld in use.
+- **SSH sessions no longer drop each other:** the shared SSH connection is owned by the background service and runs
+  detached from it; commands reuse it but never become it (a connection born in a short-lived shell used to take
+  every session riding on it down when that shell ended). `relaymcp trust` only stops it taking new sessions.
 - **`relaymcp bench`** measures latency (ping, status, screenshot, SSH) and tokens per result, and compares runs.
   `scripts/analyze_session.py` splits a Copilot session's time into model and device time.
 - **Dev mode** (`scripts/dev-env.sh`): a development checkout can't touch the real installation.

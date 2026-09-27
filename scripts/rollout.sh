@@ -42,14 +42,14 @@ grep -q '^src/relaymcp/device/' <<<"$changed" && update_device=true
 # Restarting the service drops the tunnels and a device update restarts the handheld's servers, so either waits for a
 # quiet moment first. Nothing in production changes until then, so giving up leaves everything as it was.
 if $restart_service || $update_device; then
-  quiet='$u = Join-Path $env:LOCALAPPDATA "RelayMCP"; $t = @("hardware.log", "windows-mcp.out.log") | ForEach-Object { $p = Join-Path $u $_; if (Test-Path $p) { (Get-Item $p).LastWriteTime } } | Sort-Object -Descending | Select-Object -First 1; if ($t) { [int]((Get-Date) - $t).TotalSeconds } else { 9999 }'
+  # The check runs this checkout's code (it's what's being rolled out) against the production settings.
+  check() { "$DEV/.venv/bin/python" -m relaymcp.host.cli busy --check 2>/dev/null; }
   tries=$(( ${QUIET_WAIT_MIN:-20} * 3 ))
   for i in $(seq 1 "$tries"); do
-    idle="$("$RELAY" exec -- "$quiet" 2>/dev/null | tr -dc '0-9' || true)"
-    [ -n "$idle" ] && [ "$idle" -ge 60 ] && break
-    [ "$i" = 1 ] && say "Waiting for a quiet moment on the handheld (last tool call ${idle:-?} s ago)"
+    if why="$(check)"; then break; fi
+    [ "$i" = 1 ] && say "Waiting for the handheld to be free ($why)"
     if [ "$i" = "$tries" ]; then
-      echo "no quiet moment in ${QUIET_WAIT_MIN:-20} min (last tool call ${idle:-?} s ago); production is unchanged, try again later" >&2
+      echo "the handheld stayed in use for ${QUIET_WAIT_MIN:-20} min ($why); production is unchanged, try again later" >&2
       exit 1
     fi
     sleep 20
@@ -73,10 +73,10 @@ fi
 if $update_device; then
   if grep -q 'Relay-Setup.ps1$' <<<"$changed"; then
     say "Updating the handheld (full setup)"
-    "$RELAY" deploy --full
+    "$RELAY" deploy --full --force   # the wait above already made sure nobody is using it
   else
     say "Updating the handheld's runtime"
-    "$RELAY" deploy
+    "$RELAY" deploy --force   # the wait above already made sure nobody is using it
   fi
 fi
 

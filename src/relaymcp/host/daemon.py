@@ -14,7 +14,7 @@ from logging.handlers import RotatingFileHandler
 
 import relaymcp
 
-from . import config, devguard, tunnel, voice, voice_warm
+from . import config, devguard, sshconf, tunnel, voice, voice_warm
 
 STATUS_FILE = config.STATE_DIR / "daemon.json"
 log = logging.getLogger("relaymcp")
@@ -55,10 +55,24 @@ def run() -> None:
             log.error("voice dispatcher couldn't start on port %s: %s", cfg["device"]["ports"]["voice"], e)
     if server and voice_warm.enabled(cfg) and voice.find_agent("copilot"):
         voice_warm.RUNTIME.prewarm(voice.find_agent("copilot"))
+    try:
+        if sshconf.refresh_ssh_config(cfg):
+            log.info("updated %s", config.SSH_CONFIG)
+    except OSError as e:
+        log.warning("couldn't update %s: %s", config.SSH_CONFIG, e)
     forwards = tunnel.start_all(cfg)
     config.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    master_checked, master_up = 0.0, None
     try:
         while not stop.is_set():
+            tools = next((f for f in forwards if f.label == "tools"), None)
+            if os.name != "nt" and time.monotonic() - master_checked > 30 and tools and tools.status()["state"] == "up":
+                master_checked = time.monotonic()
+                started = sshconf.ensure_master(cfg)
+                up = started is not False
+                if up != master_up:
+                    log.info("shared SSH connection %s", "up" if up else "couldn't start (commands connect directly)")
+                    master_up = up
             status = {"pid": os.getpid(), "version": relaymcp.__version__, "updated": int(time.time()),
                       "device": cfg["device"]["name"], "voice": bool(server), "voice_runtime": voice_warm.RUNTIME.state(),
                       "tunnels": {f.label: f.status() for f in forwards}}

@@ -410,6 +410,13 @@ def deploy_full(cfg: dict, kit_dir: Path) -> None:
 def cmd_deploy(args: argparse.Namespace) -> None:
     cfg = _need_config()
     _need_device(cfg)
+    if not args.force:
+        from . import busy
+        why = busy.reasons(busy.probe(cfg))
+        if why:
+            ui.fail("the handheld is in use (" + "; ".join(why) + "); deploying restarts its servers. Try again later, "
+                    "or pass --force.")
+            sys.exit(1)
     if args.full:
         kit_dir = kit.build(cfg, host_ip=netinfo.lan_ip(), host_name=netinfo.hostname())
         deploy_full(cfg, kit_dir)
@@ -483,6 +490,30 @@ def cmd_agent(args: argparse.Namespace) -> None:
         ui.ok("removed" if agents.remove_agent() else "not installed")
     else:
         print(agents.handheld_agent(cfg))
+
+
+def cmd_busy(args: argparse.Namespace) -> None:
+    from . import busy
+    cfg = _need_config()
+    _need_device(cfg)
+    value = (args.minutes or "").strip().lower()
+    if value in ("off", "0"):
+        print(busy.clear(cfg))
+        return
+    if value:
+        if not value.isdigit():
+            ui.fail("usage: relaymcp busy [minutes|off] [--note text]   or   relaymcp busy --check")
+            sys.exit(2)
+        print(busy.mark(cfg, int(value), args.note or ""))
+        return
+    why = busy.reasons(busy.probe(cfg), args.quiet_seconds, args.ignore_lease)
+    if args.check:
+        print("busy: " + "; ".join(why) if why else "quiet")
+        sys.exit(1 if why else 0)
+    if why:
+        ui.warn("the handheld is in use: " + "; ".join(why))
+    else:
+        ui.ok("the handheld is quiet: no recent tool calls, busy mark, keep-awake lease or SSH commands")
 
 
 def cmd_bench(args: argparse.Namespace) -> None:
@@ -605,7 +636,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("deploy", help="(developers) push this checkout's device code to the handheld")
     s.add_argument("--full", action="store_true", help="re-run the whole setup on the handheld instead")
+    s.add_argument("--force", action="store_true", help="deploy even while the handheld is in use")
     s.set_defaults(func=cmd_deploy)
+
+    s = sub.add_parser("busy", help="mark the handheld busy (rollouts and deploys wait), or check whether it's in use")
+    s.add_argument("minutes", nargs="?", help="mark busy for this many minutes, or 'off'")
+    s.add_argument("--note", help="who or what is using it (shown to whoever checks)")
+    s.add_argument("--check", action="store_true", help="exit 0 if quiet, 1 if busy (for scripts)")
+    s.add_argument("--quiet-seconds", type=int, default=60, help="how recent a tool call counts as use (default 60)")
+    s.add_argument("--ignore-lease", action="store_true", help="don't count a keep-awake lease as use")
+    s.set_defaults(func=cmd_busy)
 
     s = sub.add_parser("exec", help="run PowerShell on the handheld: a command, or a script with --file")
     s.add_argument("-f", "--file", help="a .ps1 script to run ('-' reads it from stdin); words after -- are its arguments")

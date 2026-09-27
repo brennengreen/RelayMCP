@@ -52,6 +52,16 @@ changes are logged (`relaymcp logs`).
 | **Screen MCP** (`ally`, Windows-MCP) | you, in the desktop session; not elevated | Screenshots, UI automation, apps, clipboard, and PowerShell that needs the desktop (windows, UI state) |
 | **SSH** (`relaymcp exec`, `relaymcp ssh`) | an elevated administrator in session 0, with no desktop | Services, files, installs, logs, and long-running processes you pipe commands into (e.g. a Bedrock Dedicated Server) |
 
+Sharing the handheld:
+
+- **Mark long work busy.** `relaymcp busy 90 --note "BDS test run"` tells updates (`scripts/rollout.sh`,
+  `relaymcp deploy`) to wait; `relaymcp busy off` ends it, and `relaymcp busy` shows who's using the handheld. Updates
+  also wait while a tool call happened in the last minute, a keep-awake lease is active, or a command runs over SSH.
+- **One shared SSH connection, owned by the background service.** `ssh <device>` commands reuse it (so they start
+  faster) but never become it, so one command ending can't cut off another. It runs detached from the service, so
+  restarting the service doesn't drop it either. For a long-running process that must survive anything on this
+  computer's side (a server you pipe commands into), add `-o ControlPath=none` to give it its own connection.
+
 Things that trip agents up:
 
 - **SSH can't see the desktop.** Windows, focus and GUI apps live in your session; commands over SSH run in a

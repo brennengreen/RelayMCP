@@ -66,8 +66,22 @@ def render_ssh_config(cfg: dict) -> str:
         "  ServerAliveInterval 30",
     ]
     if os.name != "nt":  # Windows' OpenSSH client can't multiplex connections
-        lines += ["  ControlMaster auto", f"  ControlPath {_p(config.STATE_DIR / 'cm-%C')}", "  ControlPersist 10m"]
+        # Commands share one connection that the background service owns (see ensure_master), so repeat commands are
+        # fast. They never become the shared connection themselves: one born in a short-lived shell would die with it
+        # and take every session riding on it along.
+        lines += ["  ControlMaster no", f"  ControlPath {_p(config.STATE_DIR / 'cm-%C')}"]
     return "\n".join(lines) + "\n"
+
+
+def refresh_ssh_config(cfg: dict) -> bool:
+    """Rewrite ~/.relaymcp/ssh_config if it exists and is out of date (after an update). Never touches ~/.ssh/config."""
+    if not config.SSH_CONFIG.exists():
+        return False
+    text = render_ssh_config(cfg)
+    if config.SSH_CONFIG.read_text(encoding="utf-8") == text:
+        return False
+    config.SSH_CONFIG.write_text(text, encoding="utf-8")
+    return True
 
 
 def write_ssh_config(cfg: dict) -> bool:
@@ -155,9 +169,42 @@ def scan_host_key(host: str) -> str | None:
 
 
 def close_master(cfg: dict) -> None:
+    """Stop the shared connection from taking new sessions (they connect afresh). Sessions already using it keep
+    running until they finish, then it exits."""
     devguard.check("close the real SSH control connection")
     if os.name != "nt":
-        subprocess.run([ssh_exe(), "-O", "exit", cfg["device"]["name"]], capture_output=True, timeout=10)
+        subprocess.run([ssh_exe(), "-O", "stop", cfg["device"]["name"]], capture_output=True, timeout=10)
+
+
+def master_running(cfg: dict) -> bool:
+    if os.name == "nt":
+        return False
+    try:
+        return subprocess.run([ssh_exe(), "-O", "check", cfg["device"]["name"]], capture_output=True,
+                              timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def start_master(cfg: dict) -> bool:
+    """Start the shared connection in its own session, detached from the background service, so restarting the
+    service (an update) doesn't cut off the SSH sessions riding on it. It lasts until the handheld goes away."""
+    devguard.check("open the real SSH control connection")
+    if os.name == "nt":
+        return False
+    try:
+        return subprocess.run([ssh_exe(), "-o", "ControlMaster=yes", "-o", "ControlPersist=yes", "-o", "BatchMode=yes",
+                               "-N", "-f", cfg["device"]["name"]], capture_output=True, timeout=30,
+                              start_new_session=True, stdin=subprocess.DEVNULL).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def ensure_master(cfg: dict) -> bool | None:
+    """Start the shared connection if it isn't running. True = started now, False = failed, None = already running."""
+    if master_running(cfg):
+        return None
+    return start_master(cfg)
 
 
 def resolved_host(cfg: dict) -> str | None:
