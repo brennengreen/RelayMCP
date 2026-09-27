@@ -996,6 +996,7 @@ class Camera:
         self.accel = max(0.03, float(look.get("accel_s", 0.1)))
         self.y_gain = float(look.get("y_gain", 1.0)) or 1.0
         self.radial = look.get("stick", "radial") != "axial"  # most games; calibration says which
+        self.capture_fps = float(look.get("capture_fps") or 30.0)
         self.max_d = float(look.get("max_deflection", 1.0))  # faster than this, odometry can't follow
         # how far (in seconds of the current speed) it keeps turning after the stick lets go
         self.coast = float(look.get("coast_s") or (self.latency + self.accel / 3))
@@ -1016,14 +1017,24 @@ class Camera:
         is exactly -90 / +90). Turns keep it up to date."""
         self._tilt = float(degrees)
 
-    def _want(self, err: float, speed: float, tol: float) -> float:
-        """The turn rate (deg/s) to ask for with `err` degrees to go, turning at `speed` now."""
+    def _want(self, err: float, speed: float, tol: float, cap: float | None = None) -> float:
+        """The turn rate (deg/s) to ask for with `err` degrees to go, turning at `speed` now (at most `cap`)."""
         coming = abs(speed) * self.coast  # already on its way: it keeps turning this far after letting go
         left = abs(err) - coming
         if abs(err) <= tol or left <= 0:
             return 0.0
         decel = self.curve.max_rate / max(self.coast, 0.03)
-        return math.copysign(min(self.curve.max_rate, math.sqrt(1.2 * decel * left), 5.0 * left), err)
+        top = self.curve.max_rate if cap is None else min(self.curve.max_rate, cap)
+        return math.copysign(min(top, math.sqrt(1.2 * decel * left), 5.0 * left), err)
+
+    def _caps(self, odo: Odometry) -> tuple[float, float]:
+        """The fastest yaw and pitch (deg/s) the picture can be followed at with frames coming as fast as they are
+        now: a busy handheld captures fewer frames than at calibration, and past ~8% of the picture per frame the
+        gyro aliases (reads short, and the turn overshoots)."""
+        fps = odo.fps() if odo.updates >= 5 else self.capture_fps
+        w, h = odo.size[0] * odo.k, odo.size[1] * odo.k
+        per_s = SAFE_FRAME_FRACTION * max(fps, 5.0) / self.ppd
+        return w * per_s, h * per_s
 
     def stick_for(self, yaw_rate: float, pitch_rate: float) -> tuple[float, float]:
         """Stick (x, y) for yaw and pitch rates (degrees/s). A radial stick turns at the curve's rate for the stick's
@@ -1078,8 +1089,9 @@ class Camera:
                     timed_out = False
                     break
                 vx, vy = odo.rate(0.06)
-                ry = self._want(ey, -vx / self.ppd, tol)
-                rp = self._want(ep, vy / self.ppd, tol)
+                cap_y, cap_p = self._caps(odo)
+                ry = self._want(ey, -vx / self.ppd, tol, cap_y)
+                rp = self._want(ep, vy / self.ppd, tol, cap_p)
                 if ry == 0 and rp == 0 and (abs(ey) > tol or abs(ep) > tol):
                     io.stick(0.0, 0.0)  # coasting in on the inputs already sent
                 else:

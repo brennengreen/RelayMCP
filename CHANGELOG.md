@@ -81,7 +81,9 @@ handheld itself.
 - **Turning while looking straight down or up:** Minecraft's pitch limit is exactly -90/+90, where a yaw is pure roll
   in the picture and the small yaw part its direction came from is noise (in the simulator a 30-degree turn spun 810
   degrees). Programs call `set_pitch(deg)` after holding the stick into a limit, the camera keeps its pitch up to date
-  through turns, and the gyro takes a yaw's direction from it.
+  through turns, and the gyro takes a yaw's direction from it. Turns also cap their speed by the frame rate of the
+  moment (a busy machine captures fewer frames than at calibration, and past ~8% of the picture per frame the gyro
+  reads short and the turn overshoots).
 - **Instruments read exactly:** programs get `numbers(region)` and `pixel_text(region)`, which read text drawn in a
   game's pixel font glyph by glyph (Windows OCR read Minecraft's "Position: -11, 100, 0" as "-11, 13B," every time),
   and `grid_angle(region)`, a compass for grid worlds: looking straight down, the texture's straight edges give the
