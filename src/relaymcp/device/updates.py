@@ -13,19 +13,27 @@ from pathlib import Path
 NOTICE_WINDOW_S = 45 * 60   # how long after an update results mention it
 NOTICE_EVERY_S = 180        # at most one note per this many seconds (clients aren't told apart)
 
+# The tools of 0.1.0, the last release that didn't record its tool set: an upgrade from it still gets a notice.
+V010_TOOLS = (
+    "handheld_status gamepad_press gamepad_hold gamepad_sequence gamepad_status gamepad_watch gamepad_unplug "
+    "controller_rumble touch_tap touch_long_press touch_swipe touch_pinch touch_gesture key_press type_text mouse_look "
+    "mouse_hold touch_keyboard release_all_input audio_devices set_volume mic_record speaker_capture play_sound speak "
+    "list_voices listen transcribe_audio_file set_brightness display_modes set_display_mode power_mode system_load "
+    "keep_awake voice_assistant").split()
+
 
 def tool_hash(names) -> str:
     return hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest()[:10]
 
 
-def record(names: list[str], version: str, path: Path, now: float | None = None) -> dict:
+def record(names: list[str], version: str, path: Path, now: float | None = None, upgraded: bool = False) -> dict:
     """Compare this run's tools with the previous run's, remember this run's, and return what changed (if anything
-    within the notice window)."""
+    within the notice window). upgraded: the runtime ran before this feature existed (so compare with 0.1.0)."""
     now = time.time() if now is None else now
     try:
         prev = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        prev = None
+        prev = {"version": "0.1.0", "names": V010_TOOLS, "hash": tool_hash(V010_TOOLS)} if upgraded else None
     h = tool_hash(names)
     state = {"hash": h, "names": sorted(names), "version": version}
     if prev and (prev.get("hash") != h or prev.get("version") != version):

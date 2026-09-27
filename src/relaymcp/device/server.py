@@ -662,7 +662,9 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
         t.description = " ".join((t.description or "").split())  # docstrings carry their indentation otherwise
     if record_tools:
         names = [t.name for t in mcp._tool_manager.list_tools()]
-        updates.NOTICE = updates.Notice(updates.record(names, __version__, USER_DIR / "tools-seen.json"))
+        seen = USER_DIR / "tools-seen.json"
+        upgraded = not seen.exists() and (USER_DIR / "hardware.log").exists()  # an older runtime ran here before
+        updates.NOTICE = updates.Notice(updates.record(names, __version__, seen, upgraded=upgraded))
         lean.NOTE_HOOK = updates.NOTICE.take
     return mcp
 

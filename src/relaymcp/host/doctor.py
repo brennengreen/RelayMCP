@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -112,6 +113,13 @@ def run_checks(cfg: dict, deep: bool = True) -> list[Check]:
         ssh_ok = r.returncode == 0
         checks.append(Check("SSH login", ssh_ok, r.stdout.strip() or (r.stderr.strip().splitlines() or ["failed"])[-1],
                             "tap 'Repair RelayMCP' on the handheld; if its host key changed: `relaymcp trust`"))
+        if ssh_ok and os.name != "nt":
+            shared = sshconf.master_running(cfg)
+            checks.append(Check("Shared SSH connection", shared,
+                                "up (owned by the background service)" if shared else
+                                "not running yet (commands connect directly)",
+                                "the background service starts it within a minute of the tunnel coming up",
+                                optional=True))
         if ssh_ok and deep:
             probe = device_probe(cfg)
     if st:

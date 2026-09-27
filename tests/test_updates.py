@@ -58,3 +58,12 @@ def test_results_carry_the_note(monkeypatch):
     second = json.loads(asyncio.run(lean.lean_result(tool)()))
     assert first == {"ok": True, "relaymcp_update": "RelayMCP was updated at 20:05: new tools act."}
     assert second == {"ok": True}
+
+
+def test_upgrade_from_a_runtime_that_never_recorded_its_tools(tmp_path):
+    names = updates.V010_TOOLS + ["act", "behavior"]
+    state = updates.record(names, "0.2.0", tmp_path / "seen.json", now=5000, upgraded=True)
+    assert state["added"] == ["act", "behavior"] and state["previous_version"] == "0.1.0"
+    fresh = updates.record(names, "0.2.0", tmp_path / "other.json", now=5000, upgraded=False)
+    assert "changed_at" not in fresh  # a fresh install has nothing to announce
+    assert len(updates.V010_TOOLS) == 35
