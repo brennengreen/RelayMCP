@@ -63,6 +63,13 @@ handheld itself.
   `level()`, `look_at(x, y)`, `scan(score_fn)` and `look_rate()` in degrees, closed on tiled phase-correlation
   odometry with consensus gating, feedforward through the inverse response curve, coast-aware release and settling.
   `aim` defaults to the calibrated deadzone.
+- **Guards, pre-flight checks and a skill library** (from embodied-agent research: runtime monitors kept apart
+  from the policy, and Voyager-style libraries of verified skills): `behavior` kind `guard` is a standing safety
+  check (setup + a Python condition over the screen) that stops every program when it fires (a turn-based game then
+  pauses), can start a reflex program, only judges a running game, and reports through `alerts` in the next tool
+  results. Programs with unknown names fail before anything moves, with a "did you mean". `save` / `skills` /
+  `forget` keep programs that worked per game, with inputs inferred from the code and run statistics; run them with
+  `params.skill` + `params.args` or `skill("name", ...)` inside a program.
 - **Found by playing Minecraft:** template matching (aim, track at) no longer locks onto open sky: its running sums
   are float64 and flat windows can't match (float32 rounding had bright, nearly flat sky scoring in the thousands).
   `aim` and `track at` learn a game's stick deadzone (Minecraft ignores deflections under ~0.4) and report it, and

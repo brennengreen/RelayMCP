@@ -140,7 +140,9 @@ How to work:
    "program", params.wait true): Python at frame rate that holds controls, `aim`s while walking and waits `until`
    text or a change, never one small move per turn. Always add a `guard` (health, a death screen). Calibrate a
    game's camera once (kind "calibrate", max_s 90) to `turn`/`level`/`look_at`/`scan` in degrees. Aim away from
-   the HUD and held item; in menus, check the focused tooltip with `sees` before pressing A.
+   the HUD and held item; in menus, check the focused tooltip with `sees` before pressing A. Keep a standing
+   `guard` (kind "guard") running while programs come and go; `save` programs that worked and check `skills`
+   before writing new code.
 6. Prefer structured state over pixels: a game server's console (`proc`) or a log beats reading the screen.
 7. Coordinates are physical screen pixels.
 8. If the same thing blocks you twice (a dialog, a sign-in, a permission), stop and report it instead of guessing.
@@ -182,7 +184,8 @@ with a concrete goal and what done looks like. It runs a fast model with a small
 - Real-time games: turn-based first (`focus_window` with `pause`, so the game waits while you think), then one
   `program` behavior per sub-goal (`params.wait: true`): Python at frame rate with `pad`, `aim`, `until`, `sees`,
   `guard`. Calibrate a game's camera once (kind `calibrate`) and programs turn in degrees (`turn`, `level`,
-  `look_at`, `scan`). See `behavior(action="kinds")`.
+  `look_at`, `scan`). A standing `guard` behavior stops everything on danger; `save` programs that worked and look
+  in `skills` first. See `behavior(action="kinds")`.
 - Game servers and other consoles: `proc` (start with a ready pattern, `send` commands and read the reply, `wait`
   for a log line). Structured output beats pixels.
 - `powershell` on `{device}-handheld` keeps a warm, DPI-aware session (~50 ms per call); errors are plain text.

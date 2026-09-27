@@ -36,8 +36,8 @@ from mcp.types import ImageContent, TextContent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import (__version__, audio, behave, capture, control, focus, gamepad, inbox, lean, ocr, procs, pshost, speech, system,
-               tts, turns, updates, voice, win_input)
+from . import (__version__, audio, behave, capture, control, focus, gamepad, inbox, lean, ocr, procs, pshost, skills,
+               speech, system, tts, turns, updates, voice, win_input)
 from .lean import compact, lean_result, lean_schema
 from .paths import USER_DIR, VOICE_HEADER, device_settings
 
@@ -129,11 +129,15 @@ BEHAVIORS = behave.Runtime(
         region, 0, 0, *win_input.screen_size()) if region else None)).result(timeout=10),
     cursor=lambda: capture.cursor_pos(),
     state_events=lambda topic, since: (lambda r: (r["events"], r["cursor"]))(inbox.INBOX.read(topic, since, 200)),
-    on_start=lambda run: (focus.before_input(), TURNS.begin()),  # a paused game must be in front to resume
-    on_end=lambda run: TURNS.end(),
+    # A paused game must be in front to resume; guards only watch, so they don't keep a turn-based game running.
+    on_start=lambda run: None if run.kind == "guard" else (focus.before_input(), TURNS.begin()),
+    on_end=lambda run: None if run.kind == "guard" else TURNS.end(),
     profiles=control.ProfileStore(USER_DIR / "profiles"),
     app=lambda: (focus.foreground() or {}).get("process") or "unknown",
+    skills=skills.SkillStore(USER_DIR / "skills"),
+    active=lambda: not TURNS.paused,
 )
+lean.ALERT_HOOK = BEHAVIORS.take_alerts
 
 
 def _in_worker(pool: ThreadPoolExecutor, fn, *args, **kwargs):
@@ -396,11 +400,11 @@ def build_server(port: int, record_tools: bool = False, upgraded: bool = False) 
     @tool()
     async def behavior(action: str, kind: str = "", params: dict | None = None, id: str = "", since: int = 0,
                        max_s: float = 30.0) -> dict:
-        """Real-time loops on the handheld (react in tens of ms, no model round trips). action: start (kind, params,
-        max_s) -> id | status (id, since) | stop (id or all) | kinds (their params): react, track, press_until,
-        navigate, watch, script, program (Python at frame rate, for real-time play), calibrate (learn a game's
-        camera once; then programs turn in degrees). params.wait = return when done. A real controller moving stops
-        them."""
+        """Real-time loops on the handheld, no model round trips. action: start (kind, params, max_s; params.wait =
+        return when done) | status (id, since) | stop (id or all) | kinds (docs) | save / skills / forget (programs
+        that worked, by name, per game). Kinds: program (Python at frame rate: real-time play), calibrate (a game's
+        camera, once), guard (standing safety check), react, track, press_until, navigate, watch, script. A real
+        controller moving stops them."""
         out = await _run(PROC, behave.run_tool, BEHAVIORS, action, kind, params, id, since, max_s)
         return with_game_state(out) if action == "start" and (params or {}).get("wait") else out
 

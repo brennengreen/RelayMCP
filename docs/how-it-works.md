@@ -114,6 +114,14 @@ unknown *plant* with a camera: nothing below is specific to one game.
    `level`, `look_at` (put a screen point under the crosshair) and `scan` in degrees. Turns feed forward through the
    inverse response curve, release early by the measured coast, and wait until the view has settled before
    correcting, like a servo's in-position check.
+5. **Guard separately.** A `guard` behavior is a standing safety monitor, apart from the programs that come and go:
+   when its condition holds (health dropping, a death screen) every program stops, a turn-based game pauses, an
+   optional reflex program runs, and the next tool results carry an `alerts` entry. Guards only watch; they never
+   judge a paused game.
+6. **Check before moving, remember what worked.** A program that uses a name nothing defines fails before the
+   controller moves ("did you mean 'wait'?"). Programs that worked can be saved as named skills per game (`save`,
+   `skills`), with their inputs worked out from the code and a record of how their runs went, so later sessions
+   call them by name instead of re-sending and re-debugging code.
 
 Built-in pieces were checked against existing libraries first: OpenCV, scikit-image, SLAM packages, system
 identification toolkits, motion-profile and behavior-tree libraries, and LLM game-agent frameworks. None covers

@@ -95,12 +95,6 @@ def test_hard_stop_and_errors(console):
         procs.run(m, "send", "srv", text="list")
 
 
-def test_busy_counts_process_sessions():
-    from relaymcp.host import busy
-    quiet = {"now": "2026-09-26T21:00:00", "idle_s": 900}
-    assert busy.reasons({**quiet, "proc_sessions": "bds"}) == ["process sessions running: bds"]
-
-
 def test_wait_returns_what_arrived_meanwhile(console):
     m, cmd, _ = console
     procs.run(m, "start", "srv", cmd, pattern="started")

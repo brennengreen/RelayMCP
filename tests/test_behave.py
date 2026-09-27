@@ -553,10 +553,19 @@ def test_programs_end_at_their_limit_even_in_a_loop_that_never_waits():
 
 
 def test_program_errors_name_the_line():
-    status, _, _ = run_program("wait(1)\nundefined_thing()\n")
-    assert status["state"] == "failed" and "NameError" in status["reason"] and "line 2" in status["reason"]
+    status, _, _ = run_program("wait(1)\nx = 1 / 0\n")
+    assert status["state"] == "failed" and "ZeroDivisionError" in status["reason"] and "line 2" in status["reason"]
     status, _, _ = run_program("if True\n  pass")
     assert status["state"] == "failed" and "line 1" in status["reason"]
+
+
+def test_unknown_names_fail_before_anything_moves():
+    status, out, _ = run_program("pad(ls=(0, 1))\nwiat(500)\n")
+    assert status["state"] == "failed" and "line 2" in status["reason"] and "'wiat'" in status["reason"], status
+    assert "did you mean 'wait'" in status["reason"] and out.states == []  # the stick never moved
+    status, _, _ = run_program("def go(n):\n    for i in range(n):\n        wait(1)\n    return n\n"
+                               "total = sum(go(k) for k in [1, 2])\nresult = [total, (y := 3), math.pi > 3]")
+    assert status["state"] == "done" and status["result"] == [3, 3, True], status  # locals, walrus, API: all known
 
 
 def test_a_program_aims_while_it_walks():
@@ -630,3 +639,85 @@ def test_aim_says_so_when_the_target_is_part_of_the_screen_overlay():
     status, _, world = run_program("r = aim(1400, 900, timeout=6)\nresult = r", max_s=8, world=HandWorld())
     assert status["state"] == "failed" and "doesn't move when the camera turns" in status["reason"], status
     assert status["seconds"] < 3
+
+
+class GuardWorld(PanWorld):
+    """The panning world with a 'health bar' that tests can drain."""
+
+    def __init__(self):
+        super().__init__()
+        self.health = 1.0
+
+    def frame(self, region=None):
+        img, t = super().frame(None)
+        img = img.copy()
+        img[1000:1040, 600:1000] = (40, 40, 40, 255)
+        img[1000:1040, 600:600 + int(400 * self.health)] = (30, 30, 200, 255)  # BGRA red
+        if region:
+            img = img[region[1]:region[3], region[0]:region[2]]
+        return img, t
+
+
+def _guard_runtime(world, active=lambda: True, skills=None):
+    out = ProgramOutputs(world)
+    return behave.Runtime(world.frame, out, active=active, skills=skills, app=lambda: "Game.exe"), out
+
+
+def test_a_standing_guard_stops_programs_and_starts_a_reflex():
+    world = GuardWorld()
+    rt, out = _guard_runtime(world)
+    guard = rt.start("guard", {"name": "hurt", "setup": "BAR = [600, 1000, 1000, 1040]\nRED0 = color([200, 30, 30], BAR)",
+                               "when": "color([200, 30, 30], BAR) < 0.5 * RED0",
+                               "program": "pad(ls=(0, -1))\nwait(100)\nresult = 'backed off'"}, max_s=30)
+    walker = rt.start("program", {"code": "pad(ls=(0, 1))\nwait(10000)"}, max_s=20)
+    time.sleep(0.3)
+    world.health = 0.3
+    g = wait_state(rt, guard["id"], 5)
+    assert g["state"] == "done" and g["reason"] == "fired: hurt", g
+    assert rt.status(walker["id"])["state"] == "stopped"
+    alerts = rt.take_alerts()
+    assert alerts and alerts[0]["guard"] == "hurt" and alerts[0]["stopped"] == [walker["id"]], alerts
+    reflex = wait_state(rt, alerts[0]["reflex"], 5)
+    assert reflex["state"] == "done" and reflex["result"] == "backed off"
+    assert any(st["left_stick"] == [0.0, -1.0] for st in out.states)  # the reflex backed away
+    assert rt.take_alerts() is None  # each alert is handed out once
+
+
+def test_guards_only_judge_a_running_game_and_have_no_controller():
+    world, running = GuardWorld(), [False]
+    rt, _ = _guard_runtime(world, active=lambda: running[0])
+    g = rt.start("guard", {"when": "color([200, 30, 30], [600, 1000, 1000, 1040]) < 0.2", "then": "note"}, max_s=30)
+    world.health = 0.0
+    time.sleep(0.4)
+    assert rt.status(g["id"])["state"] == "running" and rt.take_alerts() is None  # paused: nothing judged
+    running[0] = True
+    assert wait_state(rt, g["id"], 5)["reason"].startswith("fired")
+    bad = rt.start("guard", {"when": "True", "setup": "pad(ls=(0, 1))"}, max_s=5)
+    st = wait_state(rt, bad["id"], 5)
+    assert st["state"] == "failed" and "unknown name 'pad'" in st["reason"], st
+    assert rt.start("guard", {"when": "False"}, max_s=9999)["max_s"] == 9999  # guards may watch for hours
+
+
+def test_skills_are_saved_found_run_by_name_and_keep_score(tmp_path):
+    from relaymcp.device import skills
+    world = GuardWorld()
+    store = skills.SkillStore(tmp_path)
+    rt, out = _guard_runtime(world, skills=store)
+    saved = behave.run_tool(rt, "save", "walk_for", {"code": "pad(ls=(0, SPEED))\nwait(MS)\nresult = MS",
+                                                      "description": "walk forward at SPEED for MS milliseconds"})
+    assert saved["inputs"] == ["SPEED", "MS"] and saved["app"] == "Game.exe", saved
+    listed = behave.run_tool(rt, "skills")["skills"]
+    assert listed[0]["name"] == "walk_for" and listed[0]["inputs"] == ["SPEED", "MS"]
+    st = behave.run_tool(rt, "start", "program", {"skill": "walk_for", "args": {"SPEED": 0.5, "MS": 30},
+                                                   "wait": True}, max_s=5)
+    assert st["state"] == "done" and st["result"] == 30 and st["skill"] == "walk_for", st
+    assert any(s["left_stick"] == [0.0, 0.5] for s in out.states)
+    st = behave.run_tool(rt, "start", "program", {"code": "r = skill('walk_for', SPEED=1, MS=20)\nresult = r * 2",
+                                                   "wait": True}, max_s=5)
+    assert st["state"] == "done" and st["result"] == 40, st
+    with pytest.raises(ValueError, match="needs MS"):
+        rt.runs.clear()
+        behave.run_tool(rt, "start", "program", {"skill": "walk_for", "args": {"SPEED": 1}, "wait": True}, max_s=5)
+    entry = behave.run_tool(rt, "skills")["skills"][0]
+    assert entry["runs"] == 2 and entry["ok"] == 2 and entry["last"] == "done", entry
+    assert behave.run_tool(rt, "forget", "walk_for")["forgot"] and behave.run_tool(rt, "skills")["skills"] == []

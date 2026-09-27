@@ -75,3 +75,9 @@ def test_mark_script_is_safe_with_any_note(monkeypatch):
     assert "AddMinutes([int]'30')" in s and "$(evil)" not in s
     encoded = s.split("FromBase64String('")[1].split("'")[0]
     assert base64.b64decode(encoded).decode() == "it's \"quoted\"; $(evil)"
+
+
+def test_busy_counts_process_sessions():
+    from relaymcp.host import busy
+    quiet = {"now": "2026-09-26T21:00:00", "idle_s": 900}
+    assert busy.reasons({**quiet, "proc_sessions": "bds"}) == ["process sessions running: bds"]

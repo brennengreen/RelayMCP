@@ -8,7 +8,11 @@ Built-in behaviors:
 - press_until: repeat an input until text, a color or a change appears
 - watch: report when a region changes or shows a color (no input)
 - program: a short Python program (the model writes it) with a controller and perception API, for real-time play:
-  hold several axes at once, aim while walking, wait for text or a change, guard against danger; one call per batch
+  hold several axes at once, aim while walking, wait for text or a change, guard against danger; one call per batch.
+  Programs that worked can be saved as named skills (skills.py) and run again by name.
+- guard: a standing safety check, separate from the programs that come and go: when its condition holds, every
+  program stops (a turn-based game then pauses) and an optional reflex program runs; alerts reach the model in the
+  next tool results.
 
 Safety: every run has a time limit, all held input is released when it ends (however it ends), and input on a
 physical controller (someone picked up the handheld) stops it. Perception uses numpy on DXGI frames; no model runs.
@@ -24,8 +28,10 @@ from typing import Any, Callable
 
 from .timing import HiResTimer, sleep_until  # noqa: F401  (sleep_until is re-exported for tests)
 
-MAX_RUNS = 4
+MAX_RUNS = 6
+MAX_GUARDS = 3
 MAX_SECONDS = 600.0
+GUARD_MAX_SECONDS = 4 * 3600.0  # guards only watch (their reflex is a separate, bounded program)
 EVENTS_KEPT = 300
 
 KINDS = {
@@ -59,7 +65,8 @@ KINDS = {
                'region (phase correlation; crop away the HUD), e.g. to calibrate camera turns. '
                'guard(fn, "hurt"): checked during every wait, stops the program when fn() is truthy. log(msg, **data) '
                '-> an event; result = {...} is returned. Also W, H, CX, CY, np, math. Everything held is released '
-               'when it ends; a stop request, max_s or a real controller moving ends it. Camera skills, in degrees, '
+               'when it ends; a stop request, max_s or a real controller moving ends it. skill("name", X=1) runs a '
+               'saved skill and returns its result. Unknown names fail before anything moves. Camera skills, in degrees, '
                'for an app that was calibrated (kind calibrate): turn(yaw=0, pitch=0) right/up +, closed on visual '
                'odometry; level(pitch=0); look_at(x, y): put a screen point under the crosshair; scan(score_fn, '
                'degrees=360): turn round calling score_fn(frame), end facing the best view -> {"heading", "score"}; '
@@ -69,6 +76,23 @@ KINDS = {
                  'right stick\'s deadzone and response curve, degrees per pixel (turns all the way round), focal '
                  'length, vertical gain and pitch limit. Saved on the handheld; programs then get turn/level/look_at/'
                  'scan. params: points (deflections to measure), full_turn (true), pitch (true).',
+    "guard": 'a standing safety check, separate from programs (they come and go, it stays): setup (code run once: '
+             'regions, baselines, e.g. RED0 = color([190,30,30], HEARTS)); when (a Python expression over frame, '
+             'diff, color, sees, text, elapsed: "color([190,30,30], HEARTS) < 0.5 * RED0"); every_ms (100); then '
+             '"stop" (every program and loop stops; a turn-based game pauses) or "note"; program (code: a reflex '
+             'started after stopping, e.g. back away; program_max_s 10); repeat (false), cooldown_ms (3000); name. '
+             'Checks only while the game runs; fires show as "alerts" in the next tool results. max_s up to 4 h.',
+}
+
+ACTIONS = {
+    "start": 'kind, params, max_s; params.wait = true returns when it ends. kind "program" with params.skill = a '
+             'saved skill\'s name and params.args = its inputs runs it by name',
+    "status": "id (and since = the last event number seen): new events; no id = every behavior",
+    "stop": "id, or no id = all (guards too)",
+    "save": 'kind = a name for a program that worked; params: code, description (what it does and needs: how it is '
+            'found later), common (every app); inputs are worked out from the code',
+    "skills": "the saved skills for the app in front (and common ones): name, description, inputs, runs, ok",
+    "forget": "kind = a skill's name",
 }
 
 
@@ -242,10 +266,10 @@ class Steer:
 
 
 class Run:
-    def __init__(self, kind: str, params: dict, max_s: float):
+    def __init__(self, kind: str, params: dict, max_s: float, cap: float = MAX_SECONDS):
         self.id = uuid.uuid4().hex[:8]
         self.kind, self.params = kind, params
-        self.max_s = max(0.5, min(float(max_s), MAX_SECONDS))
+        self.max_s = max(0.5, min(float(max_s), cap))
         self.started = time.perf_counter()
         self.state, self.reason = "running", None
         self.events: collections.deque = collections.deque(maxlen=EVENTS_KEPT)
@@ -290,9 +314,13 @@ class Runtime:
     def __init__(self, grab: Callable, outputs, takeover: Callable | None = None, read_text: Callable | None = None,
                  cursor: Callable | None = None, state_events: Callable | None = None,
                  on_start: Callable | None = None, on_end: Callable | None = None,
-                 profiles=None, app: Callable | None = None):
+                 profiles=None, app: Callable | None = None, skills=None, active: Callable | None = None):
         self.grab, self.out = grab, outputs
         self.profiles, self.app = profiles, app  # camera calibrations (control.ProfileStore) by foreground app
+        self.skills = skills  # saved programs (skills.SkillStore)
+        self.active = active or (lambda: True)  # is the game running (guards don't judge a paused game)?
+        self.alerts: collections.deque = collections.deque(maxlen=20)
+        self._alert_seq, self._alerts_taken = 0, 0
         self.on_start, self.on_end = on_start, on_end  # e.g. resume a paused game, and pause it again (turns.py)
         self.takeover = takeover or (lambda: None)
         self.read_text = read_text
@@ -311,9 +339,11 @@ class Runtime:
             active = [r for r in self.runs.values() if r.state == "running"]
             if len(active) >= MAX_RUNS:
                 raise RuntimeError(f"at most {MAX_RUNS} behaviors at a time (stop one first)")
+            if kind == "guard" and sum(r.kind == "guard" for r in active) >= MAX_GUARDS:
+                raise RuntimeError(f"at most {MAX_GUARDS} guards at a time (stop one first)")
             for rid in [rid for rid, r in self.runs.items() if r.state != "running"][:-8]:
                 del self.runs[rid]  # keep the last few finished ones for status
-            run = Run(kind, params, max_s)
+            run = Run(kind, params, max_s, GUARD_MAX_SECONDS if kind == "guard" else MAX_SECONDS)
             self.runs[run.id] = run
         if self.on_start:
             try:
@@ -349,6 +379,25 @@ class Runtime:
                 _interrupt(r)  # a program busy in a loop that never waits
         return stopped
 
+    def stop_others(self, keep: Run) -> list[str]:
+        """Stop every running behavior but guards (a guard firing stops what it guards)."""
+        ids = [r.id for r in list(self.runs.values()) if r.state == "running" and r is not keep and r.kind != "guard"]
+        for rid in ids:
+            self.stop(rid)
+        return ids
+
+    def _alert(self, alert: dict) -> None:
+        with self._lock:
+            self._alert_seq += 1
+            self.alerts.append({"n": self._alert_seq, **alert})
+
+    def take_alerts(self) -> list[dict] | None:
+        """Alerts not handed out yet (tool results carry them, so the model hears about a guard firing)."""
+        with self._lock:
+            new = [a for a in self.alerts if a["n"] > self._alerts_taken]
+            self._alerts_taken = self._alert_seq
+        return [{k: v for k, v in a.items() if k != "n"} for a in new] or None
+
     def status(self, run_id: str = "", since: int = 0) -> dict:
         if run_id:
             r = self.runs.get(run_id)
@@ -382,7 +431,7 @@ class Runtime:
 
     # --- shared loop pieces -----------------------------------------------------------------------------------------
 
-    def _ticks(self, run: Run, hz: float):
+    def _ticks(self, run: Run, hz: float, takeover_stops: bool = True):
         """Yield once per tick until the time limit, a stop request or a takeover."""
         period = 1.0 / max(0.01, min(float(hz), 240.0))  # anything from every 100 s to 240 times a second
         next_t = time.perf_counter()
@@ -393,7 +442,7 @@ class Runtime:
             if time.perf_counter() >= deadline:
                 run.reason = f"time limit ({run.max_s:g} s)"
                 return
-            who = self.takeover()
+            who = self.takeover() if takeover_stops else None
             if who:
                 raise _Stopped(f"you took over ({who})")
             yield
@@ -409,7 +458,7 @@ class Runtime:
             while wake - time.perf_counter() > 0.005:
                 if run.stop_evt.wait(min(wake - time.perf_counter() - 0.003, 0.25)):
                     break
-                who = self.takeover() if long_wait else None
+                who = self.takeover() if long_wait and takeover_stops else None
                 if who:
                     raise _Stopped(f"you took over ({who})")
             if not run.stop_evt.is_set():
@@ -590,27 +639,105 @@ class Runtime:
         run.stats["profile"] = control.summary(profile)
         run.reason = f"saved the camera profile for {app}"
 
-    def _run_program(self, run: Run, p: dict) -> None:
-        code = str(p.get("code") or "")
-        if not code.strip():
-            raise ValueError("program needs code")
+    def _run_guard(self, run: Run, p: dict) -> None:
+        import ast
+        when = str(p.get("when") or "").strip()
+        if not when:
+            raise ValueError('guard needs when: a Python expression, e.g. "color([190,30,30], HEARTS) < 0.5 * RED0"')
+        then = str(p.get("then") or "stop")
+        if then not in ("stop", "note"):
+            raise ValueError('then must be "stop" or "note"')
+        api = Program(self, run, perception_only=True)
+        ns = api.namespace()
+        setup = str(p.get("setup") or "")
         try:
-            compiled = compile(code, "<program>", "exec")
+            setup_tree, when_tree = ast.parse(setup, "<guard setup>"), ast.parse(when, "<guard>", mode="eval")
+        except SyntaxError as e:
+            raise ValueError(f"guard {e.filename.strip('<>')} line {e.lineno}: {e.msg}") from None
+        preflight(setup_tree, ns, "guard setup")
+        preflight(when_tree, set(ns) | defined_names(setup_tree), "guard")
+        reflex = str(p.get("program") or "")
+        if reflex:
+            try:
+                preflight(ast.parse(reflex, "<reflex>"), Program.NAMES, "reflex program")
+            except SyntaxError as e:
+                raise ValueError(f"reflex program line {e.lineno}: {e.msg}") from None
+        exec(compile(setup_tree, "<guard setup>", "exec"), ns)
+        cond = compile(when_tree, "<guard>", "eval")
+        name = str(p.get("name") or when)[:60]
+        repeat, cooldown = bool(p.get("repeat", False)), float(p.get("cooldown_ms", 3000)) / 1000
+        every = max(20.0, float(p.get("every_ms", 100)))
+        last = -1e9
+        run.stats["fired"] = 0
+        for _ in self._ticks(run, 1000 / every, takeover_stops=False):
+            if not self.active():
+                continue  # a paused game shows its pause menu, not the world
+            try:
+                hit = eval(cond, ns)
+            except _Stopped:
+                raise
+            except Exception as e:
+                raise RuntimeError(f"guard condition failed: {type(e).__name__}: {e}") from None
+            if not hit or time.perf_counter() - last < cooldown:
+                continue
+            last = time.perf_counter()
+            stopped = self.stop_others(run) if then == "stop" else []
+            started = None
+            if reflex:
+                who = self.takeover()
+                if who:
+                    run.emit("note", text=f"no reflex: {who} is in use")
+                else:
+                    started = self.start("program", {"code": reflex}, float(p.get("program_max_s", 10)))["id"]
+            alert = {"guard": name, "at": time.strftime("%H:%M:%S"), "stopped": stopped or None, "reflex": started}
+            run.emit("fired", **{k: v for k, v in alert.items() if v is not None})
+            self._alert({k: v for k, v in alert.items() if v is not None})
+            run.stats["fired"] += 1
+            if not repeat:
+                run.reason = f"fired: {name}"
+                return
+
+    def _run_program(self, run: Run, p: dict) -> None:
+        import ast
+        code, skill_name, args = str(p.get("code") or ""), p.get("skill"), dict(p.get("args") or {})
+        app = (self.app() if self.app else None) or "unknown"
+        if skill_name:
+            if self.skills is None:
+                raise RuntimeError("no skill library")
+            saved = self.skills.get(app, str(skill_name))
+            if not saved:
+                raise ValueError(f"no skill {skill_name!r} for {app} (behavior action skills lists them)")
+            code = saved["code"]
+            missing = [n for n in saved.get("inputs") or [] if n not in args]
+            if missing:
+                raise ValueError(f"skill {saved['name']} needs {', '.join(missing)} (params.args)")
+            run.stats["skill"] = saved["name"]
+        if not code.strip():
+            raise ValueError("program needs code (or params.skill)")
+        try:
+            tree = ast.parse(code, "<program>")
         except SyntaxError as e:
             raise ValueError(f"program line {e.lineno}: {e.msg}") from None
         api = Program(self, run)
-        ns = api.namespace()
+        ns = {**api.namespace(), **args}
+        preflight(tree, ns)  # before anything moves: a typo shouldn't surface after the controller started
+        compiled = compile(tree, "<program>", "exec")
         run.thread_id = threading.get_ident()
         _interrupt_after_deadline(run)
+        outcome = "done"
         try:
             exec(compiled, ns)
-        except _Stopped:
+        except _Stopped as e:
+            outcome = f"stopped: {e}"
             raise
         except Exception as e:
             line = next((f.lineno for f in reversed(_frames(e.__traceback__)) if f.filename == "<program>"), None)
-            raise RuntimeError(f"{type(e).__name__}: {e}" + (f" (program line {line})" if line else "")) from None
+            outcome = f"{type(e).__name__}: {e}" + (f" (program line {line})" if line else "")
+            raise RuntimeError(outcome) from None
         finally:
             run.thread_id = None
+            if skill_name and self.skills is not None:
+                self.skills.record(app, str(skill_name), outcome)
         if "result" in ns:
             run.stats["result"] = _jsonable(ns["result"])
 
@@ -757,6 +884,56 @@ class _Stopped(Exception):
     pass
 
 
+def defined_names(tree) -> set:
+    """Every name the code defines anywhere (assignments, loops, defs, arguments, imports, except-as, walrus)."""
+    import ast
+    out: set = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            out.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            out.add(node.name)
+        elif isinstance(node, ast.arg):
+            out.add(node.arg)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            out.update((a.asname or a.name).split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            out.add(node.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            out.update(node.names)
+        elif type(node).__name__ in ("MatchAs", "MatchStar") and getattr(node, "name", None):
+            out.add(node.name)
+    return out
+
+
+def free_names(tree, known) -> list:
+    """Names the code uses that nothing defines (nor the API, nor Python): (name, line) in order of first use."""
+    import ast
+    import builtins
+    defined, seen, out = defined_names(tree), set(), []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            n = node.id
+            if n in defined or n in known or hasattr(builtins, n) or n in seen:
+                continue
+            seen.add(n)
+            out.append((n, node.lineno))
+    return sorted(out, key=lambda x: x[1])
+
+
+def preflight(tree, known, what: str = "program") -> None:
+    """Fail before anything moves when the code uses a name nothing defines: a typo or an API it doesn't have."""
+    import difflib
+    unknown = free_names(tree, known)
+    if unknown:
+        name, line = unknown[0]
+        hint = difflib.get_close_matches(name, [k for k in known if not k.startswith("_")] + sorted(defined_names(tree)),
+                                         n=1, cutoff=0.7)
+        more = f" (and {', '.join(n for n, _ in unknown[1:4])})" if len(unknown) > 1 else ""
+        raise ValueError(f"{what} line {line}: unknown name {name!r}" + (f": did you mean {hint[0]!r}?" if hint else "")
+                         + more)
+
+
 class _Interrupted(_Stopped):
     def __init__(self, *args):
         super().__init__(*(args or ("interrupted: the program kept running without waiting",)))
@@ -799,8 +976,10 @@ class Program:
     """What a program may use (KINDS["program"]). Every wait checks the stop request, the time limit, a takeover and
     the program's guards, so a program can't outlive its limits or keep pressing after something went wrong."""
 
-    def __init__(self, rt: Runtime, run: Run):
-        self.rt, self.run = rt, run
+    NAMES: set = set()  # every name a program gets (filled in below the class)
+
+    def __init__(self, rt: Runtime, run: Run, perception_only: bool = False):
+        self.rt, self.run, self.perception_only = rt, run, perception_only
         self.state: dict = {"buttons": [], "left_stick": [0.0, 0.0], "right_stick": [0.0, 0.0],
                             "left_trigger": 0.0, "right_trigger": 0.0}
         self.guards: list[tuple[Callable, str]] = []
@@ -830,17 +1009,42 @@ class Program:
 
     def namespace(self) -> dict:
         import math
-        return {"pad": self.pad, "press": self.press, "seq": self.seq, "release": self.release, "wait": self.wait,
-                "until": self.until, "elapsed": self.elapsed, "frame": self.frame, "diff": difference,
-                "text": self.text, "sees": self.sees, "color": self.color, "aim": self.aim, "track": self.track,
-                "shift": phase_shift, "guard": self.guard,
-                "log": self.log, "W": self.w, "H": self.h, "CX": self.w // 2, "CY": self.h // 2, "np": _np(),
-                "math": math, "time": time,
+        seeing = {"elapsed": self.elapsed, "frame": self.frame, "diff": difference, "text": self.text,
+                  "sees": self.sees, "color": self.color, "track": self.track, "shift": phase_shift, "log": self.log,
+                  "W": self.w, "H": self.h, "CX": self.w // 2, "CY": self.h // 2, "np": _np(), "math": math,
+                  "time": time}
+        if self.perception_only:  # guards watch; only their reflex program touches the controller
+            return seeing
+        return {**seeing, "pad": self.pad, "press": self.press, "seq": self.seq, "release": self.release,
+                "wait": self.wait, "until": self.until, "aim": self.aim, "guard": self.guard, "skill": self.skill,
                 "turn": lambda yaw=0.0, pitch=0.0, tol=1.0: self.cam().turn(yaw, pitch, tol),
                 "level": lambda pitch=0.0: self.cam().level(pitch),
                 "look_at": lambda x, y: self.cam().look_at(x, y),
                 "scan": lambda score, degrees=360.0: self.cam().scan(score, degrees),
                 "look_rate": self.look_rate, "camera": self._summary()}
+
+    def skill(self, name: str, **inputs):
+        """Run a saved skill here (same controller state and guards) and return its result."""
+        import ast
+        if self.rt.skills is None:
+            raise RuntimeError("no skill library")
+        saved = self.rt.skills.get(self.app, name)
+        if not saved:
+            raise ValueError(f"no skill {name!r} for {self.app}")
+        missing = [n for n in saved.get("inputs") or [] if n not in inputs]
+        if missing:
+            raise ValueError(f"skill {saved['name']} needs {', '.join(missing)}")
+        ns = {**self.namespace(), **inputs}
+        tree = ast.parse(saved["code"], f"<skill {saved['name']}>")
+        outcome = "done"
+        try:
+            exec(compile(tree, f"<skill {saved['name']}>", "exec"), ns)
+        except Exception as e:
+            outcome = f"{type(e).__name__}: {e}"
+            raise
+        finally:
+            self.rt.skills.record(self.app, saved["name"], outcome)
+        return ns.get("result")
 
     def _summary(self):
         from . import control
@@ -1009,6 +1213,11 @@ class Program:
         return out
 
 
+Program.NAMES = {"elapsed", "frame", "diff", "text", "sees", "color", "track", "shift", "log", "W", "H", "CX", "CY",
+                 "np", "math", "time", "pad", "press", "seq", "release", "wait", "until", "aim", "guard", "skill",
+                 "turn", "level", "look_at", "scan", "look_rate", "camera"}
+
+
 def center_of(box) -> tuple[float, float]:
     return (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
 
@@ -1063,7 +1272,19 @@ def highlighted(lines: list[dict], frame, region=None, min_contrast: float = 25.
 def run_tool(rt: Runtime, action: str, kind: str = "", params: dict | None = None, run_id: str = "",
              since: int = 0, max_s: float = 30.0) -> dict:
     action = (action or "").lower()
+    if action in ("save", "skills", "forget"):
+        return skill_action(rt, action, kind, params or {})
     if action == "start":
+        if kind == "program" and (params or {}).get("skill"):  # a wrong name or missing input fails here, not later
+            if rt.skills is None:
+                raise RuntimeError("no skill library")
+            app = (rt.app() if rt.app else None) or "unknown"
+            saved = rt.skills.get(app, str(params["skill"]))
+            if not saved:
+                raise ValueError(f"no skill {params['skill']!r} for {app} (action skills lists them)")
+            missing = [n for n in saved.get("inputs") or [] if n not in (params.get("args") or {})]
+            if missing:
+                raise ValueError(f"skill {saved['name']} needs {', '.join(missing)} (params.args)")
         started = rt.start(kind, params, max_s)
         return rt.wait(started["id"]) if (params or {}).get("wait") else started
     if action == "status":
@@ -1071,5 +1292,27 @@ def run_tool(rt: Runtime, action: str, kind: str = "", params: dict | None = Non
     if action == "stop":
         return {"stopped": rt.stop(run_id)}
     if action == "kinds":
-        return {"kinds": KINDS, "limits": {"max_s": MAX_SECONDS, "at_once": MAX_RUNS}}
-    raise ValueError("action must be start, status, stop or kinds")
+        return {"kinds": KINDS, "actions": ACTIONS,
+                "limits": {"max_s": MAX_SECONDS, "guard_max_s": GUARD_MAX_SECONDS, "at_once": MAX_RUNS}}
+    raise ValueError("action must be start, status, stop, kinds, save, skills or forget")
+
+
+def skill_action(rt: Runtime, action: str, name: str, params: dict) -> dict:
+    import ast
+    if rt.skills is None:
+        raise RuntimeError("no skill library")
+    app = (rt.app() if rt.app else None) or "unknown"
+    if action == "skills":
+        return {"app": app, "skills": rt.skills.list(app)}
+    if action == "forget":
+        return {"forgot": rt.skills.forget(app, name)}
+    code = str(params.get("code") or "")
+    try:
+        tree = ast.parse(code, "<skill>")
+    except SyntaxError as e:
+        raise ValueError(f"skill line {e.lineno}: {e.msg}") from None
+    if not code.strip():
+        raise ValueError("save needs params.code")
+    inputs = [n for n, _ in free_names(tree, Program.NAMES)]  # what callers pass in (params.args, or skill(X=...))
+    saved = rt.skills.save(app, name, code, str(params.get("description") or ""), inputs, bool(params.get("common")))
+    return {"saved": saved["name"], "app": saved["app"], "inputs": inputs or None}

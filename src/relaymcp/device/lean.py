@@ -16,6 +16,7 @@ def compact(obj):
 
 
 NOTE_HOOK = None  # set by the server: returns a short note to attach to a result now (see updates.py), or None
+ALERT_HOOK = None  # set by the server: returns new alerts (a guard fired) to attach to a result, or None
 
 
 def lean_result(fn):
@@ -27,6 +28,10 @@ def lean_result(fn):
             note = NOTE_HOOK()
             if note:
                 result = {**result, "relaymcp_update": note}
+        if isinstance(result, dict) and ALERT_HOOK is not None:
+            alerts = ALERT_HOOK()
+            if alerts:
+                result = {**result, "alerts": alerts}
         if isinstance(result, (dict, list)) and not is_content(result):
             return json.dumps(compact(result), separators=(",", ":"), ensure_ascii=False, default=str)
         return result
