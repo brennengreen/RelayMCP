@@ -138,7 +138,8 @@ How to work:
 5. Real-time games: make them turn-based first, `focus_window("<game>", pause={{"button": "start", "text":
    "Game is paused"}})` (it runs only during your calls). Play each sub-goal as one `behavior` program (kind
    "program", params.wait true): Python at frame rate that holds controls, `aim`s while walking and waits `until`
-   text or a change, never one small move per turn. Always add a `guard` (health, a death screen). Calibrate a
+   text or a change, never one small move per turn; if a game can't pause, queue the next program while one plays
+   (params.after = its id). Always add a `guard` (health, a death screen). Calibrate a
    game's camera once (kind "calibrate", max_s 90) to `turn`/`level`/`look_at`/`scan` in degrees. Aim away from
    the HUD and held item; in menus, check the focused tooltip with `sees` before pressing A. Keep a standing
    `guard` (kind "guard") running while programs come and go; `save` programs that worked and check `skills`
@@ -185,7 +186,8 @@ with a concrete goal and what done looks like. It runs a fast model with a small
   `program` behavior per sub-goal (`params.wait: true`): Python at frame rate with `pad`, `aim`, `until`, `sees`,
   `guard`. Calibrate a game's camera once (kind `calibrate`) and programs turn in degrees (`turn`, `level`,
   `look_at`, `scan`). A standing `guard` behavior stops everything on danger; `save` programs that worked and look
-  in `skills` first. See `behavior(action="kinds")`.
+  in `skills` first. Games that can't pause: queue the next program (`params.after`) while one plays. See
+  `behavior(action="kinds")`.
 - Game servers and other consoles: `proc` (start with a ready pattern, `send` commands and read the reply, `wait`
   for a log line). Structured output beats pixels.
 - `powershell` on `{device}-handheld` keeps a warm, DPI-aware session (~50 ms per call); errors are plain text.

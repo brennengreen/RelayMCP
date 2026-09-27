@@ -508,6 +508,7 @@ class ProgramOutputs(PanOutputs):
 
     def release(self, used=()):
         self.released += 1
+        self.last_used = set(used)
         super().release(used)
 
 
@@ -728,3 +729,70 @@ def test_skills_are_saved_found_run_by_name_and_keep_score(tmp_path):
     entry = behave.run_tool(rt, "skills")["skills"][0]
     assert entry["runs"] == 2 and entry["ok"] == 2 and entry["last"] == "done", entry
     assert behave.run_tool(rt, "forget", "walk_for")["forgot"] and behave.run_tool(rt, "skills")["skills"] == []
+
+
+def program_rt(**kw):
+    world = PanWorld()
+    out = ProgramOutputs(world)
+    return behave.Runtime(world.frame, out, **kw), out
+
+
+def test_a_queued_program_starts_the_moment_the_one_ahead_finishes():
+    hooks = []
+    rt, out = program_rt(on_start=lambda r: hooks.append(("begin", r.id)), on_end=lambda r: hooks.append(("end", r.id)))
+    a = rt.start("program", {"code": "pad(rt=1)\nwait(250)\nresult = 'a'"}, max_s=5)
+    b = rt.start("program", {"code": "result = 'b'", "after": a["id"]}, max_s=5)
+    c = behave.run_tool(rt, "start", "program", {"code": "result = 'c'", "after": b["id"], "wait": True}, max_s=5)
+    assert b["state"] == "queued" and b["after"] == a["id"]
+    assert c["state"] == "done" and c["result"] == "c", c
+    sa, sb = rt.status(a["id"]), rt.status(b["id"])
+    assert sa["result"] == "a" and sb["state"] == "done" and sb["result"] == "b", (sa, sb)
+    # each next chunk begins before the one ahead ends: a turn-based game never pauses in between
+    assert hooks.index(("begin", b["id"])) < hooks.index(("end", a["id"])), hooks
+    assert hooks.index(("begin", c["id"])) < hooks.index(("end", b["id"])), hooks
+
+
+def test_a_failure_or_a_stop_cancels_what_was_queued_behind_it():
+    rt, _ = program_rt()
+    a = rt.start("program", {"code": "wait(100)\nx = 1 / 0"}, max_s=5)
+    b = rt.start("program", {"code": "result = 'b'", "after": a["id"]}, max_s=5)
+    c = rt.start("program", {"code": "result = 'c'", "after": b["id"]}, max_s=5)
+    done = rt.wait(c["id"])
+    assert rt.status(a["id"])["state"] == "failed"
+    assert rt.status(b["id"])["state"] == "cancelled" and a["id"] in rt.status(b["id"])["reason"]
+    assert done["state"] == "cancelled" and "result" not in done
+    with pytest.raises(RuntimeError, match="already failed"):
+        rt.start("program", {"code": "pass", "after": a["id"]})
+    long = rt.start("program", {"code": "wait(5000)"}, max_s=10)
+    queued = rt.start("program", {"code": "result = 1", "after": long["id"]}, max_s=5)
+    stopped = rt.stop()
+    assert set(stopped) >= {long["id"], queued["id"]}
+    assert rt.status(queued["id"])["state"] == "cancelled" and rt.status(long["id"])["state"] == "stopped"
+    with pytest.raises(ValueError, match="guards stand alone"):
+        rt.start("guard", {"when": "False", "after": long["id"]})
+
+
+def test_replacing_a_program_keeps_what_it_holds_until_the_new_one_ends():
+    hooks = []
+    rt, out = program_rt(on_start=lambda r: hooks.append(("begin", r.id)), on_end=lambda r: hooks.append(("end", r.id)))
+    a = rt.start("program", {"code": "pad(ls=(0, 1))\nwait(5000)"}, max_s=10)
+    time.sleep(0.2)
+    b = rt.start("program", {"code": "wait(150)\nresult = 'b'", "replace": a["id"]}, max_s=5)
+    sa = rt.status(a["id"])
+    assert b["replaced"] == a["id"] and sa["state"] == "stopped" and sa["reason"] == f"replaced by {b['id']}", sa
+    assert out.released == 0  # no snap to neutral between the two
+    done = rt.wait(b["id"])
+    assert done["result"] == "b" and out.released == 1 and "hold" in out.last_used, (done, out.last_used)
+    assert hooks.index(("begin", b["id"])) < hooks.index(("end", a["id"])), hooks
+    with pytest.raises(RuntimeError, match="isn't running"):
+        rt.start("program", {"code": "pass", "replace": a["id"]})
+
+
+def test_a_replace_racing_the_end_of_the_run_still_starts_the_new_one():
+    rt, _ = program_rt()
+    a = rt.start("program", {"code": "result = 'quick'"}, max_s=5)
+    try:
+        b = rt.start("program", {"code": "result = 'b'", "replace": a["id"]}, max_s=5)
+    except RuntimeError:
+        return  # it had already ended: refused cleanly, which is also fine
+    assert rt.wait(b["id"])["result"] == "b"

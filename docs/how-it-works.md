@@ -104,7 +104,10 @@ unknown *plant* with a camera: nothing below is specific to one game.
    single-player game turn-based: it runs only while the agent's input runs, and screenshots show the frozen frame.
 2. **Plan slow, act fast.** The model writes a short `program` per sub-goal (code as policy). It runs on the handheld
    at frame rate with a controller and perception API, and every wait checks its guards, the time limit and your
-   hands on the controller.
+   hands on the controller. Like the async action-chunk queues of robot policies, the next program can be queued
+   while one plays (`params.after`: it starts the moment that one finishes, and is dropped if it fails), and a
+   running one can be replaced mid-move without letting go of what it holds (`params.replace`), so play doesn't
+   stall for a model round trip between chunks.
 3. **Identify the plant once.** `behavior` kind `calibrate` (about 20-30 s, once per game) probes the look stick
    and learns which pixels are HUD, the focal length, the response curve and deadzone (slow to fast), the
    input-to-picture latency, the ramp up and how far it coasts after letting go, pixels per degree (it turns all

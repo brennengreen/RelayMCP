@@ -1,6 +1,7 @@
 """Telling agents about updates they can't see. MCP clients load the tool list when a session starts, and this server
 is stateless HTTP, so it can't push "the tools changed". Instead it remembers the tool set of its previous run; after
-an update, results briefly carry a short note naming the new tools and saying to restart the session."""
+an update, a few results carry a short note naming the new tools and saying to restart the session (clients can't
+be told apart, so the notes are spaced out and capped rather than repeated for everyone)."""
 
 from __future__ import annotations
 
@@ -12,6 +13,8 @@ from pathlib import Path
 
 NOTICE_WINDOW_S = 45 * 60   # how long after an update results mention it
 NOTICE_EVERY_S = 180        # at most one note per this many seconds (clients aren't told apart)
+NOTICE_MAX_NEW = 3          # notes in all about new tools (sessions started before the update can't see them)
+NOTICE_MAX_SAME = 1         # notes in all when only behavior changed: once is enough (it's context in every session)
 
 # The tools of 0.1.0, the last release that didn't record its tool set: an upgrade from it still gets a notice.
 V010_TOOLS = (
@@ -41,7 +44,7 @@ def record(names: list[str], version: str, path: Path, now: float | None = None,
                      added=sorted(set(names) - set(prev.get("names") or [])),
                      removed=sorted(set(prev.get("names") or []) - set(names)))
     elif prev and prev.get("changed_at") and now - prev["changed_at"] < NOTICE_WINDOW_S:
-        state.update({k: prev[k] for k in ("changed_at", "previous_version", "added", "removed") if k in prev})
+        state.update({k: prev[k] for k in ("changed_at", "previous_version", "added", "removed", "shown") if k in prev})
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(state), encoding="utf-8")
@@ -63,8 +66,8 @@ def note_text(state: dict) -> str:
 
 
 class Notice:
-    def __init__(self, state: dict | None = None, clock=time.time):
-        self.state, self._clock, self._last = state or {}, clock, 0.0
+    def __init__(self, state: dict | None = None, clock=time.time, path: Path | None = None):
+        self.state, self._clock, self._last, self._path = state or {}, clock, 0.0, path
         self._lock = threading.Lock()
 
     def active(self) -> bool:
@@ -75,11 +78,18 @@ class Notice:
         """The note to attach to a result now, or None."""
         if not self.active():
             return None
+        cap = NOTICE_MAX_NEW if self.state.get("added") else NOTICE_MAX_SAME
         with self._lock:
             now = self._clock()
-            if now - self._last < NOTICE_EVERY_S:
+            if now - self._last < NOTICE_EVERY_S or self.state.get("shown", 0) >= cap:
                 return None
             self._last = now
+            self.state["shown"] = self.state.get("shown", 0) + 1
+            if self._path is not None:  # the count survives restarts, so a redeploy doesn't start the notes again
+                try:
+                    self._path.write_text(json.dumps(self.state), encoding="utf-8")
+                except OSError:
+                    pass
         return note_text(self.state)
 
     def summary(self) -> dict:

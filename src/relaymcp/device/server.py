@@ -401,8 +401,8 @@ def build_server(port: int, record_tools: bool = False, upgraded: bool = False) 
     async def behavior(action: str, kind: str = "", params: dict | None = None, id: str = "", since: int = 0,
                        max_s: float = 30.0) -> dict:
         """Real-time loops on the handheld, no model round trips. action: start (kind, params, max_s; params.wait =
-        return when done) | status (id, since) | stop (id or all) | kinds (docs) | save / skills / forget (programs
-        that worked, by name, per game). Kinds: program (Python at frame rate: real-time play), calibrate (a game's
+        return when done, params.after = id: queue it, params.replace = id: take over) | status (id, since) | stop
+        (id or all) | kinds (docs) | save / skills / forget (programs that worked, per game). Kinds: program (Python at frame rate: real-time play), calibrate (a game's
         camera, once), guard (standing safety check), react, track, press_until, navigate, watch, script. A real
         controller moving stops them."""
         out = await _run(PROC, behave.run_tool, BEHAVIORS, action, kind, params, id, since, max_s)
@@ -749,8 +749,8 @@ def build_server(port: int, record_tools: bool = False, upgraded: bool = False) 
         t.description = " ".join((t.description or "").split())  # docstrings carry their indentation otherwise
     if record_tools:
         names = [t.name for t in mcp._tool_manager.list_tools()]
-        updates.NOTICE = updates.Notice(updates.record(names, __version__, USER_DIR / "tools-seen.json",
-                                                       upgraded=upgraded))
+        seen = USER_DIR / "tools-seen.json"
+        updates.NOTICE = updates.Notice(updates.record(names, __version__, seen, upgraded=upgraded), path=seen)
         lean.NOTE_HOOK = updates.NOTICE.take
     return mcp
 

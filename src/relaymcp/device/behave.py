@@ -29,6 +29,7 @@ from typing import Any, Callable
 from .timing import HiResTimer, sleep_until  # noqa: F401  (sleep_until is re-exported for tests)
 
 MAX_RUNS = 6
+MAX_QUEUED = 4   # programs waiting their turn (params.after): the next chunks, planned while one plays
 MAX_GUARDS = 3
 MAX_SECONDS = 600.0
 GUARD_MAX_SECONDS = 4 * 3600.0  # guards only watch (their reflex is a separate, bounded program)
@@ -70,7 +71,10 @@ KINDS = {
                'for an app that was calibrated (kind calibrate): turn(yaw=0, pitch=0) right/up +, closed on visual '
                'odometry; level(pitch=0); look_at(x, y): put a screen point under the crosshair; scan(score_fn, '
                'degrees=360): turn round calling score_fn(frame), end facing the best view -> {"heading", "score"}; '
-               'look_rate(yaw_dps, pitch_dps): hold a turn rate (walk and turn); camera: the profile summary.',
+               'look_rate(yaw_dps, pitch_dps): hold a turn rate (walk and turn); camera: the profile summary. '
+               'Chunks: params.after = a run id queues this program to start the moment that run finishes (plan the '
+               'next chunk while one plays; cancelled if that one fails or is stopped); params.replace = a run id '
+               'stops that run and starts this one at once, keeping what it holds (no snap to neutral).',
     "calibrate": 'learn the camera controls of the app in front, once per app (~30 s: pass max_s 90; somewhere safe '
                  'with a textured view, in the gameplay view): which pixels are HUD, input latency, acceleration, the '
                  'right stick\'s deadzone and response curve, degrees per pixel (turns all the way round), focal '
@@ -281,6 +285,10 @@ class Run:
         self._frame_ms: collections.deque = collections.deque(maxlen=240)
         self._lock = threading.Lock()
         self.thread_id: int | None = None
+        self.after: str | None = None   # queued behind this run: starts when it finishes
+        self.next: list["Run"] = []     # runs queued behind this one
+        self.handoff: "Run | None" = None  # replaced by this run: it takes over what this one holds
+        self.stop_reason = ""  # why it was asked to stop (e.g. "replaced by <id>")
 
     def emit(self, kind: str, **data) -> None:
         with self._lock:
@@ -297,6 +305,8 @@ class Run:
         out = {"id": self.id, "kind": self.kind, "state": self.state, "reason": self.reason,
                "seconds": round(elapsed, 1), "ticks": ticks, "hz": round(ticks / elapsed, 1) if elapsed > 0 else 0,
                "actions": self.stats["actions"], "events": self.seq}
+        if self.after and self.state == "queued":
+            out["after"] = self.after
         if self._frame_ms:
             s = sorted(self._frame_ms)
             out["frame_ms_p50"] = round(s[len(s) // 2], 1)
@@ -332,19 +342,61 @@ class Runtime:
     # --- lifecycle ---------------------------------------------------------------------------------------------------
 
     def start(self, kind: str, params: dict | None, max_s: float = 30.0) -> dict:
+        """params.after = a run id: queue this one to start the moment that run finishes (the next chunk of play,
+        planned while the current one plays; cancelled if that run fails or is stopped). params.replace = a run id:
+        stop that run and start this one at once, taking over the inputs it holds (no snap to neutral between)."""
         if kind not in KINDS:
             raise ValueError(f"kind must be one of {', '.join(KINDS)}")
         params = dict(params or {})
+        after, replace = str(params.pop("after", "") or ""), str(params.pop("replace", "") or "")
+        if after and replace:
+            raise ValueError("params.after or params.replace, not both")
         with self._lock:
+            prev = self.runs.get(after or replace) if (after or replace) else None
+            if (after or replace) and prev is None:
+                raise KeyError(f"no behavior {after or replace!r}")
+            if prev is not None and "guard" in (kind, prev.kind):
+                raise ValueError("guards stand alone: they aren't queued, replaced or replacing")
+            if after and prev.state in ("stopped", "failed", "cancelled"):
+                raise RuntimeError(f"behavior {prev.id} already {prev.state} ({prev.reason})")
+            if replace and prev.state != "running":
+                raise RuntimeError(f"behavior {prev.id} isn't running ({prev.state})")
+            queue = bool(after) and prev.state in ("running", "queued")
             active = [r for r in self.runs.values() if r.state == "running"]
-            if len(active) >= MAX_RUNS:
+            if queue and sum(r.state == "queued" for r in self.runs.values()) >= MAX_QUEUED:
+                raise RuntimeError(f"at most {MAX_QUEUED} behaviors queued (let some play first)")
+            if not queue and not replace and len(active) >= MAX_RUNS:
                 raise RuntimeError(f"at most {MAX_RUNS} behaviors at a time (stop one first)")
             if kind == "guard" and sum(r.kind == "guard" for r in active) >= MAX_GUARDS:
                 raise RuntimeError(f"at most {MAX_GUARDS} guards at a time (stop one first)")
-            for rid in [rid for rid, r in self.runs.items() if r.state != "running"][:-8]:
+            for rid in [rid for rid, r in self.runs.items() if r.state not in ("running", "queued")][:-8]:
                 del self.runs[rid]  # keep the last few finished ones for status
             run = Run(kind, params, max_s, GUARD_MAX_SECONDS if kind == "guard" else MAX_SECONDS)
             self.runs[run.id] = run
+            if queue:
+                run.state, run.after = "queued", prev.id
+                prev.next.append(run)
+                return {"id": run.id, "kind": kind, "max_s": run.max_s, "state": "queued", "after": prev.id}
+            if replace:
+                run.state = "starting"
+                prev.handoff = run
+        if replace:
+            self.stop(prev.id, reason=f"replaced by {run.id}")  # its thread starts this run as it ends
+            end = time.perf_counter() + 3.0
+            while prev.ended is None and time.perf_counter() < end:
+                time.sleep(0.01)
+            with self._lock:  # it ended on its own just before (or never ended): start this run here instead
+                unclaimed = prev.handoff is run
+                if unclaimed:
+                    prev.handoff = None
+            if unclaimed:
+                self._launch(run)
+            return {"id": run.id, "kind": kind, "max_s": run.max_s, "replaced": prev.id}
+        self._launch(run)
+        return {"id": run.id, "kind": kind, "max_s": run.max_s}
+
+    def _launch(self, run: Run) -> None:
+        run.state = "running"
         if self.on_start:
             try:
                 self.on_start(run)
@@ -352,11 +404,26 @@ class Runtime:
                 run.emit("note", text=f"before starting: {e}")
         run.started = time.perf_counter()  # the time limit counts from now (resuming a game can take a moment)
         threading.Thread(target=self._thread, args=(run,), name=f"behavior-{run.id}", daemon=True).start()
-        return {"id": run.id, "kind": kind, "max_s": run.max_s}
+
+    def _cancel(self, run: Run, reason: str) -> list[str]:
+        """Cancel a queued run and everything queued behind it."""
+        with self._lock:
+            if run.state != "queued":
+                return []
+            run.state, run.reason, run.ended = "cancelled", reason, time.perf_counter()
+            behind, run.next = run.next, []
+        run.emit("end", state=run.state, reason=reason)
+        out = [run.id]
+        for q in behind:
+            out += self._cancel(q, f"{run.id} before it was cancelled")
+        return out
 
     def wait(self, run_id: str, events: int = 40) -> dict:
-        """Block until a run ends; its summary and last events."""
+        """Block until a run ends; its summary and last events. A queued run first waits its turn (the runs ahead of
+        it have time limits, and a failure ahead cancels it)."""
         r = self.runs[run_id]
+        while r.state in ("queued", "starting"):
+            time.sleep(0.02)
         end = r.started + r.max_s + 10
         while r.state == "running" and time.perf_counter() < end:
             time.sleep(0.02)
@@ -364,10 +431,14 @@ class Runtime:
             time.sleep(0.01)
         return {**r.summary(), "events": r.since(0)[-events:]}
 
-    def stop(self, run_id: str = "") -> list[str]:
+    def stop(self, run_id: str = "", reason: str = "") -> list[str]:
         stopped = []
+        for r in list(self.runs.values()):  # queued ones first, so none starts as the ones ahead of it stop
+            if (not run_id or r.id == run_id) and r.state == "queued":
+                stopped += self._cancel(r, reason or "stopped before its turn")
         for r in list(self.runs.values()):
             if (not run_id or r.id == run_id) and r.state == "running":
+                r.stop_reason = reason
                 r.stop_evt.set()
                 stopped.append(r.id)
         for r in (self.runs[s] for s in stopped):
@@ -380,8 +451,9 @@ class Runtime:
         return stopped
 
     def stop_others(self, keep: Run) -> list[str]:
-        """Stop every running behavior but guards (a guard firing stops what it guards)."""
-        ids = [r.id for r in list(self.runs.values()) if r.state == "running" and r is not keep and r.kind != "guard"]
+        """Stop every running or queued behavior but guards (a guard firing stops what it guards, and its plans)."""
+        ids = [r.id for r in list(self.runs.values())
+               if r.state in ("running", "queued") and r is not keep and r.kind != "guard"]
         for rid in ids:
             self.stop(rid)
         return ids
@@ -417,10 +489,24 @@ class Runtime:
         except Exception as e:
             run.state, run.reason = "failed", f"{type(e).__name__}: {e}"
         finally:
-            try:
-                self.out.release(run.used)  # only what this run holds: other runs and the agent's input are theirs
-            except Exception:
-                pass
+            with self._lock:  # claimed here, so exactly one side starts what comes next
+                hand, behind, run.next, run.handoff = run.handoff, run.next, [], None
+            if hand is not None:  # replaced: the new run takes over what this one holds (no snap to neutral)
+                hand.used |= run.used
+                run.reason = f"replaced by {hand.id}"
+            else:
+                try:
+                    self.out.release(run.used)  # only what this run holds: other runs and the agent's input are theirs
+                except Exception:
+                    pass
+            # what comes next starts before this run's end hook, so a turn-based game doesn't pause in between
+            if hand is not None:
+                self._launch(hand)
+            for q in behind:
+                if run.state == "done" and q.state == "queued":
+                    self._launch(q)
+                else:
+                    self._cancel(q, f"{run.id} before it ended {run.state}")
             if self.on_end:
                 try:
                     self.on_end(run)
@@ -438,7 +524,7 @@ class Runtime:
         deadline = run.started + run.max_s
         while True:
             if run.stop_evt.is_set():
-                raise _Stopped("stopped on request")
+                raise _Stopped(run.stop_reason or "stopped on request")
             if time.perf_counter() >= deadline:
                 run.reason = f"time limit ({run.max_s:g} s)"
                 return
@@ -617,7 +703,7 @@ class Runtime:
             end = time.perf_counter() + seconds
             while True:
                 if run.stop_evt.is_set():
-                    raise _Stopped("stopped on request")
+                    raise _Stopped(run.stop_reason or "stopped on request")
                 if time.perf_counter() >= deadline:
                     raise _Stopped(f"time limit ({run.max_s:g} s): calibration takes ~30 s, pass max_s 90")
                 who = self.takeover()
@@ -1059,7 +1145,7 @@ class Program:
     def check(self) -> None:
         run = self.run
         if run.stop_evt.is_set():
-            raise _Stopped("stopped on request")
+            raise _Stopped(run.stop_reason or "stopped on request")
         if time.perf_counter() >= run.started + run.max_s:
             raise _Stopped(f"time limit ({run.max_s:g} s)")
         who = self.rt.takeover()

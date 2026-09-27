@@ -32,8 +32,9 @@ handheld itself.
   call instead of 1.5–2.5 s), DPI-aware so Win32 coordinates match screenshots, and errors as plain `ERROR:` lines
   instead of CLIXML.
 - **Agents hear about updates:** MCP clients only load tools when a session starts, so after an update, results
-  briefly carry a `relaymcp_update` note naming the new tools and saying to start a new session. `handheld_status`
-  reports the tool count and a tool-set hash.
+  briefly carry a `relaymcp_update` note naming the new tools and saying to start a new session (at most 3 notes,
+  3 minutes apart; one when only behavior changed; a redeploy doesn't start them over). `handheld_status` reports
+  the tool count and a tool-set hash, and any recent update, for the whole 45 minutes.
 - **Updates wait for the handheld to be free:** `relaymcp deploy` and `scripts/rollout.sh` hold off while a tool call
   happened in the last minute, a keep-awake lease or `relaymcp busy` mark is active, or a command runs over SSH
   (`deploy --force` overrides). New `relaymcp busy [minutes|off]` marks the handheld in use.
@@ -68,6 +69,10 @@ handheld itself.
   through the predicted local warp when the view rolls (yawing while looking down no longer drifts the pitch), and
   the full turn solves the focal length that makes it exactly 360 degrees (a rough first focal length no longer
   biases pixels per degree by 2-3%), redoing the turn slower if tracking broke or the start view was missed.
+- **Programs queue like action chunks:** `params.after = <run id>` starts a program the moment that run finishes
+  (plan the next chunk while one plays; it's cancelled if the run ahead fails or is stopped, and a guard firing
+  clears the queue), and `params.replace = <run id>` swaps a running program for a new one without letting go of
+  what it holds. A turn-based game doesn't pause between chained programs.
 - **The controller re-primes after touch, mouse or keyboard input:** tapping the screen switched Minecraft to its
   touch controls, and the next controller press only switched it back. The virtual pad now checks Windows' last-input
   time and nudges the right stick (net zero) first when anything but a controller came in since its last input.

@@ -40,6 +40,31 @@ def test_notice_is_rate_limited_and_expires(tmp_path):
     assert n.take() is None and "new" not in n.summary()
 
 
+def test_notes_are_capped_and_the_count_survives_a_restart(tmp_path):
+    path = tmp_path / "seen.json"
+    updates.record(OLD, "0.1.0", path, now=1000)
+    clock = [2010.0]
+    n = updates.Notice(updates.record(NEW, "0.1.1", path, now=2000), clock=lambda: clock[0], path=path)
+    shown = []
+    for _ in range(10):
+        shown.append(n.take())
+        clock[0] += updates.NOTICE_EVERY_S + 1
+    assert sum(1 for s in shown if s) == updates.NOTICE_MAX_NEW
+    restarted = updates.Notice(updates.record(NEW, "0.1.1", path, now=clock[0]), clock=lambda: clock[0], path=path)
+    assert restarted.active() and restarted.take() is None  # a redeploy doesn't start the notes over
+    assert restarted.summary()["new"] == ["act", "observe", "screenshot"]  # handheld_status still says so
+
+
+def test_a_behavior_only_update_is_mentioned_once(tmp_path):
+    path = tmp_path / "seen.json"
+    updates.record(OLD, "0.1.0", path, now=1000)
+    clock = [2010.0]
+    n = updates.Notice(updates.record(OLD, "0.1.1", path, now=2000), clock=lambda: clock[0], path=path)
+    assert "Tools are unchanged" in n.take()
+    clock[0] += 10 * updates.NOTICE_EVERY_S
+    assert n.take() is None
+
+
 def test_version_only_change(tmp_path):
     path = tmp_path / "seen.json"
     updates.record(OLD, "0.1.0", path, now=1000)
