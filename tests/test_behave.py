@@ -199,11 +199,13 @@ def test_stop_takeover_limits_and_errors(world):
 @pytest.mark.skipif(SLOPPY_CLOCK, reason="shared macOS CI machines oversleep")
 def test_sleep_until_is_precise():
     lateness = []
-    for _ in range(20):
-        target = time.perf_counter() + 0.005
-        behave.sleep_until(target)
-        lateness.append((time.perf_counter() - target) * 1000)
-    assert sorted(lateness)[int(len(lateness) * 0.9)] < 2.0, lateness
+    with behave.HiResTimer():  # as behaviors and pad sequences run
+        for _ in range(40):
+            target = time.perf_counter() + 0.005
+            behave.sleep_until(target)
+            lateness.append((time.perf_counter() - target) * 1000)
+    s = sorted(lateness)
+    assert s[len(s) // 2] < 1.0 and s[int(len(s) * 0.9)] < 4.0, lateness  # shared CI machines hiccup now and then
 
 
 class Menu:

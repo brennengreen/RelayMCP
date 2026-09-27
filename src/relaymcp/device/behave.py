@@ -312,6 +312,7 @@ class Runtime:
             target = best_line(lines, want)
             current = highlighted(lines, frame, region)
             run.stats["highlighted"] = current["text"] if current else None
+            run.stats["seen"] = [ln["text"] for ln in lines[:8]]  # what the menu looked like (for "why didn't it work")
             if target and current and target is current:
                 if p.get("confirm"):
                     self._act(run, {"pad": ["a"]} if with_pad else {"key": ["enter"]})

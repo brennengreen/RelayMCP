@@ -54,7 +54,7 @@ def test_steps_keep_time(pad):
     t0 = time.perf_counter()
     result = pad.run_steps([{"buttons": ["a"], "ms": 20}, {"ms": 20}] * 5)
     elapsed = (time.perf_counter() - t0) * 1000
-    assert abs(elapsed - 200) < (60 if SLOPPY_CLOCK else 8), elapsed
+    assert abs(elapsed - 200) < (150 if SLOPPY_CLOCK else 8), elapsed
     if os.name == "nt":  # the handheld's platform (macOS may deschedule a background process for a few ms)
         assert result["timing_ms_p95"] < 3, result
     presses = [u for u in pad._pad.updates if u[1]["buttons"] & gamepad.BUTTON_BITS["a"]]

@@ -126,7 +126,7 @@ def paint():
     for k, l in enumerate(labels):
         l.configure(bg="#2f6fd0" if k == state["i"] else "#202020", fg="white" if k == state["i"] else "#b0b0b0")
 def move(d):
-    state["i"] = max(0, min(len(items) - 1, state["i"] + d)); paint()
+    state["i"] = max(0, min(len(items) - 1, state["i"] + d)); paint(); print("MOVE " + items[state["i"]], flush=True)
 r.bind("<Down>", lambda e: move(1)); r.bind("<Up>", lambda e: move(-1))
 r.bind("<Return>", lambda e: (print("SELECTED " + items[state["i"]], flush=True), r.destroy()))
 paint(); r.after(40000, r.destroy); r.mainloop()
@@ -140,13 +140,20 @@ def test_navigate_a_menu_by_text():
     menu = [left + 10, top + 45, right - 10, bottom - 10]  # the menu itself, not the window's title bar
     started = server.BEHAVIORS.start("navigate", {"text": "Profile", "with": "keys", "confirm": True,
                                                   "region": menu}, max_s=30)
+    lines = []
     try:
-        line = proc.stdout.readline().strip()
+        while True:
+            line = proc.stdout.readline().strip()
+            if not line:
+                break
+            lines.append(line)
+            if line.startswith("SELECTED"):
+                break
     finally:
         server.BEHAVIORS.stop()
         proc.kill()
     status = server.BEHAVIORS.status(started["id"])
-    print(f"\nnavigate: {line!r}; {status.get('moves')} moves, {status['seconds']} s, state {status['state']} "
-          f"({status['reason']})")
-    assert line == "SELECTED Profile", status
+    print(f"\nnavigate: game saw {lines}; {status.get('moves')} moves, {status['seconds']} s, state {status['state']} "
+          f"({status['reason']}); behavior saw {status.get('seen')}, highlighted {status.get('highlighted')}")
+    assert lines and lines[-1] == "SELECTED Profile", status
     assert status.get("moves") == 4
