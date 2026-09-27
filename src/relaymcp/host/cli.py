@@ -485,7 +485,9 @@ def cmd_agent(args: argparse.Namespace) -> None:
     if args.action == "install":
         changed = agents.install_agent(cfg)
         ui.ok(f"{'installed' if changed else 'already up to date'}: {agents.agent_path()} (model {agents.agent_model(cfg)})")
-        ui.info("Copilot sessions started from now on can hand handheld work to it (or pick it with /agent handheld).")
+        ui.ok(f"and the skill {agents.skill_path()}")
+        ui.info("Copilot sessions started from now on can hand handheld work to the agent (or pick it with /agent "
+                "handheld), and load the skill's playbook when a task involves the handheld.")
     elif args.action == "remove":
         ui.ok("removed" if agents.remove_agent() else "not installed")
     else:
@@ -653,7 +655,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("command", nargs=argparse.REMAINDER)
     s.set_defaults(func=cmd_exec)
 
-    s = sub.add_parser("agent", help="a fast Copilot CLI custom agent for hands-on handheld work")
+    s = sub.add_parser("agent", help="a fast Copilot CLI custom agent (and skill) for hands-on handheld work")
     s.add_argument("action", nargs="?", choices=["install", "remove", "print"], default="print")
     s.add_argument("--model", help=f"model it runs on (default {agents.DEFAULT_AGENT_MODEL})")
     s.set_defaults(func=cmd_agent)

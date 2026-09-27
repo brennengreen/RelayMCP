@@ -10,8 +10,23 @@ def cfg():
 
 @pytest.fixture
 def agents_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(agents, "COPILOT_AGENTS", tmp_path)
+    monkeypatch.setattr(agents, "COPILOT_AGENTS", tmp_path / "agents")
+    monkeypatch.setattr(agents, "COPILOT_SKILLS", tmp_path / "skills")
+    (tmp_path / "agents").mkdir()
     return tmp_path
+
+
+def test_skill_installs_removes_and_respects_the_users_own(cfg, agents_dir):
+    agents.install_agent(cfg)
+    skill = agents.skill_path()
+    text = skill.read_text()
+    assert text.startswith("---\nname: relaymcp-handheld\ndescription:") and "`ally-handheld`" in text
+    assert len(text) < 4000
+    assert agents.remove_agent() and not skill.exists() and not skill.parent.exists()
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: relaymcp-handheld\ndescription: mine\n---\n")
+    with pytest.raises(RuntimeError, match="wasn't written by RelayMCP"):
+        agents.install_agent(cfg)
 
 
 def test_profile_limits_tools_and_sets_model(cfg):

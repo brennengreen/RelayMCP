@@ -15,6 +15,8 @@ from .voice import find_agent
 
 COPILOT_CONFIG = Path.home() / ".copilot" / "mcp-config.json"
 COPILOT_AGENTS = Path.home() / ".copilot" / "agents"
+COPILOT_SKILLS = Path.home() / ".copilot" / "skills"
+SKILL_NAME = "relaymcp-handheld"
 AGENT_NAME = "handheld"
 AGENT_MARKER = "<!-- written by relaymcp: `relaymcp agent install` updates it, `relaymcp agent remove` deletes it -->"
 DEFAULT_AGENT_MODEL = "claude-haiku-4.5"
@@ -142,18 +144,61 @@ unexpected. Never paste screenshots or raw tool output.
 """
 
 
-def agent_installed() -> bool:
+def skill_path() -> Path:
+    return COPILOT_SKILLS / SKILL_NAME / "SKILL.md"
+
+
+def handheld_skill(cfg: dict) -> str:
+    """An on-demand skill for main Copilot sessions: loaded only when a task involves the handheld."""
+    device = cfg["device"]["name"]
+    return f"""---
+name: {SKILL_NAME}
+description: How to work with the {device} handheld (a Windows gaming PC controlled through RelayMCP) quickly and cheaply. Use this whenever a task involves the handheld, its games, its screen or its gamepad.
+---
+{AGENT_MARKER}
+
+# Working with the {device} handheld
+
+The handheld is reached through two MCP servers, `{device}-handheld` (input, fast screen reading, real-time loops,
+consoles, PowerShell) and `{device}` (Windows-MCP: UI trees, apps, files), plus SSH (`relaymcp exec`, `ssh {device}`)
+for services and elevated work. The model is almost always the slow part: aim for few, big steps.
+
+## Delegate hands-on work
+For multi-step work on the device (navigate menus, play, set something up), hand it to the `handheld` custom agent
+with a concrete goal and what done looks like. It runs a fast model with a small context and reports back briefly.
+
+## Fast patterns
+- Look with `observe` (screen text + tap points, ~150 tokens); `screenshot` only for graphics (~730 tokens).
+- Do a sub-goal per call with `act`: `[{{"focus": "Minecraft"}}, {{"tap_text": "Play"}}, {{"wait_text": "Servers"}}]`, with
+  `observe: "text"` to see the result in the same reply.
+- Reflexes and repetition belong in a `behavior` on the handheld, not in model turns: `navigate` (reach a menu item
+  by its text), `press_until`, `react`, `track`, `watch`. Start one, then read `status` events.
+- Game servers and other consoles: `proc` (start with a ready pattern, `send` commands and read the reply, `wait`
+  for a log line). Structured output beats pixels.
+- `powershell` on `{device}-handheld` keeps a warm, DPI-aware session (~50 ms per call); errors are plain text.
+
+## Pitfalls
+- Input goes to the foreground window: check `foreground`/`warning` in input results, use `focus_window` (not the
+  App switch). An invisible ASUS helper window can hold focus; only a real tap on the screen clears it.
+- Mark long work so updates wait: `relaymcp busy 90 --note "what you're doing"`, `relaymcp busy off` after.
+- SSH commands share one connection; a long-running process started over SSH should use `-o ControlPath=none`.
+- If a result says RelayMCP was updated and names new tools, start a new session to use them.
+"""
+
+
+def _ours(path: Path) -> bool:
     try:
-        return AGENT_MARKER in agent_path().read_text(encoding="utf-8")
+        return AGENT_MARKER in path.read_text(encoding="utf-8")
     except OSError:
         return False
 
 
-def install_agent(cfg: dict) -> bool:
-    """Write or refresh the custom agent. Returns whether the file changed. Never overwrites an agent the user wrote."""
-    devguard.check("install a GitHub Copilot CLI custom agent")
-    path, text = agent_path(), handheld_agent(cfg)
-    if path.exists() and not agent_installed():
+def agent_installed() -> bool:
+    return _ours(agent_path())
+
+
+def _write_ours(path: Path, text: str) -> bool:
+    if path.exists() and not _ours(path):
         raise RuntimeError(f"{path} exists and wasn't written by RelayMCP; leaving it alone")
     if path.exists() and path.read_text(encoding="utf-8") == text:
         return False
@@ -162,16 +207,31 @@ def install_agent(cfg: dict) -> bool:
     return True
 
 
+def install_agent(cfg: dict) -> bool:
+    """Write or refresh the custom agent and the skill. Returns whether anything changed. Never overwrites files the
+    user wrote."""
+    devguard.check("install a GitHub Copilot CLI custom agent")
+    changed = _write_ours(agent_path(), handheld_agent(cfg))
+    return _write_ours(skill_path(), handheld_skill(cfg)) or changed
+
+
 def remove_agent() -> bool:
     devguard.check("remove a GitHub Copilot CLI custom agent")
-    if not agent_installed():
-        return False
-    agent_path().unlink()
-    return True
+    removed = False
+    for path in (agent_path(), skill_path()):
+        if _ours(path):
+            path.unlink()
+            removed = True
+    try:
+        skill_path().parent.rmdir()
+    except OSError:
+        pass
+    return removed
 
 
 def agent_current(cfg: dict) -> bool:
     try:
-        return agent_path().read_text(encoding="utf-8") == handheld_agent(cfg)
+        return (agent_path().read_text(encoding="utf-8") == handheld_agent(cfg)
+                and skill_path().read_text(encoding="utf-8") == handheld_skill(cfg))
     except OSError:
         return False

@@ -151,7 +151,7 @@ things on your computer. Change the voice with `relaymcp voice --voice am_michae
 | `relaymcp logs [--device] [-f]` | Logs from your computer or the handheld |
 | `relaymcp enroll` / `kit` / `trust` | Re-enroll after a reset, rebuild the kit, trust a new host key |
 | `relaymcp exec -- <PowerShell>` / `exec --file x.ps1` / `ssh` | Run a command or a whole script on the handheld / open a shell |
-| `relaymcp agent [install\|remove]` | A fast `handheld` Copilot custom agent that main sessions hand device work to |
+| `relaymcp agent [install\|remove]` | A fast `handheld` Copilot custom agent that main sessions hand device work to, plus an on-demand skill with the playbook |
 | `relaymcp busy [minutes\|off] [--note ..]` | Mark the handheld in use so updates wait, or see who's using it |
 | `relaymcp bench [--input] [--json]` | Measure tool latency and context cost; compares with the previous run |
 | `relaymcp deploy [--full]` | Developers: push your checkout's device code to the handheld |
