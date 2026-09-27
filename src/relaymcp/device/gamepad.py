@@ -305,6 +305,32 @@ class VirtualPad:
             if self._pad is not None:
                 self._apply(0, (0, 0), (0, 0), 0, 0)
 
+    def _play(self, parsed: list[tuple]) -> list[float]:
+        """Apply each step at its scheduled time (deadlines, 1 ms timer): steps don't drift, and each lands within
+        about a millisecond. ramp_ms eases sticks and triggers from the previous step's values. Returns how late each
+        step landed, in ms."""
+        from .timing import HiResTimer, sleep_until
+        late, prev = [], ((0.0, 0.0), (0.0, 0.0), 0.0, 0.0)
+        with HiResTimer():
+            t = time.perf_counter()
+            for mask, ls, rs, lt, rt, ms, ramp in parsed:
+                ramp = min(ramp, ms)
+                late.append((time.perf_counter() - t) * 1000)
+                if ramp:
+                    frames = max(1, ramp // 8)
+                    for i in range(1, frames + 1):
+                        k = i / frames
+                        self._apply(mask, (_mix(prev[0][0], ls[0], k), _mix(prev[0][1], ls[1], k)),
+                                    (_mix(prev[1][0], rs[0], k), _mix(prev[1][1], rs[1], k)),
+                                    _mix(prev[2], lt, k), _mix(prev[3], rt, k))
+                        sleep_until(t + ramp * k / 1000)
+                else:
+                    self._apply(mask, ls, rs, lt, rt)
+                t += ms / 1000
+                sleep_until(t)
+                prev = (ls, rs, lt, rt)
+        return late
+
     def run_steps(self, steps: list[dict]) -> dict:
         """Each step: {buttons, left_stick [x,y], right_stick [x,y], left_trigger, right_trigger, ms}. State per step
         replaces the previous one; the pad returns to neutral at the end."""
@@ -316,20 +342,20 @@ class VirtualPad:
             mask, lt, rt = _normalize(s.get("buttons"))
             ls = s.get("left_stick") or [0, 0]
             rs = s.get("right_stick") or [0, 0]
-            parsed.append((mask, (ls[0], ls[1]), (rs[0], rs[1]),
+            parsed.append((mask, (float(ls[0]), float(ls[1])), (float(rs[0]), float(rs[1])),
                            max(lt, float(s.get("left_trigger", 0) or 0)), max(rt, float(s.get("right_trigger", 0) or 0)),
-                           max(0, int(s.get("ms", 100)))))
+                           max(0, int(s.get("ms", 100))), max(0, int(s.get("ramp_ms", 0) or 0))))
         with self._lock:
             newly_plugged = self._pad is None
             self._ensure()
             try:
-                for mask, ls, rs, lt, rt, ms in parsed:
-                    self._apply(mask, ls, rs, lt, rt)
-                    time.sleep(ms / 1000)
+                late = self._play(parsed)
             finally:
                 self._apply(0, (0, 0), (0, 0), 0, 0)
                 self._touch()
         result = {"steps": len(parsed), "total_ms": total, "xinput_slot": self.index()}
+        if len(late) >= 4:
+            result["timing_ms_p95"] = round(sorted(late)[int(len(late) * 0.95)], 1)
         if newly_plugged:
             result["plugged_in"] = True
             if self.last_notice:
@@ -337,6 +363,10 @@ class VirtualPad:
             if self.last_focus_restore:
                 result["focus_restored"] = self.last_focus_restore.get("ok")
         return result
+
+
+def _mix(a: float, b: float, k: float) -> float:
+    return a + (b - a) * k
 
 
 PAD = VirtualPad()

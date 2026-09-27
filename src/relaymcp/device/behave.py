@@ -20,6 +20,8 @@ import time
 import uuid
 from typing import Any, Callable
 
+from .timing import HiResTimer, sleep_until  # noqa: F401  (sleep_until is re-exported for tests)
+
 MAX_RUNS = 4
 MAX_SECONDS = 600.0
 EVENTS_KEPT = 300
@@ -33,35 +35,6 @@ KINDS = {
                    '{"change": 12, "region": [...]}; max_presses (20)',
     "watch": 'region; when (as react); every_ms (100): reports each time it happens',
 }
-
-
-# ---------------------------------------------------------------------------------------------------- timing
-
-class HiResTimer:
-    """Windows' default timer ticks every ~15.6 ms; this asks for 1 ms while a behavior runs."""
-
-    def __enter__(self):
-        try:
-            import ctypes
-            self._winmm = ctypes.WinDLL("winmm")
-            self._winmm.timeBeginPeriod(1)
-        except Exception:
-            self._winmm = None
-        return self
-
-    def __exit__(self, *exc):
-        if self._winmm is not None:
-            self._winmm.timeEndPeriod(1)
-
-
-def sleep_until(deadline: float, clock=time.perf_counter) -> None:
-    """Sleep most of the way, then spin the last ~1.5 ms: steps land within about a millisecond."""
-    while True:
-        left = deadline - clock()
-        if left <= 0:
-            return
-        if left > 0.002:
-            time.sleep(left - 0.0015)
 
 
 # ---------------------------------------------------------------------------------------------------- perception

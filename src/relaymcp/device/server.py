@@ -364,8 +364,9 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
     @tool()
     async def gamepad_sequence(steps: list[dict]) -> dict:
         """Timed controller steps in order (max 60 s), each replacing the previous state: {"buttons": [...],
-        "left_stick": [x,y], "right_stick": [x,y], "left_trigger": 0-1, "right_trigger": 0-1, "ms": 200}; only
-        "ms" = neutral pause. Ends neutral."""
+        "left_stick": [x,y], "right_stick": [x,y], "left_trigger": 0-1, "right_trigger": 0-1, "ms": 200,
+        "ramp_ms": 100 (ease sticks/triggers in)}; only "ms" = neutral pause. Steps land within ~1 ms. Ends
+        neutral."""
         return await _run(INPUT, _focused(gamepad.PAD.run_steps), steps)
 
     @tool()

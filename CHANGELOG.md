@@ -37,6 +37,9 @@ Input reliability, from real use driving Minecraft Bedrock on a ROG Ally.
 - **No tool-search round trip:** Copilot hides MCP tool schemas behind a search tool, which cost every voice prompt
   an extra model call. Voice runs and the `handheld` agent keep the handheld's tool schemas in view; other Copilot
   sessions are unchanged.
+- **Gamepad timing:** sequence steps are scheduled against deadlines with a 1 ms timer, so they don't drift and each
+  lands within about a millisecond (Windows' default timer made each step up to 15 ms late). New `ramp_ms` eases
+  sticks and triggers into a step.
 - **`behavior` tool: real-time loops on the handheld** that react in tens of milliseconds with no model round
   trips: `react` (press when a region changes or shows a color), `track` (steer the mouse or a stick onto a colored
   target), `press_until` (repeat an input until text or a color appears) and `watch` (report changes). Each has a
