@@ -232,11 +232,11 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
 
     @tool()
     async def act(steps: list[dict], observe: str = "") -> Any:
-        """Several steps in one call, in order; stops at the first failure. Steps (one key each; screen px):
-        {"press": ["a"], "ms": 120}; {"pad": [gamepad_sequence steps]}; {"tap": [x, y]}; {"tap_text": "Play"};
-        {"click": [x, y]}; {"click_text": "OK"}; {"swipe": [x1, y1, x2, y2], "ms": 300}; {"key": ["enter"]};
-        {"type": "text"}; {"focus": "Minecraft"}; {"wait": 500}; {"wait_text": "Connected", "timeout": 10} (or
-        "gone": true). observe = "text" | "image" returns the screen afterwards."""
+        """Several steps in one call, in order; stops at the first failure. Steps (screen px): {"press": ["a"],
+        "ms": 120}, {"pad": [gamepad_sequence steps]}, {"tap": [x,y]}, {"tap_text": "Play"}, {"click": [x,y]},
+        {"click_text": "OK"}, {"swipe": [x1,y1,x2,y2]}, {"key": ["enter"]}, {"type": "text"}, {"focus":
+        "Minecraft"}, {"wait": 500}, {"wait_text": "Connected", "timeout": 10} (or "gone": true). observe =
+        "text" | "image" returns the screen after."""
         if len(steps) > 40:
             raise ValueError("at most 40 steps per call")
         t_start, notes, failed = time.monotonic(), [], None
@@ -336,9 +336,9 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
     @tool()
     async def proc(action: str, name: str = "", command: str = "", cwd: str = "", text: str = "", pattern: str = "",
                    timeout: float = 10.0, cursor: int | None = None, max_lines: int = 60) -> dict:
-        """Long-running consoles (e.g. a game server), no window. action: start (name, command, cwd; pattern = wait
-        for a ready line) | send (text = a stdin line; returns the reply, or waits for pattern) | read (new
-        output) | wait (pattern, timeout) | stop (text = graceful command) | list. Updates wait while one runs."""
+        """Consoles you talk to (e.g. a game server), no window. action: start (name, command, cwd; pattern = wait
+        for ready) | send (text = a stdin line; returns the reply, or waits for pattern) | read (new output) |
+        wait (pattern, timeout) | stop (text = graceful command) | list. Updates wait while one runs."""
         return await _run(PROC, procs.run, PROCS, action, name, command, cwd, text, pattern, timeout, cursor, max_lines)
 
     # ------------------------------------------------------------------------------------------ gamepad
@@ -364,10 +364,9 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
 
     @tool()
     async def gamepad_sequence(steps: list[dict]) -> dict:
-        """Timed controller steps in order (max 60 s), each replacing the previous state: {"buttons": [...],
-        "left_stick": [x,y], "right_stick": [x,y], "left_trigger": 0-1, "right_trigger": 0-1, "ms": 200,
-        "ramp_ms": 100 (ease sticks/triggers in)}; only "ms" = neutral pause. Steps land within ~1 ms. Ends
-        neutral."""
+        """Timed controller steps (max 60 s), each replacing the last: {"buttons": [...], "left_stick": [x,y],
+        "right_stick": [x,y], "left_trigger": 0-1, "right_trigger": 0-1, "ms": 200, "ramp_ms": 100 (ease in)};
+        only "ms" = neutral pause. ~1 ms accurate; ends neutral."""
         return await _run(INPUT, _focused(gamepad.PAD.run_steps), steps)
 
     @tool()
@@ -384,8 +383,8 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
 
     @tool()
     async def gamepad_watch(seconds: float = 5.0, slot: int | None = None, as_steps: bool = False) -> dict:
-        """Record controller input changes for a few seconds (what the user presses, or check the virtual pad).
-        as_steps = return them as gamepad_sequence steps (slot 0 unless given) to replay a move you were shown."""
+        """Record controller input for a few seconds (what the user presses). as_steps = as gamepad_sequence steps
+        (slot 0 unless given), to replay a move you were shown."""
         out = await _run(STT, gamepad.xinput_watch, seconds, slot)
         if as_steps:
             steps = gamepad.to_steps(out["events"], slot=slot if slot is not None else 0)
@@ -394,9 +393,9 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
 
     @tool()
     async def gamepad_connect(keep_plugged: bool = True) -> dict:
-        """Plug the virtual controller in ahead of time so the first press lands (waits until Windows sees it,
-        closes Armoury Crate's notice, restores focus). keep_plugged=True: connected until gamepad_unplug; else
-        it unplugs when idle (never while a game is in front)."""
+        """Plug the virtual controller in ahead of time so the first press lands (waits for Windows, closes Armoury
+        Crate's notice, restores focus). keep_plugged: stays until gamepad_unplug; else unplugs when idle, never
+        while a game is in front."""
         return await _run(INPUT, _focused(gamepad.PAD.connect), keep_plugged)
 
     @tool()
@@ -406,10 +405,9 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
 
     @tool()
     async def focus_window(target: str = "", remember: bool = True) -> dict:
-        """Bring a window to the front and verify it really is (past Windows' foreground lock). target = title or
-        process, e.g. "Minecraft"; remember=True makes it the input target (input tools refocus it). Empty target
-        = what has focus and why input may not register (recent focus changes, time since input); "none" clears
-        the target."""
+        """Bring a window to the front and verify it (past Windows' foreground lock). target = title or process
+        ("Minecraft"); remember = input tools refocus it. No target = what has focus and why input may not
+        register; "none" clears the target."""
         def run() -> dict:
             if not target:
                 return {**focus.diagnose(), "windows": [focus.short(w) for w in focus.windows(8)]}
@@ -463,9 +461,9 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
     # ------------------------------------------------------------------------------------------ keyboard / mouse
     @tool()
     async def key_press(keys: list[str], hold_ms: int = 50, repeat: int = 1, interval_ms: int = 100) -> dict:
-        """Press keys together as scan codes (work in games), hold, release: ["ctrl","shift","esc"]; ["w"] + hold_ms
-        2000 walks 2 s. Names: letters, digits, f1-f24, space, enter, esc, tab, shift, ctrl, alt, win, up, down,
-        left, right, home, end, pageup, pagedown, insert, delete, backspace, numpad0-9, volume keys, punctuation."""
+        """Press keys together as game-safe scan codes, hold, release: ["ctrl","shift","esc"]; ["w"] + hold_ms 2000
+        = walk 2 s. Keys: letters, digits, f1-f24, arrows, space, enter, esc, tab, shift, ctrl, alt, win, home,
+        end, pageup, pagedown, insert, delete, backspace, numpad0-9, volume, punctuation."""
         return await _run(INPUT, _focused(win_input.key_press), keys, hold_ms, repeat, interval_ms)
 
     @tool()
@@ -537,8 +535,8 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
     @tool()
     async def speak(text: str, voice: str | None = None, rate: int = 0, volume: int = 100, save_wav: bool = False,
                     engine: str = "auto") -> dict:
-        """Speak text aloud (neural voice). voice: af_heart (default), am_michael, bf_emma... or a Windows voice
-        (list_voices); engine auto|neural|sapi; rate -10..10; volume 0-100; save_wav renders a WAV instead."""
+        """Speak aloud (neural voice): voice af_heart (default), am_michael, bf_emma... or a Windows voice
+        (list_voices); engine auto|neural|sapi; rate -10..10; volume 0-100; save_wav renders a WAV."""
         speed = 1.0 + max(-10, min(int(rate), 10)) * 0.05
         if save_wav:
             path = str(audio._new_path("tts"))
@@ -621,9 +619,9 @@ def build_server(port: int, record_tools: bool = False) -> FastMCP:
     @tool()
     async def state(action: str = "read", topic: str = "", since: int = 0, match: str = "", timeout: float = 10.0,
                     max_items: int = 20) -> dict:
-        """Structured state that programs on the handheld (a game server script, an add-on) POST to
-        127.0.0.1:<this port>/state/<topic> (header X-Relay-State: 1). action: read (latest per topic + events since
-        `since`) | wait (next event on topic containing match, or key=value) | topics."""
+        """State programs on the handheld (e.g. a game server script) POST to 127.0.0.1:<port>/state/<topic> (header
+        X-Relay-State: 1). action: read (latest + events since `since`) | wait (next event on topic matching text
+        or key=value) | topics."""
         return await _run(PROC, inbox.run_tool, inbox.INBOX, action, topic, since, match, timeout, max_items)
 
     @mcp.custom_route("/voice/trigger", methods=["POST"])

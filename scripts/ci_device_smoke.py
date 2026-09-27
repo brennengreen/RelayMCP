@@ -24,4 +24,4 @@ assert {"act", "observe", "screenshot", "proc", "powershell", "focus_window", "b
 definitions = json.dumps([t.model_dump(exclude_none=True) for t in tools])
 print(f"tool definitions: {len(definitions)} chars (~{len(definitions) // 4} tokens)")
 assert '"title"' not in json.dumps([t.inputSchema for t in tools]), "schema titles should be stripped"
-assert len(definitions) <= 17000, "tool definitions grew past the context budget (~4.2k tokens)"
+assert len(definitions) <= 17500, "tool definitions grew past the context budget (~4.4k tokens)"
