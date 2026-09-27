@@ -69,6 +69,8 @@ handheld itself.
   through the predicted local warp when the view rolls (yawing while looking down no longer drifts the pitch), and
   the full turn solves the focal length that makes it exactly 360 degrees (a rough first focal length no longer
   biases pixels per degree by 2-3%), redoing the turn slower if tracking broke or the start view was missed.
+  `look_at` corrects only on a match near the middle of the picture (on the Ally, a look-alike dirt block across the
+  screen pulled it 20 degrees away), and a `turn` that runs out of time says so (`timed_out`).
 - **Programs queue like action chunks:** `params.after = <run id>` starts a program the moment that run finishes
   (plan the next chunk while one plays; it's cancelled if the run ahead fails or is stopped, and a guard firing
   clears the queue), and `params.replace = <run id>` swaps a running program for a new one without letting go of

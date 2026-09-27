@@ -796,3 +796,16 @@ def test_a_replace_racing_the_end_of_the_run_still_starts_the_new_one():
     except RuntimeError:
         return  # it had already ended: refused cleanly, which is also fine
     assert rt.wait(b["id"])["result"] == "b"
+
+
+def test_aimer_can_look_only_near_where_the_target_should_be():
+    rng = np.random.default_rng(3)
+    img = np.zeros((600, 800, 4), np.uint8)
+    img[..., :3] = rng.integers(0, 255, (600, 800, 1), dtype=np.uint8)
+    patch = img[200:320, 100:220].copy()
+    img[380:500, 560:680] = patch  # a look-alike elsewhere (blocky worlds repeat their textures)
+    aimer = behave.Aimer(img, (160, 260), 120)
+    x, y, score = aimer.find(img, refresh=False, near=(620, 440, 60))
+    assert abs(x - 620) <= 8 and abs(y - 440) <= 8 and score > 0.9, (x, y, score)
+    x, y, score = aimer.find(img, refresh=False, near=(160, 260, 60))
+    assert abs(x - 160) <= 8 and abs(y - 260) <= 8 and score > 0.9, (x, y, score)

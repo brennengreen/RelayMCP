@@ -69,7 +69,8 @@ KINDS = {
                'when it ends; a stop request, max_s or a real controller moving ends it. skill("name", X=1) runs a '
                'saved skill and returns its result. Unknown names fail before anything moves. Camera skills, in degrees, '
                'for an app that was calibrated (kind calibrate): turn(yaw=0, pitch=0) right/up +, closed on visual '
-               'odometry; level(pitch=0); look_at(x, y): put a screen point under the crosshair; scan(score_fn, '
+               'odometry; level(pitch=0); look_at(x, y, refine=True): put a screen point under the crosshair (refine: then '
+               'check the picture near the middle and correct); scan(score_fn, '
                'degrees=360): turn round calling score_fn(frame), end facing the best view -> {"heading", "score"}; '
                'look_rate(yaw_dps, pitch_dps): hold a turn rate (walk and turn); camera: the profile summary. '
                'Chunks: params.after = a run id queues this program to start the moment that run finishes (plan the '
@@ -219,10 +220,19 @@ class Aimer:
             raise ValueError("nothing distinctive at that point to follow (a flat area)")
         self.n = 0
 
-    def find(self, frame, refresh: bool = True) -> tuple[float, float, float]:
-        """(x, y) of the patch's center in this frame (screen px) and the match score (0-1)."""
+    def find(self, frame, refresh: bool = True, near=None) -> tuple[float, float, float]:
+        """(x, y) of the patch's center in this frame (screen px) and the match score (0-1). near = (x, y, radius):
+        look only within radius px of where it should be (blocky worlds are full of look-alikes)."""
         img = gray_small(frame, self.k)
-        x, y, score = match_template(img, self.tmpl)
+        ox = oy = 0
+        if near is not None:
+            cx, cy, r = (int(v) // self.k for v in near)
+            ox, oy = max(0, cx - r - self.half), max(0, cy - r - self.half)
+            x1, y1 = min(img.shape[1], cx + r + self.half), min(img.shape[0], cy + r + self.half)
+            if x1 - ox < 2 * self.half or y1 - oy < 2 * self.half:
+                return float(near[0]), float(near[1]), 0.0
+        x, y, score = match_template(img[oy:, ox:] if near is None else img[oy:y1, ox:x1], self.tmpl)
+        x, y = x + ox, y + oy
         self.n += 1
         if refresh and score > 0.8 and self.n % 10 == 0:  # only on a confident match
             self.tmpl = img[y:y + 2 * self.half, x:x + 2 * self.half].copy()
@@ -1109,7 +1119,7 @@ class Program:
                 "wait": self.wait, "until": self.until, "aim": self.aim, "guard": self.guard, "skill": self.skill,
                 "turn": lambda yaw=0.0, pitch=0.0, tol=1.0: self.cam().turn(yaw, pitch, tol),
                 "level": lambda pitch=0.0: self.cam().level(pitch),
-                "look_at": lambda x, y: self.cam().look_at(x, y),
+                "look_at": lambda x, y, **kw: self.cam().look_at(x, y, **kw),
                 "scan": lambda score, degrees=360.0: self.cam().scan(score, degrees),
                 "look_rate": self.look_rate, "camera": self._summary()}
 

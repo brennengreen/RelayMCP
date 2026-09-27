@@ -993,13 +993,14 @@ class Camera:
     def turn(self, yaw: float = 0.0, pitch: float = 0.0, tol: float = 1.0, timeout: float = 6.0) -> dict:
         """Turn by yaw (right +) and pitch (up +) degrees, closed on odometry. Returns what it measured."""
         io, odo = self.io, self.odometry()
-        t0, at_limit, still = time.perf_counter(), False, 0
+        t0, at_limit, still, timed_out = time.perf_counter(), False, 0, True
         try:
             while time.perf_counter() - t0 < timeout:
                 odo.update(io.frame())
                 done_y, done_p = -odo.x / self.ppd, odo.y / self.ppd
                 ey, ep = yaw - done_y, (0.0 if at_limit else pitch - done_p)
                 if abs(ey) <= tol and abs(ep) <= tol:
+                    timed_out = False
                     break
                 vx, vy = odo.rate(0.06)
                 ry = self._want(ey, -vx / self.ppd, tol)
@@ -1036,6 +1037,8 @@ class Camera:
                "error": round(max(abs(yaw - got_y), 0.0 if at_limit else abs(pitch - got_p)), 1)}
         if at_limit:
             out["pitch_limit"] = True
+        if timed_out:
+            out["timed_out"] = True  # didn't get within tol in time (the pulses after may still have finished it)
         return out
 
     def tilt(self) -> float | None:
@@ -1090,9 +1093,9 @@ class Camera:
         yaw, pitch = self.angles_to(x, y, w, h)
         out = self.turn(yaw, pitch)
         if aimer is not None:
-            for _ in range(2):
-                tx, ty, score = aimer.find(self.io.frame(), refresh=False)
-                if score < 0.5:
+            for _ in range(2):  # the turn put it near the middle: look only there (a far look-alike would pull away)
+                tx, ty, score = aimer.find(self.io.frame(), refresh=False, near=(w / 2, h / 2, 0.08 * w))
+                if score < 0.6:
                     out["refine"] = "lost it"
                     break
                 err = math.hypot(tx - w / 2, ty - h / 2)

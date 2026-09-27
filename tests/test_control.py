@@ -431,3 +431,11 @@ def test_pitch_stopping_at_its_limit_mid_turn_doesnt_run_on():
             sim.stick(0.0, 0.0)
         odo.update(sim.frame())
     assert abs(math.degrees(odo.pitch) - sim.pitch) < 3.0, (math.degrees(odo.pitch), sim.pitch)
+
+
+def test_a_turn_that_runs_out_of_time_says_so():
+    sim = CameraSim()
+    cam = control.Camera(io_for(sim), true_profile(sim))
+    out = cam.turn(yaw=150, timeout=0.3)
+    assert out.get("timed_out") is True, out
+    assert "timed_out" not in cam.turn(yaw=-20), "a turn that got there doesn't carry the flag"
