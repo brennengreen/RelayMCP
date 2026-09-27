@@ -37,7 +37,7 @@ $o | ConvertTo-Json -Compress
 
 MARK_SCRIPT = r"""
 $d = Join-Path $env:LOCALAPPDATA 'RelayMCP'; New-Item -ItemType Directory -Force -Path $d | Out-Null
-$until = (Get-Date).AddMinutes(__MINUTES__)
+$until = (Get-Date).AddMinutes([int]'__MINUTES__')
 Set-Content -Path (Join-Path $d 'busy-until.txt') -Value $until.ToString('s') -Encoding ascii
 Set-Content -Path (Join-Path $d 'busy-note.txt') -Value ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__NOTE__'))) -Encoding utf8
 'marked busy until ' + $until.ToString('ddd HH:mm')

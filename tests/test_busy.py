@@ -70,6 +70,6 @@ def test_mark_script_is_safe_with_any_note(monkeypatch):
     monkeypatch.setattr(busy.sshconf, "powershell", fake)
     busy.mark({}, 30, "it's \"quoted\"; $(evil)")
     s = captured["s"]
-    assert "AddMinutes(30)" in s and "$(evil)" not in s
+    assert "AddMinutes([int]'30')" in s and "$(evil)" not in s
     encoded = s.split("FromBase64String('")[1].split("'")[0]
     assert base64.b64decode(encoded).decode() == "it's \"quoted\"; $(evil)"
