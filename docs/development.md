@@ -61,7 +61,12 @@ relaymcp deploy             # zip this checkout's code, reinstall it on the hand
 relaymcp deploy --full      # rebuild the kit and re-run the whole setup unattended (for Relay-Setup.ps1 changes)
 relaymcp logs --device      # agent/server logs
 relaymcp exec -- Get-Content $env:LOCALAPPDATA\RelayMCP\agent-status.json
+relaymcp bench             # latency (ping, status, screenshot, SSH) and tokens per result; --input times the pad
 ```
+
+`relaymcp bench` saves each run under `~/.relaymcp/state/bench/` and prints the change since the previous run.
+`python scripts/analyze_session.py <session-id>` splits a Copilot session's time into model thinking and device
+calls, and counts screenshots and premium requests.
 
 SSH sessions of Windows administrators are elevated, so `deploy --full` can run the setup script unattended.
 Changes to the hardware server's tools show up in your MCP client after it reconnects. Regenerate the tool reference

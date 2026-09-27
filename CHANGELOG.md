@@ -16,6 +16,14 @@ Input reliability, from real use driving Minecraft Bedrock on a ROG Ally.
 - **`relaymcp doctor`** checks that the handheld runs the same device build as this computer.
 - **`relaymcp exec --file script.ps1`** (or `-` for stdin) runs a whole script with arguments, with no quoting
   trouble.
+- **Faster voice prompts:** voice runs load only the handheld's tools (no built-in MCP servers or custom
+  instructions) and default to a fast model (`gpt-5.4-mini`, low reasoning). A one-tool prompt went from ~13 s to
+  ~8 s. Models that reject a setting are retried without it.
+- **`handheld_status` ~2 s faster:** brightness is read and set through WMI over COM instead of starting PowerShell.
+- **Leaner tools:** hardware tool definitions are 21% smaller (no schema titles or null defaults, shorter
+  descriptions), and results are minified JSON without empty fields.
+- **`relaymcp bench`** measures latency (ping, status, screenshot, SSH) and tokens per result, and compares runs.
+  `scripts/analyze_session.py` splits a Copilot session's time into model and device time.
 - **Dev mode** (`scripts/dev-env.sh`): a development checkout can't touch the real installation.
 
 ## 0.1.0 (2026-09-26)

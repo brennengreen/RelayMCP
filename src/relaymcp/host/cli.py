@@ -24,7 +24,7 @@ from pathlib import Path
 
 import relaymcp
 
-from . import agents, config, daemon, doctor, enroll, kit, netinfo, services, sshconf, ui
+from . import agents, config, daemon, devguard, doctor, enroll, kit, netinfo, services, sshconf, ui
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 DEVICE_LOGS = ["agent.log", "hardware.log", "hardware.out.log", "windows-mcp.out.log", "keepawake.log"]
@@ -467,6 +467,14 @@ def cmd_exec(args: argparse.Namespace) -> None:
     sys.exit(out.returncode)
 
 
+def cmd_bench(args: argparse.Namespace) -> None:
+    from . import bench
+    cfg = _need_config()
+    if args.input:
+        devguard.check("send input to the handheld")
+    bench.main(cfg, args.rounds, args.input, not args.no_screen, args.json)
+
+
 def cmd_ssh(args: argparse.Namespace) -> None:
     cfg = _need_config()
     argv = [sshconf.ssh_exe(), cfg["device"]["name"], *args.rest]
@@ -586,6 +594,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--timeout", type=float, default=300)
     s.add_argument("command", nargs=argparse.REMAINDER)
     s.set_defaults(func=cmd_exec)
+
+    s = sub.add_parser("bench", help="measure tool latency and context cost through the tunnel")
+    s.add_argument("--rounds", type=int, default=15, help="pings per server")
+    s.add_argument("--input", action="store_true", help="also time the virtual gamepad plugging in (sends input)")
+    s.add_argument("--no-screen", action="store_true", help="skip the screenshot timing")
+    s.add_argument("--json", action="store_true", help="print the full result as JSON")
+    s.set_defaults(func=cmd_bench)
 
     s = sub.add_parser("ssh", help="open an SSH session to the handheld")
     s.add_argument("rest", nargs=argparse.REMAINDER)

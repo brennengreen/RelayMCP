@@ -6,6 +6,7 @@ from __future__ import annotations
 import ctypes
 import json
 import sys
+import threading
 import time
 import uuid
 from ctypes import wintypes
@@ -132,16 +133,38 @@ if _ole32 is not None:
     _ole32.CoInitializeEx.restype = ctypes.c_long  # a plain HRESULT: an already-initialized thread isn't an error
 
 
+_wmi_local = threading.local()  # COM objects belong to the thread (apartment) that made them
+
+
 def wmi(namespace: str = "root\\WMI"):
     """A WMI connection over COM (scripting API, late-bound): ~10-50 ms per query instead of ~1.5 s for starting
     PowerShell. Works on any thread; COM is initialized there if it isn't already (in whatever mode it has)."""
-    hr = _ole32.CoInitializeEx(None, 0) & 0xFFFFFFFF  # S_OK, S_FALSE and RPC_E_CHANGED_MODE all leave COM usable
-    if "comtypes" not in sys.modules and not hasattr(sys, "coinit_flags"):
-        # comtypes initializes COM when first imported (STA by default) and raises if this thread already chose MTA
-        sys.coinit_flags = 2 if hr == 0x80010106 else 0  # match this thread's apartment
-    import comtypes.client
-    locator = comtypes.client.CreateObject("WbemScripting.SWbemLocator", dynamic=True)
-    return locator.ConnectServer(".", namespace)
+    cache = _wmi_local.__dict__.setdefault("services", {})
+    if not cache:  # first use on this thread
+        hr = _ole32.CoInitializeEx(None, 0) & 0xFFFFFFFF  # S_OK, S_FALSE and RPC_E_CHANGED_MODE all leave COM usable
+        if "comtypes" not in sys.modules and not hasattr(sys, "coinit_flags"):
+            # comtypes initializes COM when first imported (STA by default) and raises if this thread already chose MTA
+            sys.coinit_flags = 2 if hr == 0x80010106 else 0  # match this thread's apartment
+    if namespace not in cache:
+        import comtypes.client
+        locator = comtypes.client.CreateObject("WbemScripting.SWbemLocator", dynamic=True)
+        cache[namespace] = locator.ConnectServer(".", namespace)
+    return cache[namespace]
+
+
+def wmi_get(obj, name: str):
+    """A property of a WMI object. WMI properties are dynamic (not in the type library), so they're read through the
+    typed Properties_ collection: comtypes binds attribute names through type info and can't see them otherwise."""
+    return obj.Properties_.Item(name).Value
+
+
+def wmi_call(obj, method: str, **args):
+    """Run a WMI method with named arguments and return its out-parameters object."""
+    spec = obj.Methods_.Item(method).InParameters
+    params = spec.SpawnInstance_() if spec is not None else None
+    for name, value in args.items():
+        params.Properties_.Item(name).Value = value
+    return obj.ExecMethod_(method, getattr(params, "_comobj", params))
 
 
 def wmi_first(query: str, namespace: str = "root\\WMI"):
@@ -164,7 +187,7 @@ def brightness() -> dict:
         out = _powershell("(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness -ErrorAction SilentlyContinue | "
                           "Select-Object -First 1).CurrentBrightness")
         return {"brightness_percent": int(out)} if out.strip().isdigit() else dict(NO_BRIGHTNESS)
-    return {"brightness_percent": int(obj.CurrentBrightness)} if obj is not None else dict(NO_BRIGHTNESS)
+    return {"brightness_percent": int(wmi_get(obj, "CurrentBrightness"))} if obj is not None else dict(NO_BRIGHTNESS)
 
 
 def set_brightness(percent: int) -> dict:
@@ -179,7 +202,7 @@ def set_brightness(percent: int) -> dict:
     try:
         if methods is False:
             raise RuntimeError
-        methods.WmiSetBrightness(0, percent)  # Timeout, Brightness
+        wmi_call(methods, "WmiSetBrightness", Timeout=0, Brightness=percent)
     except Exception:
         _powershell(
             "Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods | Select-Object -First 1 | "
