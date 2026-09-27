@@ -34,6 +34,8 @@ KINDS = {
     "press_until": 'do (as react); every_ms (400); until {"text": "Play"} | {"color": [r,g,b], "region": [...]} | '
                    '{"change": 12, "region": [...]}; max_presses (20)',
     "watch": 'region; when (as react); every_ms (100): reports each time it happens',
+    "navigate": 'text (the menu item to reach); region (the menu); with "pad" (d-pad + A) | "keys" (arrows + Enter); '
+                'confirm (false): press A/Enter on it; direction ("down") while it is off screen; max_moves (30)',
 }
 
 
@@ -292,6 +294,46 @@ class Runtime:
         hit, _m = matches(until, frame, baseline)
         return hit
 
+    def _run_navigate(self, run: Run, p: dict) -> None:
+        if not self.read_text:
+            raise RuntimeError("navigate needs OCR")
+        want = " ".join(str(p.get("text") or "").lower().split())
+        if not want:
+            raise ValueError("navigate needs text (the item to reach)")
+        region, with_pad = p.get("region"), p.get("with", "pad") == "pad"
+        max_moves, moves = max(1, min(int(p.get("max_moves", 30)), 200)), 0
+        settle = max(0.05, float(p.get("settle_ms", 150)) / 1000)
+        names = {"up": "dpad_up", "down": "dpad_down", "left": "dpad_left", "right": "dpad_right"} if with_pad else \
+            {"up": "up", "down": "down", "left": "left", "right": "right"}
+        search = str(p.get("direction", "down"))
+        for _ in self._ticks(run, 1 / settle):
+            lines = self.read_text(region)
+            frame, _ = self._frame(run, region)
+            target = best_line(lines, want)
+            current = highlighted(lines, frame, region)
+            run.stats["highlighted"] = current["text"] if current else None
+            if target and current and target is current:
+                if p.get("confirm"):
+                    self._act(run, {"pad": ["a"]} if with_pad else {"key": ["enter"]})
+                run.reason = f"reached {target['text']!r} in {moves} moves"
+                run.emit("reached", text=target["text"], moves=moves)
+                return
+            if moves >= max_moves:
+                raise _Stopped(f"didn't reach {want!r} in {moves} moves (highlighted: "
+                               f"{current['text'] if current else 'unknown'})")
+            if target and current:
+                (tx, ty), (cx, cy) = center_of(target["box"]), center_of(current["box"])
+                if abs(ty - cy) >= abs(tx - cx):
+                    step = "down" if ty > cy else "up"
+                else:
+                    step = "right" if tx > cx else "left"
+            else:
+                step = search  # not on screen yet (a longer list): keep going the way we were told
+            (self.out.pad if with_pad else self.out.key)([names[step]])
+            run.stats["actions"] += 1
+            moves += 1
+            run.stats["moves"] = moves
+
     def _run_track(self, run: Run, p: dict) -> None:
         region = p.get("region")
         color, tol = p.get("color"), int(p.get("tol", 50))
@@ -341,6 +383,43 @@ class Runtime:
 
 class _Stopped(Exception):
     pass
+
+
+def center_of(box) -> tuple[float, float]:
+    return (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+
+
+def best_line(lines: list[dict], want: str) -> dict | None:
+    """The OCR line for a menu item: exact, then starts-with, then contains (case and spacing ignored)."""
+    ranked = []
+    for i, ln in enumerate(lines):
+        t = " ".join(ln["text"].lower().split())
+        score = 3 if t == want else 2 if t.startswith(want) else 1 if want in t else 0
+        if score:
+            ranked.append((-score, len(t), i))
+    return lines[min(ranked)[2]] if ranked else None
+
+
+def highlighted(lines: list[dict], frame, region=None, min_contrast: float = 25.0) -> dict | None:
+    """The menu item that stands out: the line whose background brightness differs most from the others'."""
+    if not lines or frame is None:
+        return None
+    np = _np()
+    ox, oy = (region[0], region[1]) if region else (0, 0)
+    h, w = frame.shape[:2]
+    levels = []
+    for ln in lines:
+        x0, y0, x1, y1 = ln["box"]
+        pad = max(2, int((y1 - y0) * 0.25))
+        a, b = max(0, int(x0 - ox) - pad), min(w, int(x1 - ox) + pad)
+        c, d = max(0, int(y0 - oy) - pad), min(h, int(y1 - oy) + pad)
+        patch = frame[c:d, a:b, :3]
+        levels.append(float(np.median(patch.max(axis=2))) if patch.size else 0.0)
+    if len(levels) == 1:
+        return lines[0]
+    typical = float(np.median(levels))
+    i = max(range(len(levels)), key=lambda k: abs(levels[k] - typical))
+    return lines[i] if abs(levels[i] - typical) >= min_contrast else None
 
 
 def run_tool(rt: Runtime, action: str, kind: str = "", params: dict | None = None, run_id: str = "",

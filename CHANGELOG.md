@@ -42,7 +42,8 @@ Input reliability, from real use driving Minecraft Bedrock on a ROG Ally.
   sticks and triggers into a step.
 - **`behavior` tool: real-time loops on the handheld** that react in tens of milliseconds with no model round
   trips: `react` (press when a region changes or shows a color), `track` (steer the mouse or a stick onto a colored
-  target), `press_until` (repeat an input until text or a color appears) and `watch` (report changes). Each has a
+  target), `press_until` (repeat an input until text or a color appears), `watch` (report changes) and `navigate`
+  (move through a menu with the d-pad or arrow keys to an item by its text, reading the highlight, then select it). Each has a
   time limit, releases all input when it ends, and stops as soon as a real controller moves.
 - **`proc` tool: long-running consoles over MCP** (e.g. a Bedrock Dedicated Server): start one, send it a line and
   get its reply, read only new output, or wait until a line matches, all without screenshots. Updates wait while one

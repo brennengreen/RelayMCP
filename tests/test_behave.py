@@ -204,3 +204,77 @@ def test_sleep_until_is_precise():
         behave.sleep_until(target)
         lateness.append((time.perf_counter() - target) * 1000)
     assert sorted(lateness)[int(len(lateness) * 0.9)] < 2.0, lateness
+
+
+class Menu:
+    """Five rows; the highlighted one has a bright background. d-pad up/down (or arrows) move it; A/Enter selects."""
+
+    ITEMS = ["Play", "Marketplace", "Settings", "Profile", "Quit"]
+
+    def __init__(self):
+        self.index, self.selected, self.presses = 0, None, []
+
+    def lines(self, region=None):
+        return [{"text": t, "box": [20, 20 + 40 * i, 200, 50 + 40 * i]} for i, t in enumerate(self.ITEMS)]
+
+    def frame(self, region=None):
+        img = np.full((300, 400, 4), 40, np.uint8)
+        y = 20 + 40 * self.index
+        img[y - 5:y + 35, 10:210] = (200, 120, 30, 255)  # BGRA: a blue-ish highlight bar
+        return img, time.perf_counter()
+
+    def press(self, names):
+        name = names[0]
+        self.presses.append(name)
+        if name in ("dpad_down", "down"):
+            self.index = min(len(self.ITEMS) - 1, self.index + 1)
+        elif name in ("dpad_up", "up"):
+            self.index = max(0, self.index - 1)
+        elif name in ("a", "enter"):
+            self.selected = self.ITEMS[self.index]
+
+
+class MenuOutputs:
+    def __init__(self, menu):
+        self.m = menu
+
+    def pad(self, buttons):
+        self.m.press(buttons)
+
+    def key(self, keys):
+        self.m.press(keys)
+
+    def release(self):
+        pass
+
+
+def test_highlight_detection():
+    menu = Menu()
+    menu.index = 3
+    frame, _ = menu.frame()
+    assert behave.highlighted(menu.lines(), frame)["text"] == "Profile"
+    flat = np.full((300, 400, 4), 40, np.uint8)
+    assert behave.highlighted(menu.lines(), flat) is None  # nothing stands out
+    assert behave.best_line(menu.lines(), "market")["text"] == "Marketplace"
+
+
+@pytest.mark.parametrize("with_", ["pad", "keys"])
+def test_navigate_reaches_and_confirms(with_):
+    menu = Menu()
+    rt = behave.Runtime(menu.frame, MenuOutputs(menu), read_text=menu.lines)
+    rid = rt.start("navigate", {"text": "profile", "with": with_, "confirm": True, "settle_ms": 20}, max_s=5)["id"]
+    s = wait_state(rt, rid)
+    assert s["state"] == "done" and menu.selected == "Profile", s
+    assert s["moves"] == 3 and len(menu.presses) == 4  # three downs, then confirm
+    menu2 = Menu()
+    menu2.index = 4
+    rt2 = behave.Runtime(menu2.frame, MenuOutputs(menu2), read_text=menu2.lines)
+    s2 = wait_state(rt2, rt2.start("navigate", {"text": "Play", "settle_ms": 20}, max_s=5)["id"])
+    assert s2["state"] == "done" and menu2.index == 0 and set(menu2.presses) == {"dpad_up"}
+
+
+def test_navigate_gives_up_on_a_missing_item():
+    menu = Menu()
+    rt = behave.Runtime(menu.frame, MenuOutputs(menu), read_text=menu.lines)
+    s = wait_state(rt, rt.start("navigate", {"text": "Credits", "max_moves": 4, "settle_ms": 20}, max_s=5)["id"])
+    assert s["state"] == "stopped" and "didn't reach 'credits' in 4 moves" in s["reason"]

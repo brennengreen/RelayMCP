@@ -112,3 +112,41 @@ def test_track_a_moving_target():
     print(f"\ntrack: game-measured pointer error median {out.get('median', 0):.0f} px, p90 {out.get('p90', 0):.0f} px "
           f"(n={out.get('n')}); loop {status['hz']} Hz, {status['actions']} moves")
     assert out.get("n", 0) > 100 and out["median"] < 60, out
+
+
+MENU_GAME = r"""
+import sys, tkinter as t
+items = ["Play", "Marketplace", "Settings", "Achievements", "Profile", "Quit Game"]
+r = t.Tk(); r.title("RelayMenuGame"); r.geometry("420x440+180+120"); r.configure(bg="#202020")
+r.attributes("-topmost", True)
+labels = [t.Label(r, text=s, font=("Segoe UI", 22), width=16, anchor="w", padx=12) for s in items]
+for l in labels: l.pack(pady=4)
+state = {"i": 0}
+def paint():
+    for k, l in enumerate(labels):
+        l.configure(bg="#2f6fd0" if k == state["i"] else "#202020", fg="white" if k == state["i"] else "#b0b0b0")
+def move(d):
+    state["i"] = max(0, min(len(items) - 1, state["i"] + d)); paint()
+r.bind("<Down>", lambda e: move(1)); r.bind("<Up>", lambda e: move(-1))
+r.bind("<Return>", lambda e: (print("SELECTED " + items[state["i"]], flush=True), r.destroy()))
+paint(); r.after(40000, r.destroy); r.mainloop()
+"""
+
+
+def test_navigate_a_menu_by_text():
+    from relaymcp.device import server
+    proc, info = _start(MENU_GAME, "RelayMenuGame")
+    left, top, right, bottom = info["rect"]
+    menu = [left + 10, top + 45, right - 10, bottom - 10]  # the menu itself, not the window's title bar
+    started = server.BEHAVIORS.start("navigate", {"text": "Profile", "with": "keys", "confirm": True,
+                                                  "region": menu}, max_s=30)
+    try:
+        line = proc.stdout.readline().strip()
+    finally:
+        server.BEHAVIORS.stop()
+        proc.kill()
+    status = server.BEHAVIORS.status(started["id"])
+    print(f"\nnavigate: {line!r}; {status.get('moves')} moves, {status['seconds']} s, state {status['state']} "
+          f"({status['reason']})")
+    assert line == "SELECTED Profile", status
+    assert status.get("moves") == 4
