@@ -29,6 +29,8 @@ def test_exec_file_and_stdin(relay_home, monkeypatch, tmp_path):
 def test_runtime_check():
     from relaymcp.host.doctor import runtime_check
     assert runtime_check("ABC123", "0.1.1", {"hash": "abc123", "version": "0.1.1"}).ok
+    # `relaymcp deploy` doesn't rewrite device.json's version; identical builds are the same version
+    assert "0.1.1" in runtime_check("abc123", "0.1.1", {"hash": "abc123", "version": "0.1.0"}).detail
     stale = runtime_check("abc123", "0.1.1", {"hash": "fff000", "version": "0.1.0"})
     assert not stale.ok and "0.1.0" in stale.detail and "relaymcp setup" in stale.fix
     assert not runtime_check("abc", "0.1.1", {}).ok

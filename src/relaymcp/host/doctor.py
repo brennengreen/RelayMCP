@@ -79,8 +79,8 @@ def runtime_check(local_hash: str, local_version: str, remote: dict | None) -> C
     rh, rv = (remote.get("hash") or "").strip().lower(), remote.get("version") or "?"
     if not rh:
         return Check("Device runtime", False, "unknown (no deployed build recorded on the handheld)", "run `relaymcp setup`")
-    if rh == local_hash.lower():
-        return Check("Device runtime", True, f"up to date ({rv}, build {rh[:8]})")
+    if rh == local_hash.lower():  # identical code, so the same version (device.json's is only rewritten by setup)
+        return Check("Device runtime", True, f"up to date ({local_version}, build {rh[:8]})")
     return Check("Device runtime", False, f"outdated: the handheld runs {rv} (build {rh[:8]}), this computer has "
                  f"{local_version} (build {local_hash[:8]})", "run `relaymcp setup` (or `relaymcp deploy`)")
 
