@@ -20,10 +20,15 @@ def lean_result(fn):
     @functools.wraps(fn)
     async def wrapper(*args, **kwargs):
         result = await fn(*args, **kwargs)
-        if isinstance(result, (dict, list)):
+        if isinstance(result, (dict, list)) and not is_content(result):
             return json.dumps(compact(result), separators=(",", ":"), ensure_ascii=False, default=str)
         return result
     return wrapper
+
+
+def is_content(result) -> bool:
+    """A list of ready-made MCP content blocks (image + text), which the SDK passes through as they are."""
+    return isinstance(result, list) and bool(result) and all(hasattr(x, "type") and hasattr(x, "model_dump") for x in result)
 
 
 def lean_schema(schema):

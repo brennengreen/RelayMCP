@@ -85,10 +85,10 @@ jobs:
       - name: Import the device modules and build the hardware MCP server
         timeout-minutes: 5
         run: '& "$env:RUNNER_TEMP\devenv\Scripts\python.exe" -u scripts/ci_device_smoke.py'
-      - name: Device tests on the runner's desktop (focus, virtual gamepad)
+      - name: Device tests on the runner's desktop (focus, virtual gamepad, capture)
         timeout-minutes: 5
         env:
           RELAYMCP_DEVICE_TESTS: "1"
         run: |
           uv pip install --python "$env:RUNNER_TEMP\devenv\Scripts\python.exe" pytest
-          & "$env:RUNNER_TEMP\devenv\Scripts\python.exe" -m pytest tests/device -q -p no:cacheprovider
+          & "$env:RUNNER_TEMP\devenv\Scripts\python.exe" -m pytest tests/device tests/test_capture.py -q -rs -s -p no:cacheprovider

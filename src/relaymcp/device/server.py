@@ -19,9 +19,11 @@ except Exception:  # audio tools will report the error when used
 
 import argparse
 import asyncio
+import base64
 import ctypes
 import functools
 import gc
+import json
 import logging
 import os
 import time
@@ -30,11 +32,12 @@ from logging.handlers import RotatingFileHandler
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ImageContent, TextContent
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import __version__, audio, focus, gamepad, speech, system, tts, voice, win_input
-from .lean import lean_result, lean_schema
+from . import __version__, audio, capture, focus, gamepad, speech, system, tts, voice, win_input
+from .lean import compact, lean_result, lean_schema
 from .paths import USER_DIR, VOICE_HEADER, device_settings
 
 LOG_DIR = USER_DIR
@@ -49,6 +52,8 @@ INPUT = ThreadPoolExecutor(max_workers=1, thread_name_prefix="input")          #
 COM = ThreadPoolExecutor(max_workers=1, thread_name_prefix="com", initializer=_com_init)  # capture, volume, keyboard UI
 PLAY = ThreadPoolExecutor(max_workers=1, thread_name_prefix="play", initializer=_com_init)  # speech/tones (overlaps capture)
 STT = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stt", initializer=_com_init)  # whisper (CPU heavy)
+SCREEN = ThreadPoolExecutor(max_workers=1, thread_name_prefix="screen")  # screen capture (owns the DXGI duplication)
+GRABBER = capture.Grabber()
 
 
 def _in_worker(pool: ThreadPoolExecutor, fn, *args, **kwargs):
@@ -83,7 +88,8 @@ async def _run(pool: ThreadPoolExecutor, fn, *args, **kwargs) -> Any:
 
 INSTRUCTIONS = """Hardware tools for the user's Windows gaming handheld (ROG Ally-class: touch screen, built-in Xbox-style
 controller, speakers, mic). Pair with the `{screen}` server (screen control): look there, act here.
-- Coordinates are physical pixels, the same as `{screen}` screenshots.
+- Coordinates are physical pixels, the same as `{screen}` screenshots. `screenshot` here is faster and ~3x cheaper;
+  its `to_screen` says how its image coordinates map to screen pixels.
 - Input only reaches the window in front. After launching a game, call focus_window("<game>") once: input tools keep it
   in front, and each result's `foreground` says where input went (plus a warning if it was probably lost).
 - The gamepad is a VIRTUAL Xbox controller (games see a second controller). gamepad_connect before playing; it stays
@@ -125,6 +131,25 @@ def build_server(port: int) -> FastMCP:
                                   "idle_seconds": gamepad.PAD.idle_seconds()}
         out["foreground"] = focus.short(focus.foreground(), focus.target())
         return out
+
+    # ------------------------------------------------------------------------------------------ screen
+    @tool()
+    async def screenshot(region: list[int] | None = None, window: str = "", max_side: int = 960, quality: int = 70,
+                         only_if_changed: bool = False) -> Any:
+        """Fast screenshot: small JPEG (~700 tokens), foreground window, cursor. region=[left,top,right,bottom] (screen
+        px) zooms in; window crops to one. to_screen maps image to screen coordinates. only_if_changed: no image if
+        unchanged since the last one."""
+        if window:
+            info = await _run(SCREEN, focus.find_window, window)
+            if not info:
+                raise ValueError(f"no window matches {window!r}")
+            region = info["rect"]
+        shot = await _run(SCREEN, GRABBER.screenshot, region, max_side, quality, only_if_changed)
+        meta = {**shot["meta"], "foreground": focus.short(focus.foreground()), "cursor": capture.cursor_pos()}
+        text = TextContent(type="text", text=json.dumps(compact(meta), separators=(",", ":")))
+        if shot["jpeg"] is None:
+            return [text]
+        return [ImageContent(type="image", data=base64.b64encode(shot["jpeg"]).decode(), mimeType="image/jpeg"), text]
 
     # ------------------------------------------------------------------------------------------ gamepad
     @tool()

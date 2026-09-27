@@ -36,8 +36,10 @@ device = [
     "psutil>=5.9",
     "faster-whisper>=1.1",
     "kokoro-onnx>=0.4,<0.7",
+    "dxcam>=0.3,<0.4",
+    "pillow>=10.3",
 ]
-dev = ["pytest>=7", "ruff>=0.6"]
+dev = ["pytest>=7", "ruff>=0.6", "pillow>=10.3"]
 
 [project.scripts]
 relaymcp = "relaymcp.host.cli:main"
