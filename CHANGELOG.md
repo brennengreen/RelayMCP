@@ -17,7 +17,13 @@ handheld itself.
   stick model against exact telemetry: yaw rates within 2-3% of the calibrated curve, and telemetry's angle ~45 ms
   behind the picture. While telemetry flows the servo skips frame reads and the gyro: on the handheld's 1080p frames
   they had stalled its loop for up to 0.46 s, with the stick held, so a 90 degree turn overshot and took 2 s. Each
-  new telemetry sample counts as a look for the 20 fps floor, stamped when it arrived. `walk_to(x, z)` walks there on telemetry with the left stick pushed relative to where the camera
+  new telemetry sample counts as a look for the 20 fps floor, stamped when it arrived. Games read the stick
+  once per frame, so near a still target the servo slows to where one frame turns under half a degree, stops, lets
+  telemetry show where the camera really is, and finishes with one pulse of at least 25 ms. Shorter corrections were
+  partly dropped while the model counted them, and it dithered for seconds. `face()` returns as soon as the stick
+  model says the camera will come to rest on target, and the servo corrects a miss in the background;
+  `confirm=True` waits for telemetry. Simulated with 60-120 Hz input reads: 90 degrees in 0.65-0.7 s, 5 degrees in
+  0.08 s, final error within 0.3 degrees (it had taken 1.3-2.2 s). `walk_to(x, z)` walks there on telemetry with the left stick pushed relative to where the camera
   faces (so `keep_facing` can look elsewhere meanwhile), predicting position from telemetry's velocity over the
   sample's age, easing in, and hopping a step it's stuck against: in a kinematic Minecraft walker it arrives within
   0.1 s of distance / walking speed at any camera heading, 0.15-0.19 m from the point.

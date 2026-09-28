@@ -85,7 +85,8 @@ KINDS = {
                'without watching the picture (repeating textures, static overlays; best from an exact reference like '
                'a pitch limit). A turn that loses the picture stops and says tracking_lost. With game telemetry, '
                'a camera servo turns in world angles, closed loop at ~120 Hz on telemetry plus the gyro: '
-               'face(yaw, pitch, tol=0.5) and face_point(x, y, z) return on target (a 90 degree turn in ~0.8 s); '
+               'face(yaw, pitch, tol=0.5, confirm=False) and face_point(x, y, z) return once the camera will come '
+               'to rest on target (confirm: once telemetry shows it; misses are corrected in the background); '
                'keep_facing((yaw, pitch) | (x, y, z) | fn) keeps it there or on a moving target while the program '
                'walks and taps (the servo owns the right stick); stop_facing(); facing() -> (yaw, pitch); '
                'walk_to(x, z, tol=0.3) walks there on telemetry, the stick relative to where the camera faces '
@@ -1505,20 +1506,24 @@ class Program:
             return servo.facing_point(self._eye(), t)
         return float(t[0]), float(t[1])
 
-    def face(self, yaw: float, pitch: float, tol: float = 0.5, timeout: float = 3.0) -> dict:
-        """Turn to an absolute direction (game yaw, pitch up +) and hold it there; returns when on target."""
+    def face(self, yaw: float, pitch: float, tol: float = 0.5, timeout: float = 3.0, confirm: bool = False) -> dict:
+        """Turn to an absolute direction (game yaw, pitch up +) and hold it there. Returns as soon as the camera will
+        come to rest on target (the stick model's word; telemetry checks meanwhile and corrects a miss), or with
+        confirm=True once telemetry shows it there."""
         sv = self._servo_on(tol)
         sv.set((float(yaw), float(pitch)))
         t0 = time.perf_counter()
-        self.until(lambda: sv.on_target() or sv.failure, timeout=timeout, hz=120)
+        self.until(lambda: sv.on_target(confirmed=confirm) or sv.failure, timeout=timeout, hz=120)
         if sv.failure:
             raise RuntimeError(f"camera servo: {sv.failure}")
-        return {"on_target": sv.on_target(), "error": sv.error, "seconds": round(time.perf_counter() - t0, 3)}
+        return {"on_target": sv.on_target(confirmed=confirm), "error": sv.error,
+                "seconds": round(time.perf_counter() - t0, 3)}
 
-    def face_point(self, x: float, y: float, z: float, tol: float = 0.5, timeout: float = 3.0) -> dict:
+    def face_point(self, x: float, y: float, z: float, tol: float = 0.5, timeout: float = 3.0,
+                   confirm: bool = False) -> dict:
         """Look at a world point (block coordinates: a face's centre is e.g. (bx + 0.5, by + 1.0, bz + 0.5))."""
         yaw, pitch = self._direction((x, y, z))
-        return self.face(yaw, pitch, tol, timeout)
+        return self.face(yaw, pitch, tol, timeout, confirm)
 
     def keep_facing(self, target, tol: float = 0.5) -> None:
         """Keep facing a direction (yaw, pitch), a world point (x, y, z), or what a function returns each tick

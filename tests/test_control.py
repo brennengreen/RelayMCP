@@ -35,7 +35,8 @@ class CameraSim:
 
     def __init__(self, hfov=90.0, max_rate=240.0, deadzone=0.3, expo=2.0, accel_s=0.12, latency_s=0.04,
                  limit=80.0, invert_y=False, hud=True, seed=11, fps=None, pitch=0.0, slow_ms=0.0, y_gain=1.0,
-                 radial=False):
+                 radial=False, input_hz=None):
+        self.input_hz = input_hz  # the game reads the stick only this often (once per frame): shorter moves drop
         self.fps, self._vsync, self._shown = fps, None, None
         self.slow_ms = slow_ms  # extra time per new frame, like a slow machine or capture
         self.max_rate, self.deadzone, self.expo = max_rate, deadzone, expo
@@ -92,8 +93,11 @@ class CameraSim:
 
     def _command_at(self, t):
         cx = cy = 0.0
+        seen = t - self.latency_s
+        if self.input_hz:
+            seen = math.floor(seen * self.input_hz) / self.input_hz  # as of the last frame's input read
         for ct, x, y in self.cmds:
-            if ct > t - self.latency_s:
+            if ct > seen:
                 break
             cx, cy = x, y
         return cx, cy

@@ -47,6 +47,7 @@ class StickModel:
         self.scale = (cam.open[0][0], cam.open[1][0]) if getattr(cam, "open", None) else (1.0, 1.0)
         self.keep_s = keep_s
         self.log: collections.deque = collections.deque()  # (t, yaw_rate, pitch_rate) commanded
+        self.before = (0.0, 0.0)  # the rate in effect before the oldest command kept (the camera starts still)
         self._lock = threading.Lock()
 
     def rates(self, x: float, y: float) -> tuple[float, float]:
@@ -67,18 +68,19 @@ class StickModel:
                 return
             self.log.append((t, yr, pr))
             while len(self.log) > 2 and self.log[1][0] < t - self.keep_s:
-                self.log.popleft()
+                _, by, bp = self.log.popleft()
+                self.before = (by, bp)
 
     def rotation(self, t0: float, t1: float) -> tuple[float, float]:
         """Degrees turned (yaw, pitch) between t0 and t1."""
         if t1 <= t0:
             return 0.0, 0.0
         with self._lock:
-            log = list(self.log)
+            log, before = list(self.log), self.before
         if not log:
             return 0.0, 0.0
         out = [0.0, 0.0]
-        rate = [log[0][1], log[0][2]]  # the oldest command kept has long settled
+        rate = [before[0], before[1]]  # settled on what came before the oldest command kept
         for i, (tc, yr, pr) in enumerate(log):
             a = tc + self.latency
             b = (log[i + 1][0] + self.latency) if i + 1 < len(log) else max(t1, a)
@@ -93,12 +95,12 @@ class StickModel:
                 rate[k] = c + (r0 - c) * math.exp(-(b - a) / tau)
             if b >= t1:
                 break
-        # before the first command's effect: it turned at the oldest rate (settled)
+        # before the first command's effect: at the rate before it
         first = log[0][0] + self.latency
         if t0 < first:
             span = min(first, t1) - t0
-            out[0] += log[0][1] * span
-            out[1] += log[0][2] * span
+            out[0] += before[0] * span
+            out[1] += before[1] * span
         return out[0], out[1]
 
     def rate_at(self, t: float) -> tuple[float, float]:
@@ -174,7 +176,8 @@ class Servo:
         self.on_thread, self.stop_evt = on_thread, stop_evt or threading.Event()
         self.target: Any = None
         self.error: tuple[float, float] | None = None
-        self.settled = 0  # ticks in a row on target and still
+        self.settled = 0  # ticks in a row on target, still, and confirmed by telemetry
+        self.settled_fast = 0  # ticks in a row the stick model says it will come to rest on target
         self.ticks = 0
         self.last_stick = (0.0, 0.0)
         self.failure: str | None = None
@@ -188,6 +191,13 @@ class Servo:
         self._tel_at: float | None = None  # when the latest new telemetry sample arrived (perf clock)
         self._parts = collections.defaultdict(list)  # stage -> ms per tick (look, gyro, telemetry, control)
         self._worst: tuple[float, dict] = (0.0, {})
+        # The finish on a still target: games read the stick once per frame, so corrections shorter than a few
+        # frames are partly dropped while the model counts them (it then dithers). Near the target it stops, waits
+        # until telemetry shows where the camera really is, then sends one pulse of at least PULSE_MIN_S.
+        self.near = 0.6  # degrees (after what is in flight): closer than this, finish with pulses
+        self._pulse_end = 0.0
+        self._pulse_stick = (0.0, 0.0)
+        self._confirm_after = 0.0  # camera time the last stick change has fully played out by
         self._prev_target: tuple[float, float, float] | None = None  # (t, yaw, pitch) of a moving target
         self._target_rate = (0.0, 0.0)  # its smoothed rate (deg/s): fed forward, and where it will be
 
@@ -207,11 +217,15 @@ class Servo:
 
     def set(self, target) -> None:
         self.target = target
-        self.settled = 0
+        self.settled = self.settled_fast = 0
         self._prev_target, self._target_rate = None, (0.0, 0.0)
+        self._pulse_end = 0.0
 
-    def on_target(self, ticks: int = 3) -> bool:
-        return self.settled >= ticks
+    def on_target(self, ticks: int = 3, confirmed: bool = False) -> bool:
+        """On target: by default as soon as the stick model says the camera comes to rest within tol (what it
+        sent is still playing out; telemetry checks it meanwhile and a miss gets a correction); confirmed = once
+        telemetry shows it there."""
+        return (self.settled if confirmed else self.settled_fast) >= ticks
 
     def facing(self, t: float | None = None):
         e = self.att.estimate(time.perf_counter() if t is None else t)
@@ -220,19 +234,47 @@ class Servo:
     # -- the loop -----------------------------------------------------------------------------------------------------
 
     def _send(self, x: float, y: float) -> None:
+        if (x, y) != self.last_stick:
+            # played out: the camera stops turning a latency and a few lag constants after the stick changes
+            self._confirm_after = time.perf_counter() + self.model.latency + 4 * self.model.tau_down
         self.last_stick = (x, y)
         self.stick(x, y)
         self.model.command(time.perf_counter(), x, y)
 
-    def _rate(self, err: float, tol: float, top: float, feed: float = 0.0) -> float:
+    PULSE_MIN_S = 0.025  # a few game frames
+    PULSE_RATE = 30.0  # deg/s for finishing pulses
+
+    def _pulse(self, ey: float, ep: float, now: float) -> tuple[float, float]:
+        """A stick position and duration that turn (ey, ep) degrees: at PULSE_RATE, or the game's slowest turn, for
+        at least PULSE_MIN_S."""
+        c = self.cam
+        g = abs(c.y_gain) * self.model.scale[1]
+        mag = math.hypot(ey, ep / g if g else 0.0)  # in yaw-rate terms (what the stick's length sets)
+        if mag <= 1e-6:
+            return 0.0, 0.0
+        rate = max(c.curve.min_rate, min(self.PULSE_RATE, mag / self.PULSE_MIN_S))
+        dur = max(self.PULSE_MIN_S, mag / rate)
+        rate = mag / dur
+        if rate < c.curve.min_rate:  # smaller than the slowest turn for the shortest pulse: within reach anyway
+            return 0.0, 0.0
+        x, y = c.stick_for(ey / dur, ep / dur)
+        self._pulse_end = now + dur
+        self._pulse_stick = (x, y)
+        return x, y
+
+    FINAL_GAIN = 30.0  # 1/s for still targets: the last frames before rest move under half a degree each (games
+    # read the stick once a frame; at 60 fps a faster finish lands a frame's turn off, ~1 degree)
+
+    def _rate(self, err: float, tol: float, top: float, feed: float = 0.0, still: bool = False) -> float:
         """Turn rate for an error at the moment the command takes effect: the target's own rate, plus the error over
-        the time the camera takes to come to rest (its coast lag and a tick), capped at the fastest, and at least the
-        slowest turn the game makes while outside half the tolerance."""
+        the time the camera takes to come to rest (its coast lag and a tick; a still target: at FINAL_GAIN), capped
+        at the fastest, and at least the slowest turn the game makes while outside half the tolerance."""
         if abs(err) <= tol * 0.5 and abs(feed) < 1e-6:
             return 0.0
         m = self.model
         # over one tick of the loop as it runs now: a gain for 120 Hz over-corrects on a loop that ticks at 40
-        r = feed + err / (m.tau_down + max(1.0 / self.hz, self.period))
+        gain = 1.0 / (m.tau_down + max(1.0 / self.hz, self.period))
+        r = feed + err * (min(gain, self.FINAL_GAIN) if still else gain)
         r = max(-top, min(top, r))
         if abs(err) <= tol * 0.5:
             return r
@@ -331,14 +373,36 @@ class Servo:
                     ey = wrap(float(target[0]) - est[0])
                     ep = max(-89.5, min(89.5, float(target[1]))) - est[1]
                     self.error = (round(ey, 2), round(ep, 2))
-                    ry = self._rate(wrap(ey + fy * lat - ahead[0]), self.tol, top_yaw, fy)
-                    rp = self._rate(ep + fp * lat - ahead[1], self.tol, top_pitch, fp)
-                    x, y = c.stick_for(ry, rp) if (ry or rp) else (0.0, 0.0)
+                    ay, ap = wrap(ey + fy * lat - ahead[0]), ep + fp * lat - ahead[1]  # once in-flight lands
+                    moving_target = math.hypot(fy, fp) > 3.0
+                    confirmed = self.att.base is not None and self.att.base[0] >= self._confirm_after
+                    if moving_target or max(abs(ay), abs(ap)) > self.near:
+                        ry = self._rate(ay, self.tol, top_yaw, fy, still=not moving_target)
+                        rp = self._rate(ap, self.tol, top_pitch, fp, still=not moving_target)
+                        x, y = c.stick_for(ry, rp) if (ry or rp) else (0.0, 0.0)
+                        self._pulse_end = 0.0
+                    elif now < self._pulse_end:
+                        x, y = self._pulse_stick  # a finishing pulse, played in full
+                    elif not confirmed:
+                        x, y = 0.0, 0.0  # let it play out, and telemetry show where it went
+                    elif abs(ey) > self.tol * 0.6 or abs(ep) > self.tol * 0.6:
+                        x, y = self._pulse(ey, ep, now)
+                    else:
+                        x, y = 0.0, 0.0
                     if (x, y) != self.last_stick:
                         self._send(x, y)
-                    moving = self.model.rate_at(now)
-                    still = abs(moving[0]) < 3.0 and abs(moving[1]) < 3.0
-                    self.settled = self.settled + 1 if abs(ey) <= self.tol and abs(ep) <= self.tol and still else 0
+                    on = abs(ey) <= self.tol and abs(ep) <= self.tol
+                    if moving_target:
+                        moving = self.model.rate_at(now)
+                        still = abs(moving[0] - fy) < 3.0 and abs(moving[1] - fp) < 3.0
+                        self.settled = self.settled + 1 if on and still else 0
+                        self.settled_fast = self.settled
+                    else:
+                        idle = self.last_stick == (0.0, 0.0) and now >= self._pulse_end
+                        rest = self.model.rotation(now, now + lat + 4 * self.model.tau_down)  # all it still turns
+                        lands = abs(wrap(ey - rest[0])) <= self.tol and abs(ep - rest[1]) <= self.tol
+                        self.settled = self.settled + 1 if on and idle and confirmed else 0
+                        self.settled_fast = self.settled_fast + 1 if idle and lands else 0
                 done = time.perf_counter()
                 parts["control"] = (done - now) * 1000
                 total = (done - tick0) * 1000

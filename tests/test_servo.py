@@ -157,7 +157,7 @@ def test_the_servo_lands_on_telemetry_when_its_model_is_off():
         peak = [0.0]
         sv.set((y0 + 70.0, 0.0))
         t0 = time.perf_counter()
-        while time.perf_counter() - t0 < 2.5 and not sv.on_target(6):
+        while time.perf_counter() - t0 < 2.5 and not sv.on_target(6, confirmed=True):
             peak[0] = max(peak[0], sim.turned - y0)
             time.sleep(0.005)
         time.sleep(0.1)
