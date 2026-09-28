@@ -13,7 +13,10 @@ handheld itself.
   asks for the rate that closes the error at the moment the next command takes effect: commands still in flight and
   the target's own motion are fed forward. On the Minecraft-like simulator it faces 90 degrees in 0.75-0.82 s (the
   fastest the plant allows is 0.69 s), lands within 0.2 degrees, and follows a target moving at 40 degrees/s within
-  0.2 degrees RMS.
+  0.2 degrees RMS. `walk_to(x, z)` walks there on telemetry with the left stick pushed relative to where the camera
+  faces (so `keep_facing` can look elsewhere meanwhile), predicting position from telemetry's velocity over the
+  sample's age, easing in, and hopping a step it's stuck against: in a kinematic Minecraft walker it arrives within
+  0.1 s of distance / walking speed at any camera heading, 0.15-0.19 m from the point.
 - **Game telemetry as ground truth:** the hardware server follows a game's log for `RELAY {json}` lines and keeps the
   latest sample and 10 s of history. A Minecraft script pack prints the player's exact position, eye height, yaw,
   pitch, velocity, looked-at block, health and nearby mobs 20 times a second. Programs read it with `telemetry()`,

@@ -87,7 +87,9 @@ KINDS = {
                'a camera servo turns in world angles, closed loop at ~120 Hz on telemetry plus the gyro: '
                'face(yaw, pitch, tol=0.5) and face_point(x, y, z) return on target (a 90 degree turn in ~0.8 s); '
                'keep_facing((yaw, pitch) | (x, y, z) | fn) keeps it there or on a moving target while the program '
-               'walks and taps (the servo owns the right stick); stop_facing(); facing() -> (yaw, pitch). '
+               'walks and taps (the servo owns the right stick); stop_facing(); facing() -> (yaw, pitch); '
+               'walk_to(x, z, tol=0.3) walks there on telemetry, the stick relative to where the camera faces '
+               '(combine with keep_facing to look elsewhere), easing in, hopping when stuck. '
                'Agentic control needs a fresh look at least every 50 ms (20 fps) while acting: results carry cadence '
                '{worst_ms, p95_ms, over_50ms, worst_at}: how old the latest look (frame, text or state read) was at '
                'each input change and while inputs were held, and where the worst was. Loop on until()/frame reads '
@@ -1378,7 +1380,7 @@ class Program:
                 "look_at": lambda x, y, **kw: (self._servo_off(), self.cam().look_at(x, y, **kw))[1],
                 "scan": lambda score, degrees=360.0: (self._servo_off(), self.cam().scan(score, degrees))[1],
                 "face": self.face, "face_point": self.face_point, "keep_facing": self.keep_facing,
-                "stop_facing": self.stop_facing, "facing": self.facing,
+                "stop_facing": self.stop_facing, "facing": self.facing, "walk_to": self.walk_to,
                 "look_rate": self.look_rate, "camera": self._summary(),
                 "set_pitch": lambda degrees: self.cam().set_pitch(degrees)}
 
@@ -1527,6 +1529,48 @@ class Program:
 
     def stop_facing(self) -> None:
         self._servo_off()
+
+    WALK_M_S = 4.317  # Minecraft's walking speed (full stick)
+    WALK_EASE_M = 1.2  # ease in over the last metres (it stops in a few tenths of a second, a tick late)
+    WALK_MIN_STICK = 0.35  # below this a game's movement deadzone may eat the push
+
+    def walk_to(self, x: float, z: float, tol: float = 0.3, timeout: float = 15.0, speed: float = 1.0) -> dict:
+        """Walk to a world point (x, z) on telemetry: a straight line, the left stick pushed relative to where the
+        camera faces (so keep_facing can look elsewhere meanwhile), easing in at the end. It hops (A) when stuck
+        against a step. -> {"arrived", "distance", "seconds", "hops"}."""
+        import math
+        t0 = time.perf_counter()
+        best, best_t, hops, d = float("inf"), t0, 0, float("inf")
+        try:
+            while True:
+                self.check()
+                s = self.telemetry()
+                if not s or "x" not in s:
+                    raise RuntimeError("walk_to needs game telemetry (the RelayMCP Telemetry pack)")
+                ahead = float(s.get("age_ms", 0.0)) / 1000 + 0.05  # the sample's age and the tick it is behind
+                px = float(s["x"]) + float(s.get("vx", 0.0)) * 20 * ahead  # velocity is blocks per tick
+                pz = float(s["z"]) + float(s.get("vz", 0.0)) * 20 * ahead
+                dx, dz = float(x) - px, float(z) - pz
+                d = math.hypot(dx, dz)
+                now = time.perf_counter()
+                if d <= tol or now - t0 > timeout:
+                    break
+                yaw = (self.facing() or (float(s.get("yaw", 0.0)), 0.0))[0]
+                a = math.radians((math.degrees(math.atan2(-dx, dz)) - yaw + 180.0) % 360.0 - 180.0)
+                m = max(self.WALK_MIN_STICK, min(float(speed), d / self.WALK_EASE_M))
+                self.state = {**self.state, "left_stick": [m * math.sin(a), m * math.cos(a)]}
+                self._apply(self.state)
+                if d < best - 0.1:
+                    best, best_t = d, now
+                elif now - best_t > 0.6 and hops < 3:  # no progress: a step in the way
+                    self.tap("a", ms=60)
+                    hops, best_t = hops + 1, now
+                self.wait(1000 / 60)
+        finally:
+            self.state = {**self.state, "left_stick": [0.0, 0.0]}
+            self._apply(self.state)
+        return {"arrived": d <= tol, "distance": round(d, 2), "seconds": round(time.perf_counter() - t0, 2),
+                "hops": hops}
 
     def facing(self):
         """The fused (yaw, pitch) estimate while facing runs (else the latest telemetry's)."""
@@ -1701,7 +1745,7 @@ class Program:
 Program.NAMES = {"elapsed", "frame", "diff", "text", "sees", "color", "track", "shift", "log", "W", "H", "CX", "CY",
                  "np", "math", "time", "numbers", "pixel_text", "grid_angle", "telemetry", "pad", "press", "tap", "seq", "release", "wait", "until", "aim", "guard", "skill",
                  "turn", "level", "look_at", "scan", "look_rate", "camera", "set_pitch", "turn_open",
-                 "face", "face_point", "keep_facing", "stop_facing", "facing"}
+                 "face", "face_point", "keep_facing", "stop_facing", "facing", "walk_to"}
 
 
 def center_of(box) -> tuple[float, float]:
