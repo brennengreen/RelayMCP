@@ -40,11 +40,7 @@ def find_agent(name: str = "copilot") -> str | None:
 
 
 def other_copilot_servers(own: tuple[str, ...]) -> list[str]:
-    try:
-        servers = json.loads((Path.home() / ".copilot" / "mcp-config.json").read_text()).get("mcpServers", {})
-    except (OSError, ValueError):
-        return []
-    return [name for name in servers if name not in own]
+    return [name for name in config.copilot_mcp_servers() if name not in own]
 
 
 def session_for(new: bool, idle_minutes: float) -> tuple[str, bool]:
@@ -78,6 +74,9 @@ def preamble(cfg: dict, full: bool) -> str:
     who = cfg["voice"].get("user_name") or config.default_user_name()
     reach = (f"You can see and control the handheld with the `{name}` tools (screenshots, clicks, typing, launching "
              f"apps, PowerShell) and the `{name}-handheld` tools (gamepad, touch, keys, audio, speech, display, power).")
+    extra = config.voice_servers(cfg)[2:]
+    if extra:
+        reach += " You can also use the " + ", ".join(f"`{s}`" for s in extra) + " tools."
     if full:
         reach += " You can also run commands and edit files on this computer."
     else:
@@ -97,7 +96,7 @@ def tts_settings(cfg: dict) -> dict:
 
 def copilot_command(cfg: dict, exe: str, prompt: str, sid: str, fresh: bool) -> list[str]:
     v, name = cfg["voice"], cfg["device"]["name"]
-    own = (name, f"{name}-handheld")
+    own = config.voice_servers(cfg)
     full = v.get("permissions") == "full"
     workdir = Path(os.path.expanduser(v.get("workdir") or config.VOICE_WORKDIR))
     workdir.mkdir(parents=True, exist_ok=True)
@@ -117,8 +116,9 @@ def copilot_command(cfg: dict, exe: str, prompt: str, sid: str, fresh: bool) -> 
     # Copilot defers MCP tool schemas behind a search tool, which costs a voice prompt a whole extra model round trip.
     # Re-declaring the hardware server for this run only keeps its schemas in view (other sessions stay deferred).
     urls = {n: url for n, url, _ in config.mcp_servers(cfg)}
-    cmd += ["--additional-mcp-config", json.dumps({"mcpServers": {own[1]: {
-        "type": "http", "url": urls[own[1]], "tools": ["*"], "deferTools": "never"}}}, separators=(",", ":"))]
+    servers = {own[1]: {"type": "http", "url": urls[own[1]], "tools": ["*"], "deferTools": "never"},
+               **config.voice_extra_server_configs(cfg)}
+    cmd += ["--additional-mcp-config", json.dumps({"mcpServers": servers}, separators=(",", ":"))]
     if v.get("model"):
         cmd += ["--model", str(v["model"])]
     if v.get("reasoning_effort"):
@@ -193,9 +193,9 @@ def run_prompt(cfg: dict, text: str) -> dict:
         if not exe:
             return {"ok": False, "error": "GitHub Copilot CLI isn't installed on this computer"}
         if voice_warm.enabled(cfg) and voice_warm.RUNTIME.usable():
-            name, t_warm = cfg["device"]["name"], time.monotonic()
+            t_warm = time.monotonic()
             try:
-                reply, tools = voice_warm.RUNTIME.ask(cfg, exe, text, sid, fresh, other_copilot_servers((name, f"{name}-handheld")),
+                reply, tools = voice_warm.RUNTIME.ask(cfg, exe, text, sid, fresh, other_copilot_servers(config.voice_servers(cfg)),
                                                       float(v.get("timeout_minutes") or 10) * 60)
                 return {"ok": True, "reply": reply or "Done.", "session": sid, "new_session": fresh, "tools": tools,
                         "seconds": round(time.monotonic() - t_warm, 1), "tts": tts_settings(cfg), "runtime": "warm"}

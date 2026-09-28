@@ -44,6 +44,7 @@ The speech models load while you talk and unload after 15 idle minutes, freeing 
 relaymcp voice                                  # show settings
 relaymcp voice --voice am_michael --speed 1.1   # change the spoken voice
 relaymcp voice --permissions full               # see "Permissions" below
+relaymcp voice --extra-servers pl515            # also allow one more MCP server (see "Permissions")
 relaymcp voice --model gpt-5.4                  # model for voice prompts (default: gpt-5.4-mini)
 relaymcp voice --user-name Sam                  # how the agent addresses you
 relaymcp voice --disable                        # turn voice prompts off
@@ -60,6 +61,16 @@ relaymcp voice --test "What's my battery level?"  # run the full pipeline from y
 - `handheld` (default): voice requests may only use the handheld's MCP servers.
 - `full`: voice requests run with all of your agent's permissions on your computer. See
   [security.md](security.md#voice-prompts-and-permissions).
+
+To let handheld-mode voice requests use one more MCP server without granting `full`, name it:
+
+```sh
+relaymcp voice --extra-servers pl515       # a server already registered in ~/.copilot/mcp-config.json
+relaymcp voice --extra-servers ""          # back to the handheld's servers only
+```
+
+Those servers' tools are kept in view (no tool-search round trip), and the prompt tells the agent it has them. They
+get no other access to your computer.
 
 ### Using another agent
 

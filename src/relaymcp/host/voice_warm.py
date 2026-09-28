@@ -47,10 +47,15 @@ def system_prompt(cfg: dict) -> str:
             "transcribed by Whisper, so words may be misheard; interpret them sensibly. You can see and control the "
             f"handheld with the `{name}` tools (screenshots, clicks, typing, launching apps, PowerShell) and the "
             f"`{name}-handheld` tools (gamepad, touch, keys, audio, speech, display, power; observe and act for "
-            "on-screen text and multi-step input). You can't run commands or edit files on the computer; if that's "
+            "on-screen text and multi-step input)." + _extra_sentence(cfg) + " You can't run commands or edit files on the computer; if that's "
             "needed, say so briefly and suggest asking from the computer. Your reply is read aloud: answer in one to "
             "three short, conversational sentences of plain text (no markdown, lists, code or URLs). If you did "
             "something, say what you did.")
+
+
+def _extra_sentence(cfg: dict) -> str:
+    extra = config.voice_servers(cfg)[2:]
+    return (" You can also use the " + ", ".join(f"`{s}`" for s in extra) + " tools.") if extra else ""
 
 
 def session_options(cfg: dict, other_servers: list[str]) -> dict:
@@ -59,6 +64,7 @@ def session_options(cfg: dict, other_servers: list[str]) -> dict:
     urls = {n: url for n, url, _ in config.mcp_servers(cfg)}
     servers = {n: {"type": "http", "url": urls[n], "tools": ["*"], "deferTools": "never", "timeout": 120000}
                for n in (name, f"{name}-handheld")}
+    servers.update({n: {**c, "timeout": 120000} for n, c in config.voice_extra_server_configs(cfg).items()})
     opts: dict = {"mcp_servers": servers, "available_tools": list(servers), "tool_search": {"enabled": False},
                   "system_message": {"mode": "replace", "content": system_prompt(cfg)},
                   "skip_custom_instructions": True, "disabled_mcp_servers": other_servers or None,

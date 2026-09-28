@@ -290,6 +290,12 @@ def cmd_voice(args: argparse.Namespace) -> None:
         if value is not None:
             v[key] = value
             changed = True
+    if args.extra_servers is not None:
+        v["extra_servers"] = [s.strip() for s in args.extra_servers.split(",") if s.strip()]
+        changed = True
+        unknown = [s for s in v["extra_servers"] if s not in config.copilot_mcp_servers()]
+        if unknown:
+            ui.warn(f"not in Copilot's MCP config (~/.copilot/mcp-config.json) yet: {', '.join(unknown)}")
     if args.enable or args.disable:
         v["enabled"] = bool(args.enable)
         changed = restart = True
@@ -308,7 +314,7 @@ def cmd_voice(args: argparse.Namespace) -> None:
                 print(json.dumps(st.get("last"), indent=1))
                 break
         return
-    print(json.dumps({k: v.get(k) for k in ("enabled", "agent", "permissions", "voice", "speech_speed", "model",
+    print(json.dumps({k: v.get(k) for k in ("enabled", "agent", "permissions", "extra_servers", "voice", "speech_speed", "model",
                                            "user_name", "timeout_minutes", "new_conversation_after_minutes")},
                      indent=2))
 
@@ -613,6 +619,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--voice", help="spoken voice (af_heart, am_michael, bf_emma, ...)")
     s.add_argument("--speed", type=float, help="speech speed 0.5-2.0")
     s.add_argument("--permissions", choices=["handheld", "full"])
+    s.add_argument("--extra-servers", metavar="NAMES",
+                   help="comma-separated Copilot MCP servers voice may also use in handheld mode ('' clears)")
     s.add_argument("--agent", choices=["copilot", "custom"])
     s.add_argument("--model", help="model for voice prompts (agent default if unset)")
     s.add_argument("--user-name", help="your name, as the agent should hear it")

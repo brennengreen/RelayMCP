@@ -24,6 +24,7 @@ then run `relaymcp setup` (for device/port changes) or `relaymcp service restart
     "agent": "copilot",                // copilot | custom
     "custom_command": null,            // for agent=custom, e.g. ["claude", "-p", "{prompt}"]
     "permissions": "handheld",         // handheld | full
+    "extra_servers": [],               // handheld mode: Copilot MCP servers voice may use too, e.g. ["pl515"]
     "model": "gpt-5.4-mini",           // model for voice prompts (null = the agent's default)
     "reasoning_effort": "low",
     "warm": true,                      // keep a Copilot runtime running for voice (needs relaymcp[voice], Python 3.11+)

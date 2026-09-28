@@ -123,6 +123,16 @@ def test_session_options(cfg):
     assert opts["model"] == "gpt-5.4-mini" and opts["reasoning_effort"] == "low"
 
 
+def test_session_options_extra_servers(cfg, monkeypatch):
+    monkeypatch.setattr(voice_warm.config, "copilot_mcp_servers",
+                        lambda: {"pl515": {"type": "http", "url": "http://127.0.0.1:8515/mcp"}})
+    cfg["voice"]["extra_servers"] = ["pl515"]
+    opts = voice_warm.session_options(cfg, ["github"])
+    assert set(opts["available_tools"]) == {"ally", "ally-handheld", "pl515"}
+    assert opts["mcp_servers"]["pl515"]["deferTools"] == "never" and opts["mcp_servers"]["pl515"]["timeout"] == 120000
+    assert "`pl515`" in opts["system_message"]["content"]
+
+
 def test_drop_rejected():
     opts = {"model": "claude-haiku-4.5", "reasoning_effort": "low", "x": 1}
     assert voice_warm.drop_rejected(opts, 'Model "claude-haiku-4.5" does not support reasoning effort') == \

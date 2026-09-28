@@ -53,6 +53,25 @@ def test_copilot_command_limits_tools(relay_home, monkeypatch):
     assert "--allow-all" in full and "--available-tools" not in full and "--disable-builtin-mcps" not in full
 
 
+def test_voice_extra_servers(relay_home, monkeypatch):
+    from relaymcp.host import config, voice
+    known = {"pl515": {"type": "http", "url": "http://127.0.0.1:8515/mcp"}, "github": {"type": "http", "url": "x"}}
+    monkeypatch.setattr(config, "copilot_mcp_servers", lambda: known)
+    cfg = config.load()
+    cfg["voice"]["extra_servers"] = ["pl515", "ally", "missing", "pl515"]
+    assert config.voice_servers(cfg) == ("ally", "ally-handheld", "pl515", "missing")
+    cmd = voice.copilot_command(cfg, "copilot", "fly", "sid", fresh=True)
+    i = cmd.index("--available-tools")
+    assert cmd[i + 1:i + 5] == ["ally", "ally-handheld", "pl515", "missing"]
+    allowed = [cmd[j + 1] for j, a in enumerate(cmd) if a == "--allow-tool"]
+    disabled = [cmd[j + 1] for j, a in enumerate(cmd) if a == "--disable-mcp-server"]
+    assert "pl515" in allowed and disabled == ["github"]
+    extra = json.loads(cmd[cmd.index("--additional-mcp-config") + 1])["mcpServers"]
+    assert extra["pl515"] == {"type": "http", "url": "http://127.0.0.1:8515/mcp", "tools": ["*"], "deferTools": "never"}
+    assert "missing" not in extra                     # unknown to Copilot: nothing to re-declare
+    assert "`pl515`" in cmd[cmd.index("-p") + 1]      # the preamble tells the agent
+
+
 def test_retry_drops_rejected_options():
     from relaymcp.host.voice import retry_command
     cmd = ["copilot", "-p", "x", "--model", "claude-haiku-4.5", "--reasoning-effort", "low", "-s"]

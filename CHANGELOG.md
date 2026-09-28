@@ -5,6 +5,9 @@
 Faster, leaner and real-time capable: most of the work moves from model round trips to the
 handheld itself.
 
+- **Voice can use other MCP servers without `full`:** `relaymcp voice --extra-servers pl515` lets handheld-mode voice
+  prompts also use named servers from Copilot's MCP config (for example a drone's homestation), with their tool
+  schemas kept in view and the prompt telling the agent about them. Nothing else on the computer is opened up.
 - **A camera servo in world angles:** with game telemetry, programs `face(yaw, pitch)` or `face_point(x, y, z)`,
   and `keep_facing(...)` a direction, a point or a moving target while they walk and tap: the servo owns the right
   stick, and the program keeps the left stick and buttons. It runs closed-loop at ~120 Hz on a fused estimate: the

@@ -42,6 +42,7 @@ DEFAULTS: dict[str, Any] = {
         "agent": "copilot",          # copilot | custom (see docs/voice.md)
         "custom_command": None,      # for agent=custom: ["my-agent", "--prompt", "{prompt}"]
         "permissions": "handheld",   # handheld = only the device's tools; full = everything on this computer too
+        "extra_servers": [],         # handheld mode: other Copilot MCP servers voice may use too, e.g. ["pl515"]
         "model": "gpt-5.4-mini",     # fast; falls back to the agent's default if unavailable
         "reasoning_effort": "low",   # dropped automatically for models that don't support it
         "timeout_minutes": 10,
@@ -132,6 +133,28 @@ def default_user_name() -> str:
     except Exception:
         pass
     return getpass.getuser()
+
+
+def copilot_mcp_servers() -> dict:
+    """Copilot CLI's user-level MCP servers (~/.copilot/mcp-config.json)."""
+    try:
+        return json.loads((Path.home() / ".copilot" / "mcp-config.json").read_text()).get("mcpServers", {})
+    except (OSError, ValueError):
+        return {}
+
+
+def voice_servers(cfg: dict) -> tuple[str, ...]:
+    """The MCP servers a handheld-mode voice prompt may use: the device's two, then voice.extra_servers."""
+    name = cfg["device"]["name"]
+    own = (name, f"{name}-handheld")
+    extra = [s for s in cfg["voice"].get("extra_servers") or [] if s and s not in own]
+    return own + tuple(dict.fromkeys(extra))
+
+
+def voice_extra_server_configs(cfg: dict) -> dict:
+    """Copilot's own entries for voice.extra_servers (the ones it knows), with every tool schema kept in view."""
+    known = copilot_mcp_servers()
+    return {s: {**known[s], "tools": ["*"], "deferTools": "never"} for s in voice_servers(cfg)[2:] if s in known}
 
 
 def mcp_servers(cfg: dict) -> list[tuple[str, str, str]]:
