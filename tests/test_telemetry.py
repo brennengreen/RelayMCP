@@ -96,3 +96,11 @@ def test_programs_read_telemetry_and_a_fresh_sample_counts_as_a_look():
     feeder.join()
     assert out["result"]["tick"] >= 25 and out["result"]["pitch"] == 5.0, out
     assert out["cadence"]["worst_ms"] < 150, out["cadence"]  # telemetry reads were its looks (no frame reads)
+
+
+def test_command_replies_are_events_not_the_pose():
+    got = []
+    t = telemetry.Telemetry(on_reply=got.append)
+    t.feed("RELAY " + json.dumps({"tick": 1, "yaw": 5.0, "pitch": 0.0}))
+    assert t.feed("RELAY " + json.dumps({"reply": "blocks", "blocks": [[0, 1, 2, "oak_planks"]]})) is None
+    assert t.get()["tick"] == 1 and got == [{"reply": "blocks", "blocks": [[0, 1, 2, "oak_planks"]]}]

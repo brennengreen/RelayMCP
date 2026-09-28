@@ -130,7 +130,8 @@ def _telemetry_to_inbox(sample: dict) -> None:
 
 
 # Game telemetry (the RelayMCP Telemetry script pack prints a line per tick into Minecraft's content log).
-TELEMETRY = telemetry.Telemetry(on_sample=_telemetry_to_inbox)
+TELEMETRY = telemetry.Telemetry(on_sample=_telemetry_to_inbox,
+                                on_reply=lambda data: inbox.INBOX.post("minecraft.reply", data))
 TELEMETRY_FOLLOWER = telemetry.Follower(telemetry.minecraft_log_folders(), "ContentLog*.txt", TELEMETRY.feed,
                                         on_switch=lambda path: setattr(TELEMETRY, "source", path))
 

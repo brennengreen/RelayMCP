@@ -47,8 +47,11 @@ def normalize(data: dict, recv_perf: float, recv_wall: float) -> dict:
 class Telemetry:
     """The latest sample and a short history, fed line by line."""
 
-    def __init__(self, keep_s: float = KEEP_S, on_sample: Callable[[dict], None] | None = None):
+    def __init__(self, keep_s: float = KEEP_S, on_sample: Callable[[dict], None] | None = None,
+                 on_reply: Callable[[dict], None] | None = None):
         self._lock = threading.Lock()
+        self.on_reply = on_reply  # answers to commands ({"reply": name, ...}): events, not the pose
+        self.replies: collections.deque = collections.deque(maxlen=50)
         self.latest: dict | None = None
         self.history: collections.deque = collections.deque()
         self.keep_s = keep_s
@@ -67,6 +70,15 @@ class Telemetry:
             self.bad += 1
             return None
         if not isinstance(data, dict):
+            return None
+        if "reply" in data:
+            with self._lock:
+                self.replies.append(data)
+            if self.on_reply:
+                try:
+                    self.on_reply(data)
+                except Exception:
+                    pass
             return None
         s = normalize(data, time.perf_counter() if recv_perf is None else recv_perf,
                       time.time() if recv_wall is None else recv_wall)
