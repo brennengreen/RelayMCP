@@ -183,6 +183,7 @@ class Servo:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._odo = None
+        self.period = 1.0 / hz  # the loop's measured tick period (a busy machine ticks slower than asked)
         self._prev_target: tuple[float, float, float] | None = None  # (t, yaw, pitch) of a moving target
         self._target_rate = (0.0, 0.0)  # its smoothed rate (deg/s): fed forward, and where it will be
 
@@ -226,7 +227,8 @@ class Servo:
         if abs(err) <= tol * 0.5 and abs(feed) < 1e-6:
             return 0.0
         m = self.model
-        r = feed + err / (m.tau_down + 1.0 / self.hz)
+        # over one tick of the loop as it runs now: a gain for 120 Hz over-corrects on a loop that ticks at 40
+        r = feed + err / (m.tau_down + max(1.0 / self.hz, self.period))
         r = max(-top, min(top, r))
         if abs(err) <= tol * 0.5:
             return r
@@ -290,7 +292,7 @@ class Servo:
         if self.on_thread:
             self.on_thread(threading.get_ident())
         period = 1.0 / self.hz
-        next_t = time.perf_counter()
+        next_t = last_tick = time.perf_counter()
         c = self.cam
         top_yaw = c.curve.max_rate * self.model.scale[0]
         top_pitch = c.curve.max_rate * abs(c.y_gain) * self.model.scale[1]
@@ -299,6 +301,8 @@ class Servo:
                 self._gyro()
                 self._telemetry()
                 now = time.perf_counter()
+                self.period += 0.2 * (min(0.25, now - last_tick) - self.period)
+                last_tick = now
                 target = self._target(now)
                 est = self.att.estimate(now)
                 if target is None or est is None:
@@ -336,8 +340,8 @@ class Servo:
                 pass
 
     def summary(self) -> dict:
-        out = {"ticks": self.ticks, "error": self.error, "on_target": self.on_target(),
-               "estimate_from": dict(self.att.used)}
+        out = {"ticks": self.ticks, "hz": round(1.0 / max(self.period, 1e-3)), "error": self.error,
+               "on_target": self.on_target(), "estimate_from": dict(self.att.used)}
         if self.failure:
             out["failure"] = self.failure
         return out

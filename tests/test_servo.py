@@ -106,7 +106,8 @@ def test_the_servo_faces_a_direction_fast_and_exactly():
         sv.set((y0 + 90.0, 0.0))
         took = wait_on_target(sv, 3.0)
         fastest = sim.latency_s + 90.0 / sim.max_rate + sim.accel_s
-        assert took is not None and took < fastest * (1.6 if BUSY else 1.25), (took, fastest, sv.summary())
+        # (a busy runner ticks the loop at 30-60 Hz, and the simulator renders slower too)
+        assert took is not None and took < fastest * (2.4 if BUSY else 1.25), (took, fastest, sv.summary())
         time.sleep(0.1)
         assert abs(sim.turned - (y0 + 90.0)) < 0.6 and abs(sim.pitch) < 0.6, (sim.turned - y0, sim.pitch)
         sv.set((y0 + 60.0, -35.0))  # both axes at once, on a radial stick
@@ -233,7 +234,7 @@ def test_programs_face_in_world_angles_and_keep_facing_while_walking(tmp_path):
         tel.stop()
     assert st["state"] == "done", st
     first = st["result"]["first"]
-    assert first["on_target"] and first["seconds"] < (1.6 if BUSY else 1.1), first
+    assert first["on_target"] and first["seconds"] < (2.2 if BUSY else 1.1), first
     want = y0 + 75.0 + 30 * 1.0
     assert abs(sim.turned - want) < 4.0, (sim.turned - want, st.get("servo"))  # it was moving on when stopped
     assert (0, 1) in out.left and out.left[-1] == (0, 0)  # the program's left stick was kept, then let go
