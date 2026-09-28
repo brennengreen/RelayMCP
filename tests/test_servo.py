@@ -238,4 +238,6 @@ def test_programs_face_in_world_angles_and_keep_facing_while_walking(tmp_path):
     want = y0 + 75.0 + 30 * 1.0
     assert abs(sim.turned - want) < 4.0, (sim.turned - want, st.get("servo"))  # it was moving on when stopped
     assert (0, 1) in out.left and out.left[-1] == (0, 0)  # the program's left stick was kept, then let go
-    assert st["cadence"]["p95_ms"] < 50, st["cadence"]
+    # while telemetry flows its samples are the looks: the game's 20 Hz tick, so at the floor (plus tick jitter);
+    # more margin needs the picture (vision), not a 20 Hz game state
+    assert st["cadence"]["p95_ms"] <= (70 if BUSY else 55), st["cadence"]
