@@ -13,7 +13,11 @@ handheld itself.
   asks for the rate that closes the error at the moment the next command takes effect: commands still in flight and
   the target's own motion are fed forward. On the Minecraft-like simulator it faces 90 degrees in 0.75-0.82 s (the
   fastest the plant allows is 0.69 s), lands within 0.2 degrees, and follows a target moving at 40 degrees/s within
-  0.2 degrees RMS. `walk_to(x, z)` walks there on telemetry with the left stick pushed relative to where the camera
+  0.2 degrees RMS. On the Ally every turn lands within 0.5 degrees of telemetry's truth. The servo also re-checks the
+  stick model against exact telemetry: yaw rates within 2-3% of the calibrated curve, and telemetry's angle ~45 ms
+  behind the picture. While telemetry flows the servo skips frame reads and the gyro: on the handheld's 1080p frames
+  they had stalled its loop for up to 0.46 s, with the stick held, so a 90 degree turn overshot and took 2 s. Each
+  new telemetry sample counts as a look for the 20 fps floor, stamped when it arrived. `walk_to(x, z)` walks there on telemetry with the left stick pushed relative to where the camera
   faces (so `keep_facing` can look elsewhere meanwhile), predicting position from telemetry's velocity over the
   sample's age, easing in, and hopping a step it's stuck against: in a kinematic Minecraft walker it arrives within
   0.1 s of distance / walking speed at any camera heading, 0.15-0.19 m from the point.

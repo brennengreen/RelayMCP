@@ -4,16 +4,20 @@
 //   relay:tp {"x","y","z","yaw","pitch"}      exact start pose        relay:fill {"from","to","block"}  reset an area
 //   relay:summon {"type","at":[x,y,z]}         a target                relay:clear {"radius"}           remove mobs
 //   relay:blocks {"from":[x,y,z],"to":[x,y,z]} non-air blocks in a region (a build's check), at most 4096 cells
+//   relay:rate {"pad": 4200}                   pad lines to this many bytes (0: off) so each tick is flushed
 // Each replies with a "RELAY {"reply": name, ...}" line.
 import { world, system } from "@minecraft/server";
 
 const R = (v, d = 3) => Math.round(v * 10 ** d) / 10 ** d;
+// The content log is written in 4 KB blocks: a ~300-byte line waits for 14 more (~750 ms). Padding each line to a
+// block makes every tick reach the file at once (~80 KB/s while on; relay:rate {"pad": 0} turns it off).
+let PAD_TO = 4200;
 
 function pose(p) {
   const l = p.location, r = p.getRotation(), v = p.getVelocity(), h = p.getHeadLocation();
   const out = { t: Date.now(), tick: system.currentTick, x: R(l.x), y: R(l.y), z: R(l.z), ey: R(h.y),
                 yaw: R(r.y, 2), pitch: R(r.x, 2), vx: R(v.x), vy: R(v.y), vz: R(v.z),
-                ground: p.isOnGround, sneak: p.isSneaking, slot: p.selectedSlotIndex };
+                ground: p.isOnGround, sneak: p.isSneaking, fly: p.isFlying, slot: p.selectedSlotIndex };
   try {
     const hit = p.getBlockFromViewDirection({ maxDistance: 7 });
     if (hit) {
@@ -45,7 +49,8 @@ system.runInterval(() => {
   if (!p) return;
   const msg = pose(p);
   if (system.currentTick % 2 === 0) msg.mobs = mobs(p);
-  console.log("RELAY " + JSON.stringify(msg));
+  const line = "RELAY " + JSON.stringify(msg);
+  console.log(line.length < PAD_TO ? line + " ".repeat(PAD_TO - line.length) : line);
 }, 1);
 
 function reply(id, data) {
@@ -69,7 +74,10 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
   const p = world.getAllPlayers()[0];
   const dim = p ? p.dimension : world.getDimension("overworld");
   try {
-    if (ev.id === "relay:tp") {
+    if (ev.id === "relay:rate") {
+      PAD_TO = Math.max(0, Math.min(16384, Number(a.pad) || 0));
+      reply(ev.id, { ok: true, pad: PAD_TO });
+    } else if (ev.id === "relay:tp") {
       p.teleport({ x: a.x, y: a.y, z: a.z }, { rotation: { x: a.pitch || 0, y: a.yaw || 0 } });
       reply(ev.id, { ok: true });
     } else if (ev.id === "relay:fill") {

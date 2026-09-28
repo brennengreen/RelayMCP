@@ -325,6 +325,8 @@ class Cadence:
 
     def observed(self, now: float, captured: float | None = None) -> None:
         with self._lock:
+            if self.last is not None and now <= self.last:
+                return  # (a sample that arrived before the latest look counted)
             if captured is not None:
                 self.ages.append(max(0.0, now - captured) * 1000)
             if self._held() and self.last is not None:
@@ -1342,6 +1344,7 @@ class Program:
         self._camera = None
         self._servo = None
         self._servo_rs: tuple[float, float] | None = None  # the servo's right stick while it runs
+        self._tel_seen = None  # the latest telemetry sample counted as a look
         self._apply_lock = threading.Lock()
 
     def cam(self):
@@ -1468,7 +1471,7 @@ class Program:
                 self._servo_rs = (x, y)
                 self._apply(self.state)
 
-            self._servo = servo.Servo(self.cam(), look=lambda: self.frame(), stick=stick, telemetry=rt.telemetry,
+            self._servo = servo.Servo(self.cam(), look=lambda: self.frame(), stick=stick, telemetry=self.telemetry,
                                       tol=tol, on_thread=on_thread, stop_evt=run.stop_evt)
             self._servo.start()
         self._servo.tol = tol
@@ -1650,10 +1653,13 @@ class Program:
 
     def telemetry(self) -> dict | None:
         """The game's latest telemetry sample (exact pose, looked-at block, nearby mobs; see telemetry.py), with
-        age_ms; None without a telemetry source. A fresh one (under 50 ms old) counts as a look."""
+        age_ms; None without a telemetry source. Each new sample counts as a look, as of when it arrived."""
         s = self.rt.telemetry() if self.rt.telemetry else None
-        if s is not None and s.get("age_ms", 1e9) <= FLOOR_MS:
-            self.run.cadence.observed(time.perf_counter())
+        if s is not None:
+            key = (s.get("tick"), s.get("t"))
+            if key != self._tel_seen:
+                self._tel_seen = key
+                self.run.cadence.observed(time.perf_counter() - float(s.get("age_ms", 0.0)) / 1000)
         return s
 
     def pixel_text(self, region, font: str = "minecraft", threshold: int = 245) -> str:

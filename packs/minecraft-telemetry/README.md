@@ -5,7 +5,7 @@ a drone's telemetry link). Nothing in RelayMCP requires it; with it, programs ge
 (`face`, `face_point`, `keep_facing`).
 
 Every tick (20 Hz) it prints one `RELAY {json}` line to the content log: position, eye height (`ey`), yaw (0 =
-south/+z, 90 = west), pitch (the game's: +90 = down; RelayMCP turns it to up +), velocity, on ground, sneaking,
+south/+z, 90 = west), pitch (the game's: +90 = down; RelayMCP turns it to up +), velocity, on ground, flying, sneaking,
 hotbar slot, the looked-at block (`look` = [x, y, z, face, block]), health, and every other tick the mobs within 32
 blocks (`mobs` = [[type, x, y, z, head_y, id], ...]). The handheld follows the newest content log and shows it to
 programs and to the `state` tool (topic `minecraft`).
@@ -20,6 +20,12 @@ with a `RELAY {"reply": name, ...}` line (the `state` tool, topic `minecraft.rep
 | `relay:summon` | `type`, `at` | a target |
 | `relay:clear` | `radius` (32) | removes mobs and items |
 | `relay:blocks` | `from`, `to` (at most 4096 cells) | the non-air blocks in a region (a build's check) |
+| `relay:rate` | `pad` (4200) | pads each line to this many bytes; 0 turns padding off |
+
+**Latency.** Minecraft writes its content log in 4 KB blocks, so a ~300-byte line waited for about 14 more: samples
+reached the handheld in batches every ~750 ms. Each line is padded to 4200 bytes, so every tick is flushed on its own:
+measured on the Ally, a sample every 49 ms (max 61), 54 ms after its tick (p95 62). That is about 80 KB/s of log while
+the world is open; `relay:rate {"pad": 0}` stops it.
 
 ## Install (test worlds only)
 

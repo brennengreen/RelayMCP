@@ -184,6 +184,10 @@ class Servo:
         self._thread: threading.Thread | None = None
         self._odo = None
         self.period = 1.0 / hz  # the loop's measured tick period (a busy machine ticks slower than asked)
+        self.use_gyro = True  # False: telemetry and the stick model only (the gyro can't follow a scene)
+        self._tel_at: float | None = None  # when the latest new telemetry sample arrived (perf clock)
+        self._parts = collections.defaultdict(list)  # stage -> ms per tick (look, gyro, telemetry, control)
+        self._worst: tuple[float, dict] = (0.0, {})
         self._prev_target: tuple[float, float, float] | None = None  # (t, yaw, pitch) of a moving target
         self._target_rate = (0.0, 0.0)  # its smoothed rate (deg/s): fed forward, and where it will be
 
@@ -244,16 +248,19 @@ class Servo:
         if not s or s.get("tick") == self._last_tick or "yaw" not in s or "pitch" not in s:
             return
         self._last_tick = s.get("tick")
+        self._tel_at = time.perf_counter()
         t = s.get("t")
         at = (float(t) / 1000.0 - self._wall_minus_perf) if isinstance(t, (int, float)) else s.get("recv",
                                                                                                     time.perf_counter())
         self.att.absolute(at, float(s["yaw"]), float(s["pitch"]))
 
-    def _gyro(self) -> None:
+    def _gyro(self, parts: dict) -> None:
+        t0 = time.perf_counter()
         frame = self.look()
-        if frame is None:
-            return
         now = time.perf_counter()
+        parts["look"] = (now - t0) * 1000
+        if frame is None or not self.use_gyro:
+            return
         try:
             if self._odo is None:
                 self._odo = self.cam.odometry()
@@ -263,6 +270,7 @@ class Servo:
                                  self._odo.health() >= GYRO_TRUST_MIN_HEALTH)
         except Exception:
             self._odo = None  # e.g. a frame of another size (a menu): start the gyro again
+        parts["gyro"] = (time.perf_counter() - now) * 1000
 
     def _target(self, now: float):
         t = self.target
@@ -298,9 +306,16 @@ class Servo:
         top_pitch = c.curve.max_rate * abs(c.y_gain) * self.model.scale[1]
         try:
             while not self._stop.is_set() and not self.stop_evt.is_set():
-                self._gyro()
+                parts: dict = {}
+                tick0 = time.perf_counter()
+                # Telemetry flowing: it and the stick model are the estimate, so the picture isn't needed (a frame
+                # and the gyro cost ~10-40 ms a tick on the handheld). Without it, the gyro carries the estimate.
+                if self._tel_at is None or tick0 - self._tel_at > 0.2:
+                    self._gyro(parts)
+                t1 = time.perf_counter()
                 self._telemetry()
                 now = time.perf_counter()
+                parts["telemetry"] = (now - t1) * 1000
                 self.period += 0.2 * (min(0.25, now - last_tick) - self.period)
                 last_tick = now
                 target = self._target(now)
@@ -324,6 +339,15 @@ class Servo:
                     moving = self.model.rate_at(now)
                     still = abs(moving[0]) < 3.0 and abs(moving[1]) < 3.0
                     self.settled = self.settled + 1 if abs(ey) <= self.tol and abs(ep) <= self.tol and still else 0
+                done = time.perf_counter()
+                parts["control"] = (done - now) * 1000
+                total = (done - tick0) * 1000
+                for k, v in parts.items():
+                    self._parts[k].append(v)
+                    if len(self._parts[k]) > 2000:
+                        del self._parts[k][:1000]
+                if total > self._worst[0]:
+                    self._worst = (total, {k: round(v, 1) for k, v in parts.items()})
                 self.ticks += 1
                 next_t += period
                 left = next_t - time.perf_counter()
@@ -342,6 +366,9 @@ class Servo:
     def summary(self) -> dict:
         out = {"ticks": self.ticks, "hz": round(1.0 / max(self.period, 1e-3)), "error": self.error,
                "on_target": self.on_target(), "estimate_from": dict(self.att.used)}
+        if self._parts:
+            out["stage_ms_p50"] = {k: round(sorted(v)[len(v) // 2], 1) for k, v in self._parts.items() if v}
+            out["worst_tick_ms"] = [round(self._worst[0], 1), self._worst[1]]
         if self.failure:
             out["failure"] = self.failure
         return out
