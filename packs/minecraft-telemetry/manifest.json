@@ -1,0 +1,37 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "RelayMCP Telemetry",
+    "description": "Exact player pose and nearby mobs for RelayMCP (ground truth).",
+    "uuid": "5b7e1f3a-6c1d-4a8e-9a57-2f0c6d1e8b41",
+    "version": [
+      0,
+      1,
+      0
+    ],
+    "min_engine_version": [
+      1,
+      21,
+      90
+    ]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "a3d9c2e4-7f15-4b6a-8e2d-91c4f0b7d6a5",
+      "entry": "scripts/main.js",
+      "version": [
+        0,
+        1,
+        0
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.0.0"
+    }
+  ]
+}
