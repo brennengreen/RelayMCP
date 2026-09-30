@@ -6,7 +6,7 @@ Faster, leaner and real-time capable: most of the work moves from model round tr
 handheld itself.
 
 - **Generic public naming:** repository copy describes supported hardware as Windows handhelds and gamepads while
-  keeping accurate protocol names and compatibility aliases in code.
+  keeping accurate protocol names, compatibility aliases and speech-recognition vocabulary in code.
 - **An early-tester feedback loop:** a successful `relaymcp setup` links directly to the public handheld compatibility
   discussion and asks users to help others discover the project. The README, getting-started guide and issue chooser
   route questions and working compatibility reports to Discussions instead of leaving new users without a next step.

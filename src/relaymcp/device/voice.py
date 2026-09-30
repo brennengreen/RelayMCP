@@ -49,7 +49,7 @@ VAD_SPEECH_FRAMES = 8    # ~240 ms of voiced audio before it counts as speech
 STT_MODEL = "small.en"       # ~1.2 s for a short request on the test handheld; base.en (~0.4 s) misheard real speech
 STT_FALLBACK = None          # (transcribe() can redo low-confidence results with a bigger model)
 MODEL_IDLE_UNLOAD_S = 15 * 60  # free speech models' memory (for games) after this long unused
-VOCABULARY = _SETTINGS.get("vocabulary") or "Copilot, handheld, Armoury Crate, Minecraft, Steam, Game Pass"
+VOCABULARY = _SETTINGS.get("vocabulary") or "Copilot, handheld, Armoury Crate, Minecraft, Xbox, Steam, Game Pass"
 
 _NO_PROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
