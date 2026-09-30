@@ -1172,7 +1172,7 @@ class Camera:
                     break
                 if max(abs(ey), abs(ep)) > max(10.0, 1.5 * worst + 3.0):
                     # the picture says it's going the wrong way or far past: the tracking broke (a repeating texture
-                    # locked on wrong, something big moving): stop pushing rather than spin (seen on the Ally)
+                    # locked on wrong, something big moving): stop pushing rather than spin (seen on the test handheld)
                     lost = True
                     break
                 vx, vy = odo.rate(0.06)

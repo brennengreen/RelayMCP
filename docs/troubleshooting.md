@@ -79,7 +79,7 @@ See [voice.md → Troubleshooting](voice.md#troubleshooting).
 
 ## The Armoury Crate "external controller" prompt
 
-The first gamepad tool call plugs in a virtual Xbox controller, which makes Armoury Crate ask whether to disable the
+The first gamepad tool call plugs in a virtual gamepad, which makes Armoury Crate ask whether to disable the
 built-in controller. RelayMCP dismisses that prompt automatically (via the `RelayMCP-DismissControllerNotice` task)
 without choosing anything. The virtual controller unplugs after 5 idle minutes.
 

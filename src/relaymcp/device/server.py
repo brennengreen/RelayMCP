@@ -208,8 +208,8 @@ async def _run(pool: ThreadPoolExecutor, fn, *args, **kwargs) -> Any:
         raise
 
 
-INSTRUCTIONS = """Hardware tools for the user's Windows gaming handheld (ROG Ally-class: touch screen, built-in Xbox-style
-controller, speakers, mic). Pair with the `{screen}` server (screen control): look there, act here.
+INSTRUCTIONS = """Hardware tools for the user's Windows gaming handheld (touch screen, built-in gamepad, speakers,
+mic). Pair with the `{screen}` server (screen control): look there, act here.
 - Fastest loop: observe (screen text + tap points) -> act (several steps in one call, e.g. tap_text + wait_text).
   screenshot here is faster and ~3x cheaper than `{screen}`'s; its to_screen maps image to screen pixels.
 - Coordinates are physical screen pixels, the same as `{screen}` screenshots.
@@ -217,7 +217,7 @@ controller, speakers, mic). Pair with the `{screen}` server (screen control): lo
 - Input only reaches the window in front. After launching a game, call focus_window("<game>") once (not `{screen}`'s
   App switch, which can claim success when it failed): input tools keep it in front, and each result's `foreground`
   says where input went (plus a warning if it was probably lost).
-- The gamepad is a VIRTUAL Xbox controller (games see a second controller). gamepad_connect before playing; it stays
+- The gamepad is VIRTUAL (games see a second controller). gamepad_connect before playing; it stays
   plugged while a game is in front. Armoury Crate's "external controller" notice is closed for you (nothing disabled).
 - key_* send scan codes (work in games); mouse_look turns game cameras; touch_* inject real multi-touch.
 - Real-time games: focus_window(pause={{"button": "start", "text": "<its pause text>"}}) makes them turn-based (they

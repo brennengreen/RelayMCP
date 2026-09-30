@@ -32,7 +32,7 @@ log = logging.getLogger("relaymcp")
 
 KOKORO_DIR = USER_DIR / "models" / "kokoro"
 KOKORO_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
-KOKORO_MODEL = "kokoro-v1.0.fp16.onnx"  # fastest on a ROG Ally's CPU (int8 is slower than real time there)
+KOKORO_MODEL = "kokoro-v1.0.fp16.onnx"  # fastest on the test handheld's CPU (int8 is slower than real time there)
 KOKORO_VOICES = "voices-v1.0.bin"
 KOKORO_FILES = {
     KOKORO_MODEL: ("c1610a859f3bdea01107e73e50100685af38fff88f5cd8e5c56df109ec880204", 177464787),

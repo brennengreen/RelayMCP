@@ -5,6 +5,8 @@
 Faster, leaner and real-time capable: most of the work moves from model round trips to the
 handheld itself.
 
+- **Generic public naming:** repository copy describes supported hardware as Windows handhelds and gamepads while
+  keeping accurate protocol names and compatibility aliases in code.
 - **An early-tester feedback loop:** a successful `relaymcp setup` links directly to the public handheld compatibility
   discussion and asks users to help others discover the project. The README, getting-started guide and issue chooser
   route questions and working compatibility reports to Discussions instead of leaving new users without a next step.
@@ -19,8 +21,9 @@ handheld itself.
   asks for the rate that closes the error at the moment the next command takes effect: commands still in flight and
   the target's own motion are fed forward. On the Minecraft-like simulator it faces 90 degrees in 0.75-0.82 s (the
   fastest the plant allows is 0.69 s), lands within 0.2 degrees, and follows a target moving at 40 degrees/s within
-  0.2 degrees RMS. On the Ally every turn lands within 0.5 degrees of telemetry's truth. The servo also re-checks the
-  stick model against exact telemetry: yaw rates within 2-3% of the calibrated curve, and telemetry's angle ~45 ms
+  0.2 degrees RMS. On the test handheld every turn lands within 0.5 degrees of telemetry's truth. The servo also
+  re-checks the stick model against exact telemetry: yaw rates within 2-3% of the calibrated curve, and telemetry's
+  angle ~45 ms
   behind the picture. While telemetry flows the servo skips frame reads and the gyro: on the handheld's 1080p frames
   they had stalled its loop for up to 0.46 s, with the stick held, so a 90 degree turn overshot and took 2 s. Each
   new telemetry sample counts as a look for the 20 fps floor, stamped when it arrived. Games read the stick
@@ -114,12 +117,13 @@ handheld itself.
   through the predicted local warp when the view rolls (yawing while looking down no longer drifts the pitch), and
   the full turn solves the focal length that makes it exactly 360 degrees (a rough first focal length no longer
   biases pixels per degree by 2-3%), redoing the turn slower if tracking broke or the start view was missed.
-  `look_at` corrects only on a match near the middle of the picture (on the Ally, a look-alike dirt block across the
-  screen pulled it 20 degrees away), and a `turn` that runs out of time says so (`timed_out`). Calibration also tells
+  `look_at` corrects only on a match near the middle of the picture (on the test handheld, a look-alike dirt block
+  across the screen pulled it 20 degrees away), and a `turn` that runs out of time says so (`timed_out`). Calibration
+  also tells
   a radial stick (deadzone and curve on the stick's length, as in Minecraft) from a per-axis one, and turns send the
   stick vector that model needs; the finishing pulses on the vertical axis divided the deflection, not the rate, by
-  the vertical gain (on the Ally a 2.7-degree pitch turn ended at 9.7).
-- **Armoury Crate's Command Center no longer eats the controller:** on the Ally it opened as the virtual pad
+  the vertical gain (on the test handheld a 2.7-degree pitch turn ended at 9.7).
+- **The device control overlay no longer eats the controller:** on the test handheld it opened as the virtual pad
   plugged in, and the game got no input at all (turn mode's resume press and every stick move went to the overlay's
   menu, where a game's presses would change the handheld's settings). It's closed with the pad's B right after
   plugging in and before agent input, and a program stops if it opens mid-run (as if you took over).
@@ -134,8 +138,8 @@ handheld itself.
   from pressing pause on a death screen, where it only opened a menu that ate the next presses.
 - **Turns that can't be fooled into spinning, and turns without the picture:** a `turn` whose error grows well past
   where it started (the picture says it's going the wrong way: a repeating texture locked on wrong, a static overlay)
-  stops and says `tracking_lost` instead of spinning for its whole timeout (on the Ally a 27-degree turn went 32
-  degrees the other way). A pitch limit only counts when pushing into it (starting up from Minecraft's -90 clamp
+  stops and says `tracking_lost` instead of spinning for its whole timeout (on the test handheld a 27-degree turn
+  went 32 degrees the other way). A pitch limit only counts when pushing into it (starting up from Minecraft's -90 clamp
   with a sluggish first moment was taken for "at the limit"). `turn_open(yaw, pitch)` turns from the calibrated curve
   alone, one axis at a time, for scenes the picture can't be followed in and from exact references.
 - **Open-loop turns measured, not assumed:** calibration now times what `turn_open` does (a deflection held for two
@@ -187,7 +191,7 @@ handheld itself.
 
 ## 0.1.1 (2026-09-26)
 
-Input reliability, from real use driving Minecraft Bedrock on a ROG Ally.
+Input reliability, from real use driving Minecraft Bedrock on a Windows handheld.
 
 - **Input lands in the game:** when the virtual gamepad plugs in, Armoury Crate's notice took the foreground and input
   was silently dropped. RelayMCP now puts the game back in front after closing the notice.
@@ -236,7 +240,7 @@ First release.
 - **Zero-typing handheld setup kit**: USB or one-liner install, token-authenticated check-in, host-key pinning.
 - **Handheld runtime**: a windowless agent that supervises Windows-MCP and the hardware server (job objects, crash
   restarts, keep-awake), with no console-hiding launchers for antivirus heuristics to flag.
-- **Hardware MCP server** with 35 tools: virtual Xbox controller, XInput reads and rumble, multi-touch, scan-code
+- **Hardware MCP server** with 35 tools: virtual gamepad, XInput reads and rumble, multi-touch, scan-code
   keys, mouse-look, audio and loopback capture, speech-to-text, text-to-speech, brightness, display mode, power mode,
   system load, keep-awake and voice prompts.
 - **Voice prompts**: View + Menu / *Ask Copilot* / hotkey; local Whisper `small.en` transcription; Kokoro neural voice

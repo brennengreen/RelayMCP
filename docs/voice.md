@@ -9,7 +9,7 @@ Talk to your AI agent from the handheld: hold two buttons, speak, and hear the a
 | **Hold View + Menu** (~1 s) on the built-in controller | Works in gamepad mode, in games and on the desktop. The virtual gamepad RelayMCP drives is ignored, so an agent can't trigger itself. |
 | **Tap *Ask Copilot*** (Desktop / Start menu) | A windowless launcher; pin it to Start or the taskbar. |
 | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>F12</kbd> | Global hotkey. |
-| **One button (ROG Ally):** map M1 or M2 to the hotkey | Armoury Crate → *Control Mode* → *Gamepad* → *Key mapping* → M2 → *Combine Keys* → Ctrl + Alt + Shift + F12. |
+| **One-button shortcut:** map a rear button to the hotkey | In the handheld's control software, map a rear button to Ctrl + Alt + Shift + F12. |
 
 Armoury Crate's Command Center only offers built-in tiles, so it can't host a custom shortcut. The M1/M2 mapping is
 the closest equivalent.
@@ -24,7 +24,7 @@ within 20 minutes continue the same one.
 2. Recording stops after ~1.1 s of silence. It gives up if nothing is said for 8 s, and stops after 30 s regardless.
    The voice detector adapts to background noise and ignores clicks and the chime.
 3. **Speech-to-text runs on the handheld:** faster-whisper `small.en` (int8, 8 threads), about 1.2 s for a short
-   request on a ROG Ally Z1 Extreme.
+   request on the test handheld.
 4. The text goes through the reverse tunnel to the **voice dispatcher** on your computer. It runs your agent with a
    short preamble: the request was spoken, words may be misheard, and the answer will be read aloud, so it should be
    1–3 plain sentences. Only the handheld's tools are loaded, with their definitions in view (no tool-search step),

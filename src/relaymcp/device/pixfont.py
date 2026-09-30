@@ -1,5 +1,5 @@
 """Reading text drawn in a game's bitmap font (a HUD's numbers) exactly, in about a millisecond. OCR engines misread
-pixel fonts: on the Ally, Windows OCR read Minecraft's "Position: -11, 100, 0" as "Position: -11, 13B," (its zero
+pixel fonts: on the test handheld, Windows OCR read Minecraft's "Position: -11, 100, 0" as "Position: -11, 13B," (its zero
 has a slash) every time. A pixel font is drawn at a whole-number scale, so it can be read back glyph by glyph:
 threshold the text colour, find the font's pixel size from the thinnest strokes, sample one value per font pixel,
 split glyphs at empty columns and match each against the font's bitmaps."""
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-# Glyph bitmaps (rows top to bottom, "#" = ink), as drawn by each game. Minecraft's were read off the Ally's screen
+# Glyph bitmaps (rows top to bottom, "#" = ink), as drawn by each game. Minecraft's were read off the handheld's screen
 # ("-", "1", "3", "0", ",", ":") or follow the same font; the ones not seen yet are checked by width and a distance limit.
 FONTS: dict[str, dict[str, tuple[str, ...]]] = {
     "minecraft": {
@@ -37,7 +37,7 @@ def _np():
 
 def ink_mask(img, threshold: int = 245):
     """Text pixels: every colour channel at least `threshold` (white HUD text is pure white; its shadow and the box
-    behind are darker, but bright sky seen through the box reached 200 on the Ally). img: BGRA/BGR/gray array."""
+    behind are darker, but bright sky seen through the box reached 200 on the test handheld). img: BGRA/BGR/gray array."""
     np = _np()
     a = np.asarray(img)
     if a.ndim == 3:

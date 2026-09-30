@@ -1,4 +1,4 @@
-"""Gamepad: a virtual Xbox 360 controller (ViGEmBus via vgamepad) plus XInput reads/rumble of physical controllers.
+"""Gamepad: a virtual XInput controller (ViGEmBus via vgamepad) plus XInput reads/rumble of physical controllers.
 
 The virtual controller plugs in on first use (or ahead of time with connect()). It unplugs itself after the configured
 idle time (device.json "gamepad_idle_minutes", default 30; 0 = never), but never while a fullscreen game or the
@@ -55,7 +55,7 @@ _cc_cache = [0.0, False]
 
 
 def command_center_open(max_age: float = 0.25) -> bool:
-    """Is Armoury Crate's Command Center overlay (ROG Ally) showing? While it is, games get no controller input: it
+    """Is the device control overlay showing? While it is, games get no controller input: it
     takes the controller for its own menu, where a game's presses would change the handheld's settings. Seen opening
     as the virtual pad plugged in. Cached for max_age seconds (behaviors ask on every wait)."""
     if not _WIN:
@@ -718,12 +718,12 @@ def to_steps(events: list[dict], deadzone: float = 0.1, min_ms: int = 0, tail_ms
 
 
 def rumble(left: float = 0.5, right: float = 0.5, duration_ms: int = 300, slot: int = 0) -> dict:
-    """Vibrate a physical controller (slot 0 is normally the Ally's built-in controller in gamepad mode)."""
+    """Vibrate a physical controller (slot 0 is normally the handheld's built-in controller in gamepad mode)."""
     duration_ms = max(0, min(int(duration_ms), 5000))
     vib = XINPUT_VIBRATION(int(_clamp(left, 0, 1) * 65535), int(_clamp(right, 0, 1) * 65535))
     rc = _xinput.XInputSetState(int(slot), ctypes.byref(vib))
     if rc != 0:
-        raise RuntimeError(f"no controller in XInput slot {slot} (error {rc}); is the Ally in gamepad mode?")
+        raise RuntimeError(f"no controller in XInput slot {slot} (error {rc}); is the handheld in gamepad mode?")
     try:
         time.sleep(duration_ms / 1000)
     finally:

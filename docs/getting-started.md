@@ -7,7 +7,7 @@ waiting for downloads on the handheld.
 
 | | Requirements |
 |---|---|
-| **Handheld** | Windows 11 (Home is fine), an administrator account, on your home Wi-Fi. Tested on an original ROG Ally; other Windows handhelds (Legion Go, MSI Claw, ROG Ally X, ...) should work. |
+| **Handheld** | Windows 11 (Home is fine), an administrator account, on your home Wi-Fi. Tested on one Windows handheld; other Windows handhelds should work. |
 | **Your computer** | macOS, Linux or Windows on the same network, with OpenSSH (built into all three) and [uv](https://docs.astral.sh/uv/getting-started/installation/). |
 | **An AI agent** | Any MCP client. Voice prompts run [GitHub Copilot CLI](https://github.com/github/copilot-cli) by default (`copilot` on your PATH). |
 
@@ -81,7 +81,7 @@ SSH host key (verified with the kit's token), starts the tunnels and runs `relay
 
 ```sh
 copilot -p "Take a screenshot of my handheld and describe what's on screen"
-copilot -p "On my handheld, open the Xbox app and tell me what's installed"
+copilot -p "On my handheld, open Settings and tell me the display resolution"
 relaymcp say "Hello from RelayMCP"
 relaymcp voice --test "What's my battery level?"   # the whole voice pipeline, without speaking
 ```

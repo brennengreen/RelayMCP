@@ -17,13 +17,13 @@
   <a href="docs/security.md"><strong>Security model</strong></a>
 </p>
 
-**RelayMCP lets your AI agent operate your Windows handheld.** Your ROG Ally, Legion Go, or similar device becomes a
-set of [MCP](https://modelcontextprotocol.io) tools on your laptop. GitHub Copilot CLI, Claude Code, VS Code, or any
-MCP client can then see the screen, tap, type, press controller buttons, run PowerShell, change settings, and talk
-back out loud. You can also hold two buttons on the handheld and just *ask*.
+**RelayMCP lets your AI agent operate your Windows handheld.** The handheld becomes a set of
+[MCP](https://modelcontextprotocol.io) tools on your laptop. GitHub Copilot CLI, Claude Code, VS Code, or any MCP
+client can then see the screen, tap, type, press controller buttons, run PowerShell, change settings, and talk back
+out loud. You can also hold two buttons on the handheld and just *ask*.
 
 ```text
-you ▸ copilot -p "Open Minecraft on my Ally, and once it's on the title screen, set brightness to 40%"
+you ▸ copilot -p "Open Minecraft on my handheld, and once it's on the title screen, set brightness to 40%"
       ● ally Screenshot   ● ally App (launch Minecraft)   ● ally WaitFor   ● ally-handheld set_brightness
       Minecraft is on the title screen and brightness is at 40%.
 ```
@@ -33,7 +33,7 @@ you ▸ copilot -p "Open Minecraft on my Ally, and once it's on the title screen
 - 🖥️ **Computer use.** Screenshots, UI-tree snapshots, clicks, typing, app launching, PowerShell, files and the
   registry, via [Windows-MCP](https://github.com/CursorTouch/Windows-MCP).
 - 🎮 **Handheld hardware** ([43 tools](docs/tools.md)):
-  - a virtual Xbox controller (games see it) with millisecond-accurate sequences, plus reading the real one and rumble
+  - a virtual gamepad (games see it) with millisecond-accurate sequences, plus reading the built-in one and rumble
   - real multi-touch (tap, swipe, pinch), scan-code keys that work in games, mouse-look
   - speakers, microphone, system-audio capture, brightness, resolution/refresh rate, power mode, battery and CPU load
 - ⚡ **Built for agents that are fast and frugal:**
@@ -58,8 +58,8 @@ you ▸ copilot -p "Open Minecraft on my Ally, and once it's on the title screen
 
 ## Quick start
 
-You need a Windows 11 handheld (tested on an original ROG Ally) and a Mac, Linux or Windows computer on the same home
-network, with [uv](https://docs.astral.sh/uv/) and OpenSSH. Voice prompts use
+You need a Windows 11 handheld and a Mac, Linux or Windows computer on the same home network, with
+[uv](https://docs.astral.sh/uv/) and OpenSSH. Voice prompts use
 [GitHub Copilot CLI](https://github.com/github/copilot-cli) by default.
 
 **1. Install RelayMCP on your computer**
@@ -141,7 +141,7 @@ The details (what's installed where, the job-object lifecycle, and the network r
 Hold **View + Menu** for about a second (or tap **Ask Copilot**, or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>F12</kbd>).
 After a chime, speak. Recording stops when you do. Say *"new conversation"* to start fresh.
 
-| Step | Where | Typical time (ROG Ally Z1 Extreme) |
+| Step | Where | Typical time on the test handheld |
 |---|---|---|
 | Speech-to-text (Whisper `small.en`, int8) | handheld, local | ~1.2 s |
 | Your agent does the work | your computer | ~3.5 s for a one-tool request with the warm runtime (`relaymcp[voice]`), ~8 s without |
@@ -182,10 +182,10 @@ things on your computer. Change the voice with `relaymcp voice --voice am_michae
 
 ## Status
 
-RelayMCP is young (pre-1.0). It is developed on macOS with an original ROG Ally (Windows 11), where everything above
-is tested end to end. Linux and Windows hosts use the same code paths (OpenSSH, systemd user services, scheduled
-tasks) and are covered by CI, but have seen less real-world use. Other Windows handhelds should work; the Armoury
-Crate niceties are ROG-specific. Successful compatibility reports, questions, issues and PRs are welcome in
+RelayMCP is young (pre-1.0). It is developed on macOS with a Windows 11 handheld, where everything above is tested
+end to end. Linux and Windows hosts use the same code paths (OpenSSH, systemd user services, scheduled tasks) and are
+covered by CI, but have seen less real-world use. Other Windows handhelds should work; some device-management
+niceties are hardware-specific. Successful compatibility reports, questions, issues and PRs are welcome in
 [Discussions](https://github.com/brennengreen/RelayMCP/discussions) and the
 [issue tracker](https://github.com/brennengreen/RelayMCP/issues).
 
@@ -195,8 +195,8 @@ Crate niceties are ROG-specific. Successful compatibility reports, questions, is
   it up.
 - Many online and multiplayer games forbid automated input, and anti-cheat software may flag virtual controllers. Use
   the gamepad and input tools only where a game's rules allow it.
-- RelayMCP is a personal open-source project. It isn't affiliated with or endorsed by ASUS, Microsoft, Xbox, GitHub
-  or Anthropic; product names are trademarks of their owners.
+- RelayMCP is a personal open-source project. It isn't affiliated with or endorsed by any device manufacturer,
+  Microsoft, GitHub or Anthropic; product names are trademarks of their owners.
 
 ## Acknowledgements
 

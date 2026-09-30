@@ -1,13 +1,13 @@
 [project]
 name = "relaymcp"
 dynamic = ["version"]
-description = "Remote agentic control for handheld PCs: MCP tooling for remote control, computer use, voice and automation on ROG Ally-class devices from macOS, Linux or Windows."
+description = "Remote agentic control for handheld PCs: MCP tooling for remote control, computer use, voice and automation from macOS, Linux or Windows."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Brennen Green" }]
 requires-python = ">=3.9"
-keywords = ["mcp", "model-context-protocol", "rog-ally", "handheld", "computer-use", "copilot", "ai-agent", "windows"]
+keywords = ["mcp", "model-context-protocol", "handheld", "handheld-pc", "computer-use", "copilot", "ai-agent", "windows"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",

@@ -134,7 +134,7 @@ class Turns:
             time.sleep(SETTLE_S)
             self.paused, self.frame, self.note = False, None, None
             return
-        # a press can be dropped (seen on the Ally: a program then played into the pause menu for its whole run), and
+        # a press can be dropped (seen on the test handheld: a program then played into the pause menu for its whole run), and
         # some screens only close with "back": try the resume button twice, then the close button
         tries = [self.profile["resume"], self.profile["resume"]] + ([self.profile["close"]] if self.profile.get("close") else [])
         for button in tries:
@@ -164,7 +164,7 @@ class Turns:
         dead = self.profile.get("dead")
         if dead and self._sees(dead, self.profile.get("dead_region")):
             # a death screen isn't paused by the pause button: it opens a menu over it, and the next call's resume
-            # and its presses land in that menu (seen on the Ally: "Respawn" couldn't be pressed)
+            # and its presses land in that menu (seen on the test handheld: "Respawn" couldn't be pressed)
             self.note = f"{dead!r} shows: the player died; respawn to play on (left as is, not paused)"
             return
         frame = self._grab()

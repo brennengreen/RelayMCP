@@ -68,8 +68,8 @@ Things that trip agents up:
   different one, so window titles come back empty and apps started there are invisible. Use the screen server's
   `PowerShell` tool (or `App`) for anything with windows.
 - **Coordinates are physical pixels** in both MCP servers (screenshots, clicks, touch). PowerShell started by the
-  screen server isn't DPI-aware, so Win32 calls there return scaled coordinates on a scaled display (175% on the ROG
-  Ally). Call `SetProcessDPIAware()` at the start of such a script, or multiply by the scale.
+  screen server isn't DPI-aware, so Win32 calls there return scaled coordinates on a scaled handheld display. Call
+  `SetProcessDPIAware()` at the start of such a script, or multiply by the scale.
 - **Input goes to the foreground window.** Every input result reports `foreground` and warns when input probably went
   nowhere. `focus_window` (with `remember`) brings a window back and says what *really* has focus; the screen server's
   `App` switch can report success while Windows' foreground lock kept another window in front.

@@ -14,7 +14,7 @@ then run `relaymcp setup` (for device/port changes) or `relaymcp service restart
     "name": "ally",                    // ssh alias; MCP servers "<name>" and "<name>-handheld"
     "host": "192.168.1.23",              // learned at check-in (or `relaymcp trust <ip>`)
     "user": "Sam",                     // Windows account on the handheld (learned at check-in)
-    "computer_name": "ROG-ALLY",
+    "computer_name": "HANDHELD",
     "home_networks": ["MyWiFi"],       // cosmetic: shown in messages on the handheld
     "home_gateways": ["AA-BB-CC-11-22-33"],  // router MAC address(es) = "home"
     "ports": {"screen": 8765, "hardware": 8767, "voice": 8768}
@@ -59,7 +59,7 @@ Written by setup; read by the device runtime.
   "version": "0.1.0",
   "ports": {"screen": 8765, "hardware": 8767, "voice": 8768},
   "gamepad_idle_minutes": 30,
-  "vocabulary": "Copilot, ROG Ally, Minecraft, Steam"
+  "vocabulary": "Copilot, handheld, Minecraft, Steam"
 }
 ```
 
