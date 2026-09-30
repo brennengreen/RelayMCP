@@ -88,6 +88,10 @@ relaymcp voice --test "What's my battery level?"   # the whole voice pipeline, w
 
 On the handheld, hold **View + Menu** for a second (or tap **Ask Copilot**) and ask something out loud.
 
+If setup works on your device, add the handheld model, host OS and MCP client to the
+[early tester roll call](https://github.com/brennengreen/RelayMCP/discussions/5). Working reports help establish
+compatibility just as much as bug reports.
+
 ## Day to day
 
 - **Nothing to start or stop.** The handheld enables remote access by itself at home and disables it everywhere

@@ -28,6 +28,8 @@ from . import agents, config, daemon, devguard, doctor, enroll, kit, netinfo, se
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
 DEVICE_LOGS = ["agent.log", "hardware.log", "hardware.out.log", "windows-mcp.out.log", "keepawake.log"]
+REPOSITORY_URL = "https://github.com/brennengreen/RelayMCP"
+EARLY_TESTER_URL = f"{REPOSITORY_URL}/discussions/5"
 
 
 # ---------------------------------------------------------------------------------------------------- helpers
@@ -43,6 +45,16 @@ def _need_device(cfg: dict) -> None:
     if not sshconf.reachable(sshconf.resolved_host(cfg)):
         ui.fail(f"'{cfg['device']['name']}' isn't reachable (asleep, off, or away from home?). Try: relaymcp doctor")
         sys.exit(1)
+
+
+def _print_setup_success() -> None:
+    ui.step("Done! Try it:")
+    ui.info('copilot -p "Take a screenshot of my handheld and tell me what\'s on screen"')
+    ui.info('relaymcp say "Hello from RelayMCP"')
+    ui.info("On the handheld: hold View + Menu (or tap 'Ask Copilot') and speak.")
+    ui.info("")
+    ui.info(f"Share your handheld and setup result: {EARLY_TESTER_URL}")
+    ui.info(f"Star RelayMCP to help other handheld owners find it: {REPOSITORY_URL}")
 
 
 def mcp_call(cfg: dict, tool: str, arguments: dict, timeout: float = 180) -> dict:
@@ -201,10 +213,7 @@ def cmd_setup(args: argparse.Namespace) -> None:
     healthy = doctor.print_checks(doctor.run_checks(config.load()))
     print()
     if healthy:
-        ui.step("Done! Try it:")
-        ui.info('copilot -p "Take a screenshot of my handheld and tell me what\'s on screen"')
-        ui.info('relaymcp say "Hello from RelayMCP"')
-        ui.info("On the handheld: hold View + Menu (or tap 'Ask Copilot') and speak.")
+        _print_setup_success()
     else:
         ui.info("Some checks failed; the arrows show what to do. `relaymcp doctor` re-checks.")
 

@@ -57,6 +57,7 @@ relaymcp = "relaymcp.host.cli:main"
 Homepage = "https://github.com/brennengreen/RelayMCP"
 Documentation = "https://github.com/brennengreen/RelayMCP/tree/main/docs"
 Issues = "https://github.com/brennengreen/RelayMCP/issues"
+Discussions = "https://github.com/brennengreen/RelayMCP/discussions"
 Changelog = "https://github.com/brennengreen/RelayMCP/blob/main/CHANGELOG.md"
 
 [build-system]

@@ -5,6 +5,9 @@
 Faster, leaner and real-time capable: most of the work moves from model round trips to the
 handheld itself.
 
+- **An early-tester feedback loop:** a successful `relaymcp setup` links directly to the public handheld compatibility
+  discussion and asks users to help others discover the project. The README, getting-started guide and issue chooser
+  route questions and working compatibility reports to Discussions instead of leaving new users without a next step.
 - **Voice can use other MCP servers without `full`:** `relaymcp voice --extra-servers pl515` lets handheld-mode voice
   prompts also use named servers from Copilot's MCP config (for example a drone's homestation), with their tool
   schemas kept in view and the prompt telling the agent about them. Nothing else on the computer is opened up.

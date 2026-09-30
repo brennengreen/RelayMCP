@@ -9,6 +9,14 @@
   <img src="https://img.shields.io/badge/host-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="macOS, Linux, Windows">
 </p>
 
+<p align="center">
+  <a href="#quick-start"><strong>Quick start</strong></a>
+  &middot;
+  <a href="https://github.com/brennengreen/RelayMCP/discussions/5"><strong>Join early testers</strong></a>
+  &middot;
+  <a href="docs/security.md"><strong>Security model</strong></a>
+</p>
+
 **RelayMCP lets your AI agent operate your Windows handheld.** Your ROG Ally, Legion Go, or similar device becomes a
 set of [MCP](https://modelcontextprotocol.io) tools on your laptop. GitHub Copilot CLI, Claude Code, VS Code, or any
 MCP client can then see the screen, tap, type, press controller buttons, run PowerShell, change settings, and talk
@@ -92,6 +100,10 @@ copilot -p "Take a screenshot of my handheld and tell me what's on screen"
 relaymcp say "Hello from RelayMCP"
 ```
 
+> **Trying RelayMCP on your handheld?** Add your model, host OS, MCP client and result to the
+> [early tester roll call](https://github.com/brennengreen/RelayMCP/discussions/5). Reports that work without changes
+> are just as valuable as bug reports. If RelayMCP is useful, star the repository to help other handheld owners find it.
+
 To use other MCP clients, run `relaymcp mcp --print` for ready-made config (Claude Code, VS Code, generic JSON). The
 full walkthrough is in [docs/getting-started.md](docs/getting-started.md).
 
@@ -170,10 +182,12 @@ things on your computer. Change the voice with `relaymcp voice --voice am_michae
 
 ## Status
 
-RelayMCP is young (v0.1). It is developed on macOS with an original ROG Ally (Windows 11), where everything above is
-tested end to end. Linux and Windows hosts use the same code paths (OpenSSH, systemd user services, scheduled tasks)
-and are covered by CI, but have seen less real-world use. Other Windows handhelds should work; the Armoury Crate
-niceties are ROG-specific. Issues and PRs are welcome.
+RelayMCP is young (pre-1.0). It is developed on macOS with an original ROG Ally (Windows 11), where everything above
+is tested end to end. Linux and Windows hosts use the same code paths (OpenSSH, systemd user services, scheduled
+tasks) and are covered by CI, but have seen less real-world use. Other Windows handhelds should work; the Armoury
+Crate niceties are ROG-specific. Successful compatibility reports, questions, issues and PRs are welcome in
+[Discussions](https://github.com/brennengreen/RelayMCP/discussions) and the
+[issue tracker](https://github.com/brennengreen/RelayMCP/issues).
 
 ## Use responsibly
 
