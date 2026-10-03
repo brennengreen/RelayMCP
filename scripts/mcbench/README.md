@@ -21,6 +21,7 @@ acting).
 python scripts/mcbench/mcgym.py step         # one task against the local simulator (no handheld): step | pursuit | reaction | course
 python scripts/mcbench/bench.py suite        # every task on the handheld, one scorecard
 python scripts/mcbench/bench.py house --x 110 --y -60 --z 40   # one task, at a chosen spot
+python scripts/mcbench/bench.py skills       # save the house as the Minecraft skill build_house (voice: "build me a house here")
 ```
 
 On the handheld it needs: Minecraft in front on a Creative test world with cheats on and the pack applied (flat and

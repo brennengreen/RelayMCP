@@ -7,6 +7,7 @@
       course     10 random waypoints, walking while facing the way: time vs ideal, cross-track error, stops
       house      the 5x5 house (tasks/house.py), checked block by block
       suite      all of the above, one scorecard; every run is saved in scripts/mcbench/results/
+      skills     save the house as the Minecraft skill build_house (what a voice "build me a house here" runs)
 
 Resets and scoring go through the RelayMCP Telemetry pack's commands (/scriptevent relay:..., typed in chat between
 trials): exact start pose, a cleared area, and the built region read back block by block. Needs the pack on the world
@@ -305,6 +306,19 @@ def summary(c):
 
 TASKS = {"step": step, "pursuit": pursuit, "reaction": reaction, "course": course, "house": house}
 
+HOUSE_SKILL = ("Build a 5x5 oak-plank house with glass windows and a door around where the player stands, in about a "
+               "minute. Needs Minecraft Creative with the RelayMCP Telemetry pack, oak planks in hotbar slot 1, glass "
+               "in slot 3 and an oak door in slot 4, and flat, clear ground 5x5 with 4 blocks of headroom.")
+
+
+def skills(args):
+    """Save the bench's house as the Minecraft skill build_house (a voice "build me a house here" runs it by name)."""
+    call("focus_window", {"target": "Minecraft"})  # skills are saved for the app in front
+    r = call("behavior", {"action": "save", "kind": "build_house",
+                          "params": {"code": task_code("house"), "description": HOUSE_SKILL}})
+    listed = call("behavior", {"action": "skills"})
+    return {"task": "skills", "state": "done", "result": {"saved": r, "listed": listed}}
+
 
 def save(cards):
     path = HERE / "results" / f"{time.strftime('%Y%m%d-%H%M%S')}.json"
@@ -315,13 +329,16 @@ def save(cards):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("task", choices=[*TASKS, "suite"])
+    ap.add_argument("task", choices=[*TASKS, "suite", "skills"])
     ap.add_argument("--x", type=int)
     ap.add_argument("--y", type=int)
     ap.add_argument("--z", type=int)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--mode", choices=["path", "points"], default="path", help="course: walk_path or walk_to each")
     a = ap.parse_args()
+    if a.task == "skills":
+        print(json.dumps(skills(a)["result"], indent=1)[:3000])
+        raise SystemExit(0)
     names = list(TASKS) if a.task == "suite" else [a.task]
     cards = []
     for i, name in enumerate(names):
