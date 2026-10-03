@@ -80,6 +80,19 @@ def _precise_timers() -> bool:
 PRECISE_TIMERS = _precise_timers()
 
 
+def pytest_collection_modifyitems(config, items):
+    """Tests marked `timing` steer the simulated camera through its visual odometry in real time. A runner that stalls
+    the process for 40-70 ms at the wrong moment (the macOS and Windows VMs do, even with precise timers) delivers a
+    frame the odometry can't follow, and the turn or calibration under test reads it wrong: 8 of ~1,100 runs of them
+    in two 5x stress runs of the four test jobs. They get two more tries (pytest-rerunfailures); a real regression
+    fails all three, and every retry is reported: "N rerun" in the summary line, and the test in the short summary."""
+    if not config.pluginmanager.hasplugin("rerunfailures"):
+        return
+    for item in items:
+        if item.get_closest_marker("timing") and not item.get_closest_marker("flaky"):
+            item.add_marker(pytest.mark.flaky(reruns=2))
+
+
 @pytest.fixture(autouse=True)
 def _no_dev_mode(monkeypatch):
     """Tests start outside dev mode even when run from a dev shell (scripts/dev-env.sh); dev-mode tests opt in."""

@@ -13,6 +13,10 @@ np = pytest.importorskip("numpy")
 
 from relaymcp.device import control  # noqa: E402
 
+# The simulator runs on the wall clock and the camera is steered through visual odometry: a runner stall at the wrong
+# moment costs a frame it can't follow (see conftest). The few pure-math tests here can't fail intermittently anyway.
+pytestmark = pytest.mark.timing
+
 
 def _texture(h, w, block, seed):
     rng = np.random.default_rng(seed)
