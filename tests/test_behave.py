@@ -89,6 +89,14 @@ def wait_state(rt, rid, timeout=5.0):
     return rt.status(rid)
 
 
+def first(pads, button, timeout=5.0):
+    """Wait for a behavior's first press of `button`: its schedule starts there (starting its thread, or a first
+    import in it, can take a while on a busy machine), so the world's own events are timed from it."""
+    end = time.time() + timeout
+    while button not in pads and time.time() < end:
+        time.sleep(0.002)
+
+
 def test_react_to_a_color_quickly_and_only_once(rt, world):
     rid = rt.start("react", {"region": [0, 0, 40, 40], "when": {"color": [0, 255, 0], "tol": 30},
                              "do": {"key": ["space"]}, "repeat": False}, max_s=3)["id"]
@@ -148,6 +156,7 @@ def test_press_until_text_appears(rt, world):
                                    "max_presses": 50}, max_s=5)["id"]
 
     def later():
+        first(world.pads, ("dpad_down",))
         time.sleep(0.3)
         world.text = [{"text": "Play  online", "box": [0, 0, 1, 1]}]
 
@@ -297,8 +306,10 @@ def test_script_runs_states_until_text_then_inbox_state(world):
     rid = rt.start("script", script, max_s=5)["id"]
 
     def game():
+        first(world.pads, ("dpad_right",))
         time.sleep(0.2)
         world.text = [{"text": "Iron Golem", "box": [0, 0, 1, 1]}]
+        first(world.pads, ("rt",))
         time.sleep(0.25)
         box.post("mob", {"type": "iron_golem", "angry": True})
 
