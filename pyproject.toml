@@ -85,6 +85,9 @@ ignore = ["E501", "B008", "B905"]
 [tool.ruff.lint.per-file-ignores]
 # COM must be configured (sys.coinit_flags, soundcard) before anything else imports comtypes.
 "src/relaymcp/device/server.py" = ["E402"]
+# Behavior programs: their names come from the program API and the bench's inputs (tests/test_mcbench.py checks them
+# against both), and their loop lambdas are consumed by until() within the same iteration.
+"scripts/mcbench/tasks/*.py" = ["F821", "B023"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

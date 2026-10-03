@@ -85,6 +85,15 @@ screenshots, the `proc` console for server-side checks, and the `handheld` agent
 context). Run the task, note the start and end times, then compare with
 `scripts/analyze_session.py <events.jsonl> --since <start> --until <end>`.
 
+### The real-time gameplay benchmark
+
+`scripts/mcbench/` scores real-time control in Minecraft Bedrock against the game's own telemetry (the
+[RelayMCP Telemetry pack](../packs/minecraft-telemetry/README.md)): camera steps, pursuit of a moving target, reacting
+to a mob at a random bearing, a 10-waypoint walk and a 5x5 house checked block by block, each with its 20 fps
+cadence. `python scripts/mcbench/mcgym.py <task>` runs a task's program against a local Minecraft-like simulator;
+`python scripts/mcbench/bench.py suite` runs them all on the handheld and prints one scorecard. See its
+[README](../scripts/mcbench/README.md).
+
 SSH sessions of Windows administrators are elevated, so `deploy --full` can run the setup script unattended.
 Changes to the hardware server's tools show up in your MCP client after it reconnects. Regenerate the tool reference
 with `python scripts/gen_tools_doc.py`.

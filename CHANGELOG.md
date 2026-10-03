@@ -45,6 +45,12 @@ handheld itself.
   point): pure pursuit, steering at the route 0.8 m ahead, slowing only for sharp corners. On 10-waypoint routes in
   the simulator it takes 1-2% longer than the distance at walking speed and keeps within 0.13 m of the route
   (`walk_to` point by point: 4-5% and 0.24 m).
+- **A real-time gameplay benchmark** (`scripts/mcbench`, for developers): camera steps, pursuit, reacting to a mob
+  at a random bearing, a 10-waypoint walk and a 5x5 house, each a behavior program scored against the telemetry
+  pack's ground truth with its 20 fps cadence; `bench.py suite` prints one scorecard, and `mcgym.py` runs the same
+  programs against a local Minecraft-like simulator first. First handheld run of the house: 73 of 73 blocks right in
+  59.4 s (it had been 58 of 72 in 221 s), plus one extra block placed against the wrong face of the right block;
+  blocks now go down only once telemetry shows the crosshair on the face they attach to.
 - **Game telemetry as ground truth:** the hardware server follows a game's log for `RELAY {json}` lines and keeps the
   latest sample and 10 s of history. A Minecraft script pack prints the player's exact position, eye height, yaw,
   pitch, velocity, looked-at block, health and nearby mobs 20 times a second. Programs read it with `telemetry()`,

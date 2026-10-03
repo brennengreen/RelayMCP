@@ -11,3 +11,6 @@ dist/
 *.log
 # A built kit contains your public key and home router; keep it out of the repo.
 kit/
+
+# Minecraft bench results (machine-specific)
+scripts/mcbench/results/
