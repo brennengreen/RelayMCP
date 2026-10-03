@@ -34,12 +34,14 @@ class SimTelemetry:
     def _run(self):
         tick, next_sample = 0, time.perf_counter()
         while not self._stop.is_set():
-            now = time.perf_counter()
-            self.hist.append((now, self.sim.turned, self.sim.pitch))
+            self.hist.append(self.sim.pose())
+            now = self.hist[-1][0]
             if now >= next_sample:
+                # the newest pose at least `delay` old, stamped `delay` after it was taken: a game reports its tick's
+                # exact angles, so a hiccup of this thread (a pose taken late) mustn't become an error in them
                 old = next((h for h in reversed(self.hist) if h[0] <= now - self.delay), self.hist[0])
-                self.latest = {"tick": tick, "t": (now + self._wall) * 1000, "yaw": old[1], "pitch": old[2],
-                               "recv": now}
+                self.latest = {"tick": tick, "t": (old[0] + self.delay + self._wall) * 1000, "yaw": old[1],
+                               "pitch": old[2], "recv": now}
                 tick += 1
                 next_sample += self.period
             time.sleep(0.004)

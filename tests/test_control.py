@@ -78,6 +78,12 @@ class CameraSim:
             self._advance()
             self._pitch = float(value)
 
+    def pose(self):
+        """(time, yaw turned, pitch) at one instant, as a game's tick records them."""
+        with self.lock:
+            self._advance()
+            return self.t, self._turned, self._pitch
+
     def paint(self, yaw_deg, pitch_deg, rgb, size_deg=8.0):
         """Something distinctive in the world at (yaw, pitch)."""
         u0 = int(((yaw_deg / 360 + 0.5) % 1) * self.TW)
