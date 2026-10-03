@@ -94,6 +94,9 @@ cadence. `python scripts/mcbench/mcgym.py <task>` runs a task's program against 
 `python scripts/mcbench/bench.py suite` runs them all on the handheld and prints one scorecard. See its
 [README](../scripts/mcbench/README.md).
 
+Fast tactical decisions (intents compiled to checked policies) and fast vision (frame embeddings with tiny heads)
+are measured in [decisions.md](decisions.md).
+
 SSH sessions of Windows administrators are elevated, so `deploy --full` can run the setup script unattended.
 Changes to the hardware server's tools show up in your MCP client after it reconnects. Regenerate the tool reference
 with `python scripts/gen_tools_doc.py`.

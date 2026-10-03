@@ -45,6 +45,12 @@ handheld itself.
   point): pure pursuit, steering at the route 0.8 m ahead, slowing only for sharp corners. On 10-waypoint routes in
   the simulator it takes 1-2% longer than the distance at walking speed and keeps within 0.13 m of the route
   (`walk_to` point by point: 4-5% and 0.24 m).
+- **Decisions in microseconds** (`relaymcp.host.decide`, groundwork): one call picks an answer from a fixed list,
+  by rules, by a local model run as a decision function (one forward pass, prompt cached), or by a policy a model
+  compiled from a plain-English intent and that was checked before use. Measured: small local models scoring the
+  answers agree with a five-rule intent 25-60% of the time in 45-245 ms; compiled policies 100% of 5,000 states in
+  2-3 microseconds. For frames, one CLIP embedding (19 ms) answers bounded questions at 23 of 24 right, where small
+  vision-language models took 0.7-1.6 s for 9-14. See docs/decisions.md.
 - **A real-time gameplay benchmark** (`scripts/mcbench`, for developers): camera steps, pursuit, reacting to a mob
   at a random bearing, a 10-waypoint walk and a 5x5 house, each a behavior program scored against the telemetry
   pack's ground truth with its 20 fps cadence; `bench.py suite` prints one scorecard, and `mcgym.py` runs the same
