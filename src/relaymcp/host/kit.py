@@ -62,7 +62,14 @@ packages = ["relaymcp"]
 
 
 def device_requirements() -> list[str]:
-    """The `device` extra of the relaymcp distribution (from installed metadata, else the source tree's pyproject)."""
+    """The `device` extra of relaymcp: from this checkout's pyproject.toml when running from one (an editable install's
+    metadata is only rewritten by a reinstall, so after a dependency change it would ship the old list and give the
+    same code another build hash), else from the installed distribution's metadata."""
+    pyproject = PACKAGE_DIR.parent.parent / "pyproject.toml"
+    if pyproject.exists():
+        m = re.search(r"^device\s*=\s*\[(.*?)^\]", pyproject.read_text(encoding="utf-8"), re.S | re.M)
+        if m:
+            return [s for s in re.findall(r'"([^"]+)"', m.group(1))]
     try:
         from importlib.metadata import PackageNotFoundError, requires
         reqs = requires("relaymcp") or []
@@ -71,12 +78,7 @@ def device_requirements() -> list[str]:
             return found
     except PackageNotFoundError:
         pass
-    pyproject = PACKAGE_DIR.parent.parent / "pyproject.toml"
-    text = pyproject.read_text(encoding="utf-8")
-    m = re.search(r"^device\s*=\s*\[(.*?)^\]", text, re.S | re.M)
-    if not m:
-        raise RuntimeError("couldn't find the device dependencies (pyproject.toml [project.optional-dependencies])")
-    return [s for s in re.findall(r'"([^"]+)"', m.group(1))]
+    raise RuntimeError("couldn't find the device dependencies (pyproject.toml [project.optional-dependencies])")
 
 
 def build_device_zip() -> bytes:

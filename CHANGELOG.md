@@ -100,6 +100,10 @@ handheld itself.
   briefly carry a `relaymcp_update` note naming the new tools and saying to start a new session (at most 3 notes,
   3 minutes apart; one when only behavior changed; a redeploy doesn't start them over). `handheld_status` reports
   the tool count and a tool-set hash, and any recent update, for the whole 45 minutes.
+- **A checkout deploys its own device dependencies:** the handheld's runtime lists the `device` extra from the
+  checkout's `pyproject.toml`, not from the installed package's metadata, which an editable install only rewrites
+  on reinstall: one not reinstalled since capture and OCR were added would have shipped without them, and reported a
+  different build for the same code (so `doctor` called an up-to-date handheld outdated).
 - **Updates wait for the handheld to be free:** `relaymcp deploy` and `scripts/rollout.sh` hold off while a tool call
   happened in the last minute, a keep-awake lease or `relaymcp busy` mark is active, or a command runs over SSH
   (`deploy --force` overrides). New `relaymcp busy [minutes|off]` marks the handheld in use.

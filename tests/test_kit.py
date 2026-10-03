@@ -47,6 +47,17 @@ def test_device_requirements_match_extra(relay_home):
     assert any(r.startswith("mcp") for r in reqs) and any(r.startswith("kokoro-onnx") for r in reqs)
 
 
+def test_a_checkout_ships_its_own_device_requirements_not_stale_install_metadata(relay_home, monkeypatch):
+    import importlib.metadata as md
+    from relaymcp.host import kit
+    before = kit.build_device_zip()
+    # an editable install from before capture and OCR were added: its metadata lists fewer device dependencies
+    monkeypatch.setattr(md, "requires", lambda name: ['mcp<2,>=1.12; extra == "device"', 'numpy>=1.26; extra == "device"'])
+    reqs = kit.device_requirements()
+    assert any(r.startswith("dxcam") for r in reqs) and any(r.startswith("pillow") for r in reqs)
+    assert kit.build_device_zip() == before  # the same code, the same build, whichever install builds it
+
+
 def test_launcher_is_crlf_ascii():
     from relaymcp.host import kit
     text = kit.launcher_text("your Mac")
