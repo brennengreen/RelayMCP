@@ -243,6 +243,7 @@ class Servo:
 
     PULSE_MIN_S = 0.025  # a few game frames
     PULSE_RATE = 30.0  # deg/s for finishing pulses
+    TEL_GAP_S = 1.0  # telemetry seen: the stick model alone bridges a gap this long (a hitch) before the gyro starts
 
     def _pulse(self, ey: float, ep: float, now: float) -> tuple[float, float]:
         """A stick position and duration that turn (ey, ep) degrees: at PULSE_RATE, or the game's slowest turn, for
@@ -350,14 +351,16 @@ class Servo:
             while not self._stop.is_set() and not self.stop_evt.is_set():
                 parts: dict = {}
                 tick0 = time.perf_counter()
-                # Telemetry flowing: it and the stick model are the estimate, so the picture isn't needed (a frame
-                # and the gyro cost ~10-40 ms a tick on the handheld). Without it, the gyro carries the estimate.
-                if self._tel_at is None or tick0 - self._tel_at > 0.2:
-                    self._gyro(parts)
-                t1 = time.perf_counter()
                 self._telemetry()
+                t1 = time.perf_counter()
+                parts["telemetry"] = (t1 - tick0) * 1000
+                # Telemetry flowing: it and the stick model are the estimate, so the picture isn't needed (a frame
+                # and the gyro cost ~10-40 ms a tick on the handheld, and starting the gyro on a 1080p frame ~0.3 s,
+                # which stalls the program's own loop too). Read it first, so even the first tick skips the gyro.
+                # The model bridges a game hitch; without telemetry (never seen, or lost) the gyro carries it.
+                if self._tel_at is None or t1 - self._tel_at > self.TEL_GAP_S:
+                    self._gyro(parts)
                 now = time.perf_counter()
-                parts["telemetry"] = (now - t1) * 1000
                 self.period += 0.2 * (min(0.25, now - last_tick) - self.period)
                 last_tick = now
                 target = self._target(now)

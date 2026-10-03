@@ -183,6 +183,44 @@ def test_without_telemetry_it_doesnt_move():
         sv.stop()
 
 
+def test_with_telemetry_from_the_start_it_never_starts_the_gyro_and_a_hitch_doesnt_either():
+    # On the handheld, starting the gyro on a 1080p frame took 0.3 s, and a program facing its first block went
+    # blind that long. Programs only start the servo once telemetry flows, so it has no reason to.
+    sim = minecraft_like()
+    prof = true_profile(sim)
+    prof["look"]["coast_s"] = sim.latency_s + sim.accel_s / 2
+    io = io_for(sim)
+    cam = control.Camera(io, prof)
+    tel = SimTelemetry(sim)
+    frozen = {"sample": None}
+    looks = [0]
+
+    def telemetry():
+        return frozen["sample"] or tel.get()
+
+    def look():
+        looks[0] += 1
+        return io.frame()
+
+    t0 = time.perf_counter()
+    while tel.get() is None and time.perf_counter() - t0 < 2:
+        time.sleep(0.005)
+    sv = servo.Servo(cam, look=look, stick=io.stick, telemetry=telemetry, tol=0.5)
+    sv.start()
+    try:
+        y0 = sim.turned
+        sv.set((y0 + 45.0, 0.0))
+        assert wait_on_target(sv, 3.0) is not None, sv.summary()
+        frozen["sample"] = tel.get()  # a hitch: the game sends nothing new for a while
+        time.sleep(servo.Servo.TEL_GAP_S * 0.5)
+        assert looks[0] == 0 and "gyro" not in sv.summary().get("stage_ms_p50", {}), sv.summary()
+        time.sleep(servo.Servo.TEL_GAP_S * 0.5 + 0.4)  # lost for good: now the picture carries the estimate
+        assert looks[0] > 0, sv.summary()
+    finally:
+        sv.stop()
+        tel.stop()
+
+
 def test_facing_a_point_uses_minecraft_axes():
     eye = (0.0, 1.62, 0.0)
     assert servo.facing_point(eye, (0.0, 1.62, 5.0)) == pytest.approx((0.0, 0.0))     # south, +z

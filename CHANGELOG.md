@@ -25,7 +25,9 @@ handheld itself.
   re-checks the stick model against exact telemetry: yaw rates within 2-3% of the calibrated curve, and telemetry's
   angle ~45 ms
   behind the picture. While telemetry flows the servo skips frame reads and the gyro: on the handheld's 1080p frames
-  they had stalled its loop for up to 0.46 s, with the stick held, so a 90 degree turn overshot and took 2 s. Each
+  they had stalled its loop for up to 0.46 s, with the stick held, so a 90 degree turn overshot and took 2 s. It
+  reads telemetry first, so its first tick skips them too (starting the gyro there took 0.3 s, and the program
+  facing its first block went blind that long), and the stick model alone bridges a hitch of up to a second. Each
   new telemetry sample counts as a look for the 20 fps floor, stamped when it arrived. Games read the stick
   once per frame, so near a still target the servo slows to where one frame turns under half a degree, stops, lets
   telemetry show where the camera really is, and finishes with one pulse of at least 25 ms. Shorter corrections were
