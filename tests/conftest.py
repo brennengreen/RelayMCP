@@ -1,7 +1,76 @@
 import importlib
+import os
+import select
 import sys
+import threading
+import time
 
 import pytest
+
+
+def _precise_timers() -> bool:
+    """GitHub's macOS runners run every job under a utility QoS clamp (`sudo taskinfo <pid>`: "eff qos clamp:
+    THREAD_QOS_UTILITY", "eff latency qos: LATENCY_QOS_TIER_3"), and macOS coalesces such a process's timers:
+    time.sleep(0.001) returns ~8 ms late, time.sleep(0.02) 50-150 ms late, and timed Event waits the same (on a
+    developer's Mac: up to 25-50% late, at most 5-10 ms). The real-time tests (simulated cameras, telemetry and game
+    loops; the behaviors' 20-120 Hz tick loops; the camera servo) can't run on that clock, and the handheld (Windows,
+    a 1 ms timer) never runs on one. kqueue timers marked NOTE_CRITICAL are exempt from coalescing (~0.1 ms late
+    under the same clamp), so on macOS the tests' sleeps and Event.wait timeouts use them. Everything still runs in
+    real time and is descheduled like any process; only the coalescing is gone. Reproduce the runner's clock locally
+    with `taskpolicy -c utility pytest ...`."""
+    if sys.platform != "darwin" or not hasattr(select, "kqueue"):
+        return False
+    NOTE_NSECONDS, NOTE_CRITICAL = 0x4, 0x20  # <sys/event.h>
+    plain_sleep, plain_wait, clock = time.sleep, threading.Event.wait, time.monotonic
+    local = threading.local()
+
+    def kqueue():
+        if getattr(local, "pid", None) != os.getpid():  # one per thread (a forked child has none of its parent's)
+            local.kq, local.pid = select.kqueue(), os.getpid()
+        return local.kq
+
+    def arm(seconds):
+        """Wait on a coalescing-exempt timer; False if the kernel refused it."""
+        timer = select.kevent(1, select.KQ_FILTER_TIMER, select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                              NOTE_NSECONDS | NOTE_CRITICAL, max(1, int(seconds * 1e9)))
+        fired = kqueue().control([timer], 1, None)
+        return bool(fired) and not fired[0].flags & select.KQ_EV_ERROR
+
+    def sleep(seconds):
+        if seconds < 0:
+            raise ValueError("sleep length must be non-negative")
+        if seconds == 0:
+            return plain_sleep(0)
+        end = clock() + seconds
+        left = float(seconds)
+        while left > 0:
+            if not arm(left):
+                return plain_sleep(max(0.0, end - clock()))
+            left = end - clock()
+
+    def wait(self, timeout=None):
+        if timeout is None:
+            return plain_wait(self)
+        end = clock() + timeout
+        if timeout > 0.25 and plain_wait(self, timeout - 0.25):  # the bulk of a long wait as before (a set() ends
+            return True                                             # it at once; coalescing adds at most ~0.16 s)
+        while not self.is_set():
+            left = end - clock()
+            if left <= 0:
+                return False
+            sleep(min(left, 0.001))
+        return True
+
+    try:
+        if not arm(0.0005):
+            return False
+    except OSError:
+        return False
+    time.sleep, threading.Event.wait = sleep, wait
+    return True
+
+
+PRECISE_TIMERS = _precise_timers()
 
 
 @pytest.fixture(autouse=True)
