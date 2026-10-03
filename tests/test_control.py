@@ -382,14 +382,19 @@ def test_a_camera_too_fast_to_follow_is_calibrated_and_driven_at_speeds_it_can_f
 
 def test_duplicate_frames_cost_nothing_and_a_stopped_view_reads_as_stopped():
     sim = CameraSim(fps=30)
-    odo = control.Odometry(sim.frame())
+    shown = [sim.frame()]
+    odo = control.Odometry(shown[0])
     sim.stick(0.8, 0.0)
     time.sleep(0.3)
     for _ in range(40):
-        odo.update(sim.frame())
+        shown.append(sim.frame())
+        odo.update(shown[-1])
         time.sleep(0.004)
     sim.stick(0.0, 0.0)
-    assert odo.updates < 30  # ~30 new frames in that time, not 40 measurements
+    # the capture hands back the same image until the next frame: each new one is measured once, the repeats not at
+    # all (how many are new depends on how fast this machine ran the loop, not on the odometry)
+    new = len({id(f) for f in shown}) - 1
+    assert odo.updates == new < 40, (odo.updates, new)
     time.sleep(0.4)
     for _ in range(30):
         odo.update(sim.frame())
