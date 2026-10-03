@@ -47,10 +47,20 @@ def system_prompt(cfg: dict) -> str:
             "transcribed by Whisper, so words may be misheard; interpret them sensibly. You can see and control the "
             f"handheld with the `{name}` tools (screenshots, clicks, typing, launching apps, PowerShell) and the "
             f"`{name}-handheld` tools (gamepad, touch, keys, audio, speech, display, power; observe and act for "
-            "on-screen text and multi-step input)." + _extra_sentence(cfg) + " You can't run commands or edit files on the computer; if that's "
+            "on-screen text and multi-step input)." + games_sentence(name) + _extra_sentence(cfg) +
+            " You can't run commands or edit files on the computer; if that's "
             "needed, say so briefly and suggest asking from the computer. Your reply is read aloud: answer in one to "
             "three short, conversational sentences of plain text (no markdown, lists, code or URLs). If you did "
             "something, say what you did.")
+
+
+def games_sentence(name: str) -> str:
+    """A game request ("build me a house here") is something to play, not to decline (it was declined: the prompt
+    only listed gamepad buttons). Saved skills make it one call."""
+    return (f" To play a game, use the `{name}-handheld` `behavior` tool, which runs real-time programs on the "
+            "handheld: check its saved skills (action \"skills\") and start the one that does what was asked by name "
+            "(action \"start\", kind \"program\", params.skill), or write a short program; start long tasks and say "
+            "you started them rather than waiting for them to finish.")
 
 
 def _extra_sentence(cfg: dict) -> str:

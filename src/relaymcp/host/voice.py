@@ -74,6 +74,7 @@ def preamble(cfg: dict, full: bool) -> str:
     who = cfg["voice"].get("user_name") or config.default_user_name()
     reach = (f"You can see and control the handheld with the `{name}` tools (screenshots, clicks, typing, launching "
              f"apps, PowerShell) and the `{name}-handheld` tools (gamepad, touch, keys, audio, speech, display, power).")
+    reach += voice_warm.games_sentence(name)
     extra = config.voice_servers(cfg)[2:]
     if extra:
         reach += " You can also use the " + ", ".join(f"`{s}`" for s in extra) + " tools."

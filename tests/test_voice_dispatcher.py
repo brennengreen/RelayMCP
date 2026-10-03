@@ -72,6 +72,12 @@ def test_voice_extra_servers(relay_home, monkeypatch):
     assert "`pl515`" in cmd[cmd.index("-p") + 1]      # the preamble tells the agent
 
 
+def test_the_preamble_says_how_to_play_games(relay_home):
+    from relaymcp.host import config, voice
+    text = voice.preamble(config.load(), full=False)
+    assert "`ally-handheld` `behavior` tool" in text and "params.skill" in text
+
+
 def test_retry_drops_rejected_options():
     from relaymcp.host.voice import retry_command
     cmd = ["copilot", "-p", "x", "--model", "claude-haiku-4.5", "--reasoning-effort", "low", "-s"]

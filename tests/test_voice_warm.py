@@ -133,6 +133,12 @@ def test_session_options_extra_servers(cfg, monkeypatch):
     assert "`pl515`" in opts["system_message"]["content"]
 
 
+def test_a_game_request_is_something_to_play(cfg):
+    # "Build me a house here" got "I don't have hands": the prompt listed buttons, not the real-time programs
+    text = voice_warm.system_prompt(cfg)
+    assert "`ally-handheld` `behavior` tool" in text and "params.skill" in text
+
+
 def test_drop_rejected():
     opts = {"model": "claude-haiku-4.5", "reasoning_effort": "low", "x": 1}
     assert voice_warm.drop_rejected(opts, 'Model "claude-haiku-4.5" does not support reasoning effort') == \
