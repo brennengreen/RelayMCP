@@ -734,8 +734,8 @@ def build_server(port: int, record_tools: bool = False, upgraded: bool = False) 
         return JSONResponse({"ok": True, "n": n})
 
     @tool()
-    async def state(action: str = "read", topic: str = "", since: int = 0, match: str = "", timeout: float = 10.0,
-                    max_items: int = 20) -> dict:
+    async def state(action: str = "read", topic: str = "", since: int | None = None, match: str = "",
+                    timeout: float = 10.0, max_items: int = 20) -> dict:
         """State programs on the handheld (e.g. a game server script) POST to 127.0.0.1:<port>/state/<topic> (header
         X-Relay-State: 1). action: read (latest + events since `since`) | wait (next event on topic matching text
         or key=value) | topics."""

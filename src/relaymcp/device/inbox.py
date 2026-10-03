@@ -97,13 +97,15 @@ def allowed(headers) -> bool:
     return headers.get(STATE_HEADER) == "1" and host in ("127.0.0.1", "localhost", "::1")
 
 
-def run_tool(inbox: Inbox, action: str, topic: str = "", since: int = 0, match: str = "", timeout: float = 10.0,
-             max_items: int = 20) -> dict:
+def run_tool(inbox: Inbox, action: str, topic: str = "", since: int | None = None, match: str = "",
+             timeout: float = 10.0, max_items: int = 20) -> dict:
     action = (action or "read").lower()
     if action == "read":
-        return inbox.read(topic, since, max_items)
+        return inbox.read(topic, since or 0, max_items)
     if action == "wait":
-        return inbox.wait(topic, since or None, match, timeout)
+        # A cursor from an earlier read counts even when it's 0 (an empty inbox, e.g. after a restart): an event that
+        # arrives between that read and this wait is still found. No cursor: the next new event.
+        return inbox.wait(topic, since, match, timeout)
     if action == "topics":
         return inbox.topics()
     raise ValueError("action must be read, wait or topics")

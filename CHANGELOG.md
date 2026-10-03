@@ -71,7 +71,9 @@ handheld itself.
   time limit, releases all input when it ends, and stops as soon as a real controller moves.
 - **`state` inbox:** programs on the handheld (a game server script, an add-on) POST JSON to
   `127.0.0.1:<port>/state/<topic>`; agents read the latest state or wait for a matching event with the `state` tool,
-  exact and a few tokens instead of reading pixels.
+  exact and a few tokens instead of reading pixels. A wait from a cursor read earlier finds an event that came in
+  between, even from an empty inbox (cursor 0, as after a restart): 0 used to mean "from now", so a game's quick reply
+  to a command could be missed.
 - **`proc` tool: long-running consoles over MCP** (e.g. a Bedrock Dedicated Server): start one, send it a line and
   get its reply, read only new output, or wait until a line matches, all without screenshots. Updates wait while one
   runs. Its state file is replaced whole, one save at a time (a process exiting while it was being stopped saved
