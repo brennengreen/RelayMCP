@@ -3,8 +3,6 @@ an expo curve, an acceleration lag, input latency and pitch limits, with a HUD d
 is a particular game: the same code has to identify and steer whatever the plant turns out to be."""
 
 import math
-import os
-import sys
 import threading
 import time
 from collections import deque
@@ -14,8 +12,6 @@ import pytest
 np = pytest.importorskip("numpy")
 
 from relaymcp.device import control  # noqa: E402
-
-SLOPPY = sys.platform == "darwin" and bool(os.environ.get("CI"))  # shared macOS runners oversleep
 
 
 def _texture(h, w, block, seed):
@@ -287,7 +283,7 @@ def test_calibration_identifies_an_unknown_plant():
     assert prof["px_per_deg"] == pytest.approx(sim.ppd, rel=0.03), (prof["px_per_deg"], events)
     assert prof["focal_px"] == pytest.approx(sim.focal, rel=0.03), prof["focal_px"]
     assert 0.2 <= look["deadzone"] <= 0.4 and look["max_deg_s"] == pytest.approx(240, rel=0.15), look
-    assert 0.02 <= look["latency_s"] <= (0.2 if SLOPPY else 0.12), look
+    assert 0.02 <= look["latency_s"] <= 0.12, look
     assert look["y_gain"] == pytest.approx(1.0, abs=0.15), look
     ov = control.Overlay.from_json(prof["overlay"])
     assert ov.mask[222:262, 380:470].mean() > 0.9

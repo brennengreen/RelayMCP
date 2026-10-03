@@ -1,15 +1,12 @@
 """Gamepad sequences against a fake pad: steps land on schedule (no drift) and ramps ease sticks in."""
 
 import os
-import sys
 import time
 import types
 
 import pytest
 
 from relaymcp.device import gamepad
-
-SLOPPY_CLOCK = sys.platform == "darwin" and bool(os.environ.get("CI"))
 
 
 class FakePad:
@@ -54,7 +51,7 @@ def test_steps_keep_time(pad):
     t0 = time.perf_counter()
     result = pad.run_steps([{"buttons": ["a"], "ms": 20}, {"ms": 20}] * 5)
     elapsed = (time.perf_counter() - t0) * 1000
-    assert abs(elapsed - 200) < (150 if SLOPPY_CLOCK else 8), elapsed
+    assert abs(elapsed - 200) < 8, elapsed
     if os.name == "nt":  # the handheld's platform (macOS may deschedule a background process for a few ms)
         assert result["timing_ms_p95"] < 3, result
     presses = [u for u in pad._pad.updates if u[1]["buttons"] & gamepad.BUTTON_BITS["a"]]
@@ -152,12 +149,11 @@ def test_a_tap_goes_down_on_top_of_what_is_held_and_lets_go_by_itself(pad):
     pad.hold({"right_stick": [1, 0]})  # a new held state keeps the tap down
     now = pad._pad.updates[-1][1]
     assert now["buttons"] & a and now["right"] == (1.0, 0.0) and now["left"] == (0.0, 0.0), now
-    time.sleep(0.25 if SLOPPY_CLOCK else 0.12)
+    time.sleep(0.12)
     last = pad._pad.updates[-1][1]
     assert not last["buttons"] & a and last["lt"] == 0.0 and last["right"] == (1.0, 0.0), last  # still held
     released = next(t for t, st in pad._pad.updates if st["buttons"] == 0 and st["right"] == (1.0, 0.0))
-    if not SLOPPY_CLOCK:
-        assert 0.05 <= released - t0 <= 0.08, released - t0
+    assert 0.05 <= released - t0 <= 0.08, released - t0
 
 
 def test_neutral_and_sequences_end_taps(pad):

@@ -1,15 +1,10 @@
 """Behaviors against a simulated screen (numpy frames) and recorded outputs: no Windows, no real input."""
 
 import os
-import sys
 import threading
 import time
 
 import pytest
-
-# Behaviors run on Windows handhelds. Shared macOS CI machines oversleep by 15-25 ms, so strict timing is only
-# checked on Windows and on developer machines.
-SLOPPY_CLOCK = sys.platform == "darwin" and bool(os.environ.get("CI"))
 
 np = pytest.importorskip("numpy")
 
@@ -137,7 +132,7 @@ def test_track_moves_the_cursor_onto_a_moving_target(rt, world):
     mover.start()
     mover.join()
     s = wait_state(rt, rid)
-    assert s["state"] == "done" and s["hz"] > (10 if SLOPPY_CLOCK else 30)
+    assert s["state"] == "done" and s["hz"] > 30
     ex, ey = world.cursor[0] - world.target[0], world.cursor[1] - world.target[1]
     assert (ex * ex + ey * ey) ** 0.5 < 30, (world.cursor, world.target)
     assert s["error_px_p50"] < 30
@@ -206,7 +201,6 @@ def test_stop_takeover_limits_and_errors(world):
     assert behave.run_tool(rt, "kinds")["kinds"].keys() == behave.KINDS.keys()
 
 
-@pytest.mark.skipif(SLOPPY_CLOCK, reason="shared macOS CI machines oversleep")
 def test_sleep_until_is_precise():
     lateness = []
     with behave.HiResTimer():  # as behaviors and pad sequences run
@@ -864,8 +858,8 @@ def test_looking_while_holding_keeps_to_the_floor():
                             "until(lambda: frame() is not None and elapsed() > 0.4, timeout=2, hz=60)\n"
                             "pad()\n")
     c = out["cadence"]
-    busy = SLOPPY_CLOCK or bool(os.environ.get("CI"))  # shared runners stall now and then
-    assert c["p95_ms"] < (80 if SLOPPY_CLOCK else 50) and c["worst_ms"] < (150 if busy else 50), c
+    busy = bool(os.environ.get("CI"))  # shared runners stall now and then
+    assert c["p95_ms"] < 50 and c["worst_ms"] < (150 if busy else 50), c
 
 
 def test_tap_lets_the_program_keep_looking():
@@ -882,7 +876,7 @@ def test_press_until_looks_between_presses(rt, world):
 
     threading.Thread(target=later).start()
     s = wait_state(rt, rid)
-    assert s["state"] == "done" and s["presses"] == 1 and s["seconds"] < (0.9 if SLOPPY_CLOCK else 0.5), s
+    assert s["state"] == "done" and s["presses"] == 1 and s["seconds"] < 0.5, s
 
 
 def test_script_checks_its_condition_between_actions(rt, world):
@@ -895,4 +889,4 @@ def test_script_checks_its_condition_between_actions(rt, world):
 
     threading.Thread(target=later).start()
     s = wait_state(rt, rid)
-    assert s["state"] == "done" and len(world.keys) == 1 and s["seconds"] < (0.9 if SLOPPY_CLOCK else 0.5), s
+    assert s["state"] == "done" and len(world.keys) == 1 and s["seconds"] < 0.5, s
