@@ -40,7 +40,11 @@ handheld itself.
   0.08 s, final error within 0.3 degrees (it had taken 1.3-2.2 s). `walk_to(x, z)` walks there on telemetry with the left stick pushed relative to where the camera
   faces (so `keep_facing` can look elsewhere meanwhile), predicting position from telemetry's velocity over the
   sample's age, easing in, and hopping a step it's stuck against: in a kinematic Minecraft walker it arrives within
-  0.1 s of distance / walking speed at any camera heading, 0.15-0.19 m from the point.
+  0.1 s of distance / walking speed at any camera heading, 0.15-0.19 m from the point. `walk_path([(x, z), ...])`
+  walks through points without stopping at each (a chain of `walk_to` eases to ~0.4 of walking speed at every
+  point): pure pursuit, steering at the route 0.8 m ahead, slowing only for sharp corners. On 10-waypoint routes in
+  the simulator it takes 1-2% longer than the distance at walking speed and keeps within 0.13 m of the route
+  (`walk_to` point by point: 4-5% and 0.24 m).
 - **Game telemetry as ground truth:** the hardware server follows a game's log for `RELAY {json}` lines and keeps the
   latest sample and 10 s of history. A Minecraft script pack prints the player's exact position, eye height, yaw,
   pitch, velocity, looked-at block, health and nearby mobs 20 times a second. Programs read it with `telemetry()`,

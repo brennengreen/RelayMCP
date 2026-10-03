@@ -87,3 +87,43 @@ def test_walk_to_arrives_in_a_straight_line_whatever_way_the_camera_faces():
     dist = math.hypot(6.5 - 0.5, -3.5 - 0.5)
     assert r["arrived"] and r["seconds"] < dist / WALK + 1.2, (r, out.get("cadence"))
     assert math.hypot(w.x - 6.5, w.z + 3.5) < 0.45, (w.x, w.z)  # stopped near the point, not past it
+
+
+def test_walk_path_keeps_walking_through_corners_and_stays_on_the_route():
+    w = Walker(yaw=-60.0)
+    frame = np.zeros((60, 80, 4), np.uint8)
+    rt = behave.Runtime(lambda region=None: (frame, time.perf_counter()), Legs(w), telemetry=w.telemetry)
+    route = [(0.5, 0.5), (6.5, 0.5), (11.5, 3.39), (12.79, 8.22), (7.96, 9.51)]  # turns of 30, 45 and 90 degrees
+    trace, stop = [], threading.Event()
+
+    def record():
+        while not stop.is_set():
+            with w.lock:
+                trace.append((time.perf_counter(), w.x, w.z, math.hypot(w.vx, w.vz)))
+            time.sleep(0.01)
+
+    time.sleep(0.15)
+    threading.Thread(target=record, daemon=True).start()
+    try:
+        out = behave.run_tool(rt, "start", "program", {"code": f"result = walk_path({route[1:]})", "wait": True},
+                              max_s=15)
+    finally:
+        stop.set()
+        w.stop()
+    r = out["result"]
+    length = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(route, route[1:]))
+    assert r["arrived"] and r["reached"] == 4 and r["seconds"] < length / WALK + 1.5, (r, out.get("cadence"))
+
+    def off_route(x, z):
+        best = float("inf")
+        for (ax, az), (bx, bz) in zip(route, route[1:]):
+            ux, uz = bx - ax, bz - az
+            u = max(0.0, min(1.0, ((x - ax) * ux + (z - az) * uz) / (ux * ux + uz * uz)))
+            best = min(best, math.hypot(x - ax - u * ux, z - az - u * uz))
+        return best
+
+    assert max(off_route(x, z) for _, x, z, _ in trace) < 0.3  # cuts corners a little, never wanders off
+    end = route[-1]
+    mid = [v for t, x, z, v in trace if math.hypot(x - 0.5, z - 0.5) > 1.0 and math.hypot(x - end[0], z - end[1]) > 1.2]
+    # through turns like these it keeps ~0.7 of walking speed; a chain of walk_to eases to ~0.4 at every point
+    assert min(mid) > 0.55 * WALK, min(mid) / WALK

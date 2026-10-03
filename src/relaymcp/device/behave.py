@@ -90,7 +90,8 @@ KINDS = {
                'keep_facing((yaw, pitch) | (x, y, z) | fn) keeps it there or on a moving target while the program '
                'walks and taps (the servo owns the right stick); stop_facing(); facing() -> (yaw, pitch); '
                'walk_to(x, z, tol=0.3) walks there on telemetry, the stick relative to where the camera faces '
-               '(combine with keep_facing to look elsewhere), easing in, hopping when stuck. '
+               '(combine with keep_facing to look elsewhere), easing in, hopping when stuck; walk_path([(x, z), '
+               '...]) walks through points without stopping at each (pure pursuit, slowing for sharp corners). '
                'Agentic control needs a fresh look at least every 50 ms (20 fps) while acting: results carry cadence '
                '{worst_ms, p95_ms, over_50ms, worst_at}: how old the latest look (frame, text or state read) was at '
                'each input change and while inputs were held, and where the worst was. Loop on until()/frame reads '
@@ -1385,6 +1386,7 @@ class Program:
                 "scan": lambda score, degrees=360.0: (self._servo_off(), self.cam().scan(score, degrees))[1],
                 "face": self.face, "face_point": self.face_point, "keep_facing": self.keep_facing,
                 "stop_facing": self.stop_facing, "facing": self.facing, "walk_to": self.walk_to,
+                "walk_path": self.walk_path,
                 "look_rate": self.look_rate, "camera": self._summary(),
                 "set_pitch": lambda degrees: self.cam().set_pitch(degrees)}
 
@@ -1580,6 +1582,98 @@ class Program:
         return {"arrived": d <= tol, "distance": round(d, 2), "seconds": round(time.perf_counter() - t0, 2),
                 "hops": hops}
 
+    WALK_LOOKAHEAD_M = 0.8  # walk_path steers at the path this far ahead (pure pursuit), less when slowing down
+
+    def walk_path(self, points, tol: float = 0.3, timeout: float | None = None, speed: float = 1.0) -> dict:
+        """Walk through world points [(x, z), ...] without stopping at each one (walk_to eases to a stop at its
+        point, so a chain of them stops and overshoots at every corner): pure pursuit on telemetry, steering at the
+        path WALK_LOOKAHEAD_M ahead, slowing for sharp corners and easing in at the last point. The left stick is
+        relative to where the camera faces, as in walk_to; it hops when stuck.
+        -> {"arrived", "distance" (to the last point), "reached" (points passed), "seconds", "hops"}."""
+        import math
+        pts = [(float(p[0]), float(p[1])) for p in points]
+        if not pts:
+            raise ValueError("walk_path needs at least one point")
+        s = self.telemetry()
+        if not s or "x" not in s:
+            raise RuntimeError("walk_path needs game telemetry (the RelayMCP Telemetry pack)")
+        path = [(float(s["x"]), float(s["z"]))] + pts
+        seg = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(path, path[1:])]
+        last = len(seg) - 1
+        total = sum(seg)
+        if timeout is None:
+            timeout = 3.0 + 2.5 * total / (self.WALK_M_S * max(0.2, float(speed)))
+
+        def project(k, px, pz):
+            """(distance to segment k, fraction along it)."""
+            (ax, az), (bx, bz) = path[k], path[k + 1]
+            n = seg[k] * seg[k] or 1e-9
+            u = max(0.0, min(1.0, ((px - ax) * (bx - ax) + (pz - az) * (bz - az)) / n))
+            return math.hypot(px - (ax + u * (bx - ax)), pz - (az + u * (bz - az))), u
+
+        def point_ahead(k, u, dist):
+            """The path point `dist` metres on from fraction u of segment k (the last point at most)."""
+            dist += u * seg[k]
+            while k < last and dist > seg[k]:
+                dist -= seg[k]
+                k += 1
+            (ax, az), (bx, bz) = path[k], path[k + 1]
+            f = min(1.0, dist / (seg[k] or 1e-9))
+            return ax + f * (bx - ax), az + f * (bz - az)
+
+        def corner(k):
+            """How sharply the path turns after segment k (degrees: 0 straight on, 180 straight back)."""
+            (ax, az), (bx, bz), (cx, cz) = path[k], path[k + 1], path[k + 2]
+            a1, a2 = math.atan2(bz - az, bx - ax), math.atan2(cz - bz, cx - bx)
+            return abs((math.degrees(a2 - a1) + 180.0) % 360.0 - 180.0)
+
+        t0 = time.perf_counter()
+        k, best, best_t, hops, d_end = 0, -1.0, t0, 0, float("inf")
+        try:
+            while True:
+                self.check()
+                s = self.telemetry()
+                if not s or "x" not in s:
+                    raise RuntimeError("walk_path needs game telemetry (the RelayMCP Telemetry pack)")
+                ahead = float(s.get("age_ms", 0.0)) / 1000 + 0.05  # the sample's age and the tick it is behind
+                px = float(s["x"]) + float(s.get("vx", 0.0)) * 20 * ahead  # velocity is blocks per tick
+                pz = float(s["z"]) + float(s.get("vz", 0.0)) * 20 * ahead
+                # on to the next segment once it is the nearer one: cutting a corner never reaches the end of the
+                # one before it, and steering by that one would turn back
+                while k < last and project(k + 1, px, pz)[0] <= project(k, px, pz)[0]:
+                    k += 1
+                _, u = project(k, px, pz)
+                left = (1.0 - u) * seg[k] + sum(seg[k + 1:])
+                d_end = math.hypot(path[-1][0] - px, path[-1][1] - pz)
+                now = time.perf_counter()
+                if (k == last and d_end <= tol) or now - t0 > timeout:
+                    break
+                v = min(float(speed), max(self.WALK_MIN_STICK, left / self.WALK_EASE_M))
+                if k < last:  # slow for a sharp corner ahead: cos(turn / 2), 90 degrees -> 0.71
+                    slow = max(self.WALK_MIN_STICK, math.cos(math.radians(corner(k)) / 2.0))
+                    to_corner = (1.0 - u) * seg[k]
+                    if to_corner < self.WALK_EASE_M:
+                        v = min(v, slow + (1.0 - slow) * to_corner / self.WALK_EASE_M)
+                cx, cz = point_ahead(k, u, self.WALK_LOOKAHEAD_M * max(0.5, v))
+                dx, dz = cx - px, cz - pz
+                yaw = (self.facing() or (float(s.get("yaw", 0.0)), 0.0))[0]
+                a = math.radians((math.degrees(math.atan2(-dx, dz)) - yaw + 180.0) % 360.0 - 180.0)
+                self.state = {**self.state, "left_stick": [v * math.sin(a), v * math.cos(a)]}
+                self._apply(self.state)
+                done = total - left
+                if done > best + 0.1:
+                    best, best_t = done, now
+                elif now - best_t > 0.6 and hops < 3:  # no progress: a step in the way
+                    self.tap("a", ms=60)
+                    hops, best_t = hops + 1, now
+                self.wait(1000 / 60)
+        finally:
+            self.state = {**self.state, "left_stick": [0.0, 0.0]}
+            self._apply(self.state)
+        arrived = k == last and d_end <= tol
+        return {"arrived": arrived, "distance": round(d_end, 2), "reached": len(pts) if arrived else k,
+                "seconds": round(time.perf_counter() - t0, 2), "hops": hops}
+
     def facing(self):
         """The fused (yaw, pitch) estimate while facing runs (else the latest telemetry's)."""
         if self._servo is not None:
@@ -1756,7 +1850,7 @@ class Program:
 Program.NAMES = {"elapsed", "frame", "diff", "text", "sees", "color", "track", "shift", "log", "W", "H", "CX", "CY",
                  "np", "math", "time", "numbers", "pixel_text", "grid_angle", "telemetry", "pad", "press", "tap", "seq", "release", "wait", "until", "aim", "guard", "skill",
                  "turn", "level", "look_at", "scan", "look_rate", "camera", "set_pitch", "turn_open",
-                 "face", "face_point", "keep_facing", "stop_facing", "facing", "walk_to"}
+                 "face", "face_point", "keep_facing", "stop_facing", "facing", "walk_to", "walk_path"}
 
 
 def center_of(box) -> tuple[float, float]:
