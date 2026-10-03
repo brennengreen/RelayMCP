@@ -5,7 +5,14 @@ import sys
 import threading
 import time
 
-import pytest
+# One BLAS thread per test process, set before numpy loads. The camera simulator renders each frame with one big
+# matrix product (129600 x 3 by 3 x 3); OpenBLAS split it over every core, so each frame waited for all of them. On
+# the 4-vCPU Linux runners that made rendering slower and jittery: p50 12-13 ms, p99 14-23, worst 18-44 with the
+# default threads (1,500 frames, twice); 10, 11 and 12 with one.
+for _var in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_var, "1")
+
+import pytest  # noqa: E402
 
 
 def _precise_timers() -> bool:
