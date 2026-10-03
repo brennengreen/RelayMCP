@@ -121,6 +121,13 @@ parsing, service files, voice dispatcher security checks, enrollment tokens) plu
 also builds a real kit, parses the rendered `Relay-Setup.ps1` with Windows PowerShell 5.1, installs the device
 runtime and imports its driver-free modules.
 
+The behavior, camera and servo tests run simulated games and cameras in real time, so `tests/conftest.py` keeps the
+clock honest on shared runners. On macOS, sleeps and `Event.wait` timeouts use timers that are exempt from timer
+coalescing. GitHub's macOS runners run every job under a utility QoS clamp, which otherwise delays a 20 ms sleep by up
+to 150 ms; `taskpolicy -c utility .venv/bin/pytest` reproduces that runner's clock locally. numpy also gets one BLAS
+thread. Tests marked `timing` (the camera simulator's, in `test_control.py`) get two more tries when a runner stall
+breaks one. Each retry is listed in pytest's short summary ("RERUN") and counted in its last line.
+
 ## Releasing
 
 1. Bump `__version__` in `src/relaymcp/__init__.py` and add a `CHANGELOG.md` entry.
