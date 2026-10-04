@@ -41,6 +41,31 @@ Small vision-language models are too slow and too unsure for frames. One image e
 preprocessing, on the Mac's GPU) answers any number of bounded questions for microseconds each, from text prompts
 alone or a handful of labeled frames.
 
+## In a real game, live (Doom on this Mac)
+
+The numbers above are offline: states and frames in, answers out. To see decisions play, `scripts/decide/doom.py` runs
+Doom (ViZDoom with the free Freedoom assets, the deathmatch arena) in real time on the Mac: the game runs at 35
+tics/s whatever the agent does, with no window and no OS input. Every tic a skill steers the player (fight, retreat,
+collect, explore: the reflex layer) and a tactics policy picks the skill from the game's state (health, ammo,
+monsters and items with distance, bearing and visibility). Six one-minute episodes per policy (2026-10-03):
+
+| Tactics | Deaths | Survived (mean) | Damage dealt | Damage taken | Agreement with the intent's rules, live |
+|---|---|---|---|---|---|
+| none (explore) | 5/6 | 35.3 s | 0 | 140 | - |
+| fight anything visible | 6/6 | 39.0 s | 533 | 175 | 31% |
+| the intent, compiled by qwen3.5:9b | **4/6** | 39.0 s | 249 | 196 | **100% of 8,193 decisions, 6 us each, 2 tics missed** |
+| (first run) Qwen3.5 2B scoring the answers in the background | 5/5 | 44.2 s | - | 142 | 19% (165 ms a decision) |
+
+What this shows, and what it doesn't:
+- The compiled policy carried out the plain-English intent exactly on live game states, in microseconds, without
+  slowing the game loop. A model scoring the answers followed it on one tic in five.
+- Whether tactics help is up to the intent and the skills, and needs the game to judge. Six episodes are noisy:
+  the intent consistently died less but dealt less damage than fighting everything.
+- Playing found what offline tests couldn't: the first intent ("stand and fight") was worse than roaming until the
+  fight skill kept moving; one monster type (ViZDoom's chainsaw marine) wasn't in the state at all; and the skills
+  walk into walls chasing items behind them (no path finding). Each fix was a sentence in the intent, recompiled in
+  ~40 s, or a few lines in a skill.
+
 ## Next
 
 - A tactics loop on the Mac: telemetry (or frame embeddings) in, `decide` with a compiled policy, start or replace
@@ -53,4 +78,5 @@ alone or a handful of labeled frames.
 ```sh
 python scripts/decide/tactics.py --models mlx-community/Qwen3-0.6B-4bit --formats json,facts,features   # needs mlx-lm
 python scripts/decide/compile_policies.py qwen3.5:9b                                                      # needs Ollama
+python scripts/decide/doom.py --policy compiled --episodes 6 --seed 2 --gif doom.gif                      # needs vizdoom
 ```
