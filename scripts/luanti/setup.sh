@@ -36,7 +36,7 @@ pause_on_lost_focus = false
 name = agent
 fixed_map_seed = 20261003
 mg_name = v7
-time_speed = 72
+time_speed = 288
 dedicated_server_step = 0.05
 CONF
 echo "ready: python3 $HERE/agent.py --seconds 90"

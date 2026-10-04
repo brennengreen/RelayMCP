@@ -8,6 +8,20 @@ local acc, tick, last_seq = 0, 0, -1
 local dig = { pos = nil, t = 0 }
 local ids, next_id = setmetatable({}, { __mode = "k" }), 1
 local trees, tree_tick = {}, -100
+local deaths = 0
+minetest.register_on_dieplayer(function(player)
+    deaths = deaths + 1
+    minetest.after(2, function() if player:get_hp() == 0 then pcall(function() player:respawn() end) end end)
+end)
+
+local function hotbar(player)
+    local out = {}
+    for i, st in ipairs(player:get_inventory():get_list("main") or {}) do
+        if i > 9 then break end
+        if not st:is_empty() then out[#out + 1] = { i, st:get_name(), st:get_count() } end
+    end
+    return out
+end
 
 local function oid(obj)
     local ref = obj:get_luaentity() or obj
@@ -48,13 +62,51 @@ local function inventory(player)
     return counts
 end
 
+local body = { vy = 0, vx = 0, vz = 0, set = false }
+
+local function solid(x, y, z)
+    local n = minetest.get_node_or_nil({ x = math.floor(x + 0.5), y = math.floor(y + 0.5), z = math.floor(z + 0.5) })
+    if not n then return true end
+    local d = minetest.registered_nodes[n.name]
+    return d == nil or d.walkable ~= false
+end
+
+local function blocked(x, feet, z)  -- the body's feet and head cells
+    return solid(x, feet + 0.3, z) or solid(x, feet + 1.3, z)
+end
+
+local function move_body(player, mv, dtime)
+    -- The server moves the agent's body (walking, collisions, one-block steps, falling): the client's own keys and
+    -- physics are off, so a focused game window (its mouse and keyboard) can't fight the agent's controls.
+    if not body.set then
+        player:set_physics_override({ speed = 0, jump = 0, gravity = 0, sneak = false })
+        body.set = true
+    end
+    local p = player:get_pos()
+    local ground = solid(p.x, p.y - 0.1, p.z)
+    body.vy = ground and 0 or math.max(-20, body.vy - 9.81 * dtime)
+    local nx, nz, ny = p.x + mv[1] * dtime, p.z + mv[2] * dtime, p.y + body.vy * dtime
+    local px = nx + (mv[1] > 0.01 and 0.3 or (mv[1] < -0.01 and -0.3 or 0))
+    local pz = nz + (mv[2] > 0.01 and 0.3 or (mv[2] < -0.01 and -0.3 or 0))
+    if (mv[1] ~= 0 or mv[2] ~= 0) and blocked(px, p.y, pz) then
+        if ground and not blocked(px, p.y + 1, pz) and not solid(p.x, p.y + 2.3, p.z) then
+            ny = p.y + 1  -- step up onto the block (Minecraft's jump-and-walk)
+        else
+            nx, nz = p.x, p.z
+        end
+    end
+    if body.vy < 0 and solid(nx, ny, nz) then  -- land on the block below
+        ny = math.floor(ny + 0.5) + 0.5
+        body.vy = 0
+    end
+    body.vx, body.vz = (nx - p.x) / math.max(dtime, 1e-3), (nz - p.z) / math.max(dtime, 1e-3)
+    if nx ~= p.x or ny ~= p.y or nz ~= p.z then player:move_to({ x = nx, y = ny, z = nz }, true) end
+end
+
 local function apply(player, cmd, dtime)
     if cmd.yaw then player:set_look_horizontal(math.rad(cmd.yaw)) end
     if cmd.pitch then player:set_look_vertical(math.rad(cmd.pitch)) end
-    local v = player:get_velocity()
-    local mv = cmd.move or { 0, 0 }
-    player:add_velocity({ x = mv[1] - v.x, y = 0, z = mv[2] - v.z })
-    if cmd.jump and math.abs(v.y) < 0.05 then player:add_velocity({ x = 0, y = 6.5, z = 0 }) end
+    move_body(player, cmd.move or { 0, 0 }, dtime)
     if cmd.dig then
         local pt = pointed(player, false)
         if pt and pt.type == "node" then
@@ -74,7 +126,24 @@ local function apply(player, cmd, dtime)
     end
     if cmd.seq and cmd.seq ~= last_seq then
         last_seq = cmd.seq
-        if cmd.slot then player:set_wield_index(cmd.slot) end
+        if cmd.say then minetest.chat_send_all("<agent> " .. tostring(cmd.say)) end
+        if cmd.seal then  -- put the wielded block into the cell above the head (a roof over a dug-in hole)
+            local p = vector.round(player:get_pos())
+            local above = { x = p.x, y = p.y + 2, z = p.z }
+            if minetest.get_node(above).name == "air" then
+                local st = player:get_wielded_item()
+                local left = minetest.item_place_node(st, player, { type = "node", under = { x = p.x + 1, y = p.y + 2, z = p.z }, above = above })
+                if left then player:set_wielded_item(left) end
+            end
+        end
+        if cmd.slot then  -- bring that hotbar stack into the held slot (no set_wield_index in this engine)
+            local inv, wi = player:get_inventory(), player:get_wield_index()
+            if cmd.slot ~= wi then
+                local held, want = inv:get_stack("main", wi), inv:get_stack("main", cmd.slot)
+                inv:set_stack("main", wi, want)
+                inv:set_stack("main", cmd.slot, held)
+            end
+        end
         if cmd.attack then
             local pt = pointed(player, true)
             if pt and pt.type == "object" then
@@ -99,11 +168,14 @@ minetest.register_globalstep(function(dtime)
     if f then
         local ok, cmd = pcall(minetest.parse_json, f:read("*a"))
         f:close()
-        if ok and type(cmd) == "table" then apply(player, cmd, dtime) end
+        if ok and type(cmd) == "table" then
+            local fine, err = pcall(apply, player, cmd, dtime)  -- a bad command is logged, never crashes the game
+            if not fine then minetest.log("error", "[relay] " .. tostring(err)) end
+        end
     end
     if acc < 0.05 then return end
     acc, tick = 0, tick + 1
-    local p, v = player:get_pos(), player:get_velocity()
+    local p, v = player:get_pos(), { x = body.vx, y = body.vy, z = body.vz }
     local mobs, drops = {}, {}
     for _, obj in ipairs(minetest.get_objects_inside_radius(p, 24)) do
         local ent = obj:get_luaentity()
@@ -133,7 +205,7 @@ minetest.register_globalstep(function(dtime)
         yaw = math.deg(player:get_look_horizontal()), pitch = math.deg(player:get_look_vertical()),
         hp = player:get_hp(), slot = player:get_wield_index(), wield = player:get_wielded_item():get_name(),
         inv = inventory(player), look = look, mobs = mobs, drops = drops, trees = trees,
-        tod = minetest.get_timeofday(), dig = dig.pos and dig.t or 0,
+        tod = minetest.get_timeofday(), dig = dig.pos and dig.t or 0, deaths = deaths, hotbar = hotbar(player),
     }) .. "\n")
     out:flush()
 end)
