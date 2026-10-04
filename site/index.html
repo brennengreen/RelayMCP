@@ -32,10 +32,10 @@
   .tab[aria-selected="true"] { border-color:var(--cyan); box-shadow:0 0 0 1px var(--cyan) inset; }
   .board { background:var(--panel); border:1px solid var(--line); border-radius:16px; overflow:auto; }
   table { width:100%; border-collapse:collapse; font-size:14px; }
-  th, td { padding:12px 14px; text-align:right; white-space:nowrap; border-bottom:1px solid #18222e; }
+  th, td { padding:11px 10px; text-align:right; white-space:nowrap; border-bottom:1px solid #18222e; }
   th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.06em; }
   th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3) { text-align:left; }
-  .bar { position:relative; width:220px; height:22px; background:#0a121a; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .bar { position:relative; width:150px; height:22px; background:#0a121a; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
   .bar i { position:absolute; inset:0 auto 0 0; background:linear-gradient(90deg,var(--magenta),var(--cyan)); }
   .bar em { position:absolute; left:8px; top:1px; font-style:normal; font-weight:800; font-size:13px; text-shadow:0 1px 2px #000; }
   .bar .tick { position:absolute; left:80%; top:0; bottom:0; border-left:1px dashed var(--amber); }
@@ -50,7 +50,7 @@
   .card h3 { margin:0 0 8px; }
   .card.beat h3 { color:var(--magenta); }
   .card.league h3 { color:var(--amber); }
-  pre { background:#0a121a; border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; color:var(--cyan); font-size:13px; }
+  pre { background:#0a121a; border:1px solid var(--line); border-radius:10px; padding:12px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--cyan); font-size:13px; }
   a { color:var(--cyan); }
   footer { color:var(--muted); font-size:13px; margin-top:48px; }
 </style>
