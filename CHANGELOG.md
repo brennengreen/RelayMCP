@@ -9,7 +9,7 @@ handheld itself.
   new banner, logo and diagrams, a `spinal` command (alias of `relaymcp`), and the repository at
   `github.com/brennengreen/spinal`. `spinal arena run` scores any agent on Freedoom 2 MAP01-MAP04 on Ultra-Violence
   from a pistol start, in real time, seeing only what is on screen, with Doom's own tally (kills %, secrets %, exit
-  against par). 100% is elite human play; Spinal's own planner scores about 5%. Two leaderboards (beat Spinal with
+  against par). 100% is elite human play; Spinal's own planner scores 6.8%. Two leaderboards (beat Spinal with
   any architecture; plug your model into Spinal) render to LEADERBOARD.md, the README and a GitHub Pages site, and CI
   recomputes every entry from its tally. Plugins get the screen and the level's layout, act with a `use` button, and
   `examples/arena_agent.py` is a 20-line starting point. See [docs/spinal-score.md](docs/spinal-score.md).

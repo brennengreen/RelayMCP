@@ -1,0 +1,66 @@
+{
+ "board": "reflex",
+ "name": "Spinal (planner)",
+ "agent": "planner",
+ "model": null,
+ "scenario": "Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses",
+ "score": 6.8,
+ "metrics": {
+  "kills": 20.4,
+  "secrets": 0.0,
+  "exit": 0.0,
+  "exits": 0,
+  "deaths": 4,
+  "decision_ms_p50": 0.03,
+  "decision_ms_p95": 0.168,
+  "missed_tics": 170,
+  "on_intent": null,
+  "compile_s": null
+ },
+ "maps": [
+  {
+   "map": "MAP01",
+   "score": 19.0,
+   "kills": 16,
+   "secrets": 0,
+   "exited": false,
+   "seconds": 74.1,
+   "died": true,
+   "missed_tics": 56
+  },
+  {
+   "map": "MAP02",
+   "score": 5.1,
+   "kills": 9,
+   "secrets": 0,
+   "exited": false,
+   "seconds": 40.3,
+   "died": true,
+   "missed_tics": 9
+  },
+  {
+   "map": "MAP03",
+   "score": 2.6,
+   "kills": 7,
+   "secrets": 0,
+   "exited": false,
+   "seconds": 14.0,
+   "died": true,
+   "missed_tics": 57
+  },
+  {
+   "map": "MAP04",
+   "score": 0.5,
+   "kills": 2,
+   "secrets": 0,
+   "exited": false,
+   "seconds": 8.9,
+   "died": true,
+   "missed_tics": 48
+  }
+ ],
+ "relaymcp": "0.2.0.dev1",
+ "commit": "cdc0983",
+ "machine": "Darwin arm64",
+ "date": "2026-10-04"
+}

@@ -5,11 +5,409 @@
  "boards": {
   "reflex": {
    "title": "Beat Spinal: any architecture",
-   "rows": []
+   "rows": [
+    {
+     "board": "reflex",
+     "name": "Spinal (planner)",
+     "agent": "planner",
+     "model": null,
+     "scenario": "Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses",
+     "score": 6.8,
+     "metrics": {
+      "kills": 20.4,
+      "secrets": 0.0,
+      "exit": 0.0,
+      "exits": 0,
+      "deaths": 4,
+      "decision_ms_p50": 0.03,
+      "decision_ms_p95": 0.168,
+      "missed_tics": 170,
+      "on_intent": null,
+      "compile_s": null
+     },
+     "maps": [
+      {
+       "map": "MAP01",
+       "score": 19.0,
+       "kills": 16,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 74.1,
+       "died": true,
+       "missed_tics": 56
+      },
+      {
+       "map": "MAP02",
+       "score": 5.1,
+       "kills": 9,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 40.3,
+       "died": true,
+       "missed_tics": 9
+      },
+      {
+       "map": "MAP03",
+       "score": 2.6,
+       "kills": 7,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 14.0,
+       "died": true,
+       "missed_tics": 57
+      },
+      {
+       "map": "MAP04",
+       "score": 0.5,
+       "kills": 2,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 8.9,
+       "died": true,
+       "missed_tics": 48
+      }
+     ],
+     "relaymcp": "0.2.0.dev1",
+     "commit": "cdc0983",
+     "machine": "Darwin arm64",
+     "date": "2026-10-04"
+    },
+    {
+     "board": "reflex",
+     "name": "Starter plugin (examples/arena_agent.py)",
+     "agent": "plugin:examples/arena_agent.py:Agent",
+     "model": null,
+     "scenario": "Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses",
+     "score": 5.9,
+     "metrics": {
+      "kills": 9.3,
+      "secrets": 8.3,
+      "exit": 0.0,
+      "exits": 0,
+      "deaths": 4,
+      "decision_ms_p50": 0.01,
+      "decision_ms_p95": 0.023,
+      "missed_tics": 4,
+      "on_intent": null,
+      "compile_s": null
+     },
+     "maps": [
+      {
+       "map": "MAP01",
+       "score": 17.1,
+       "kills": 5,
+       "secrets": 1,
+       "exited": false,
+       "seconds": 61.9,
+       "died": true,
+       "missed_tics": 2
+      },
+      {
+       "map": "MAP02",
+       "score": 4.0,
+       "kills": 7,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 34.3,
+       "died": true,
+       "missed_tics": 0
+      },
+      {
+       "map": "MAP03",
+       "score": 2.2,
+       "kills": 6,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 18.5,
+       "died": true,
+       "missed_tics": 2
+      },
+      {
+       "map": "MAP04",
+       "score": 0.2,
+       "kills": 1,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 10.9,
+       "died": true,
+       "missed_tics": 0
+      }
+     ],
+     "relaymcp": "0.2.0.dev1",
+     "commit": "cdc0983",
+     "machine": "Darwin arm64",
+     "date": "2026-10-04"
+    },
+    {
+     "board": "reflex",
+     "name": "Fight anything in sight",
+     "agent": "fight",
+     "model": null,
+     "scenario": "Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses",
+     "score": 2.8,
+     "metrics": {
+      "kills": 8.5,
+      "secrets": 0.0,
+      "exit": 0.0,
+      "exits": 0,
+      "deaths": 3,
+      "decision_ms_p50": 0.006,
+      "decision_ms_p95": 0.012,
+      "missed_tics": 5,
+      "on_intent": null,
+      "compile_s": null
+     },
+     "maps": [
+      {
+       "map": "MAP01",
+       "score": 2.4,
+       "kills": 2,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 90.0,
+       "died": false,
+       "missed_tics": 3
+      },
+      {
+       "map": "MAP02",
+       "score": 3.4,
+       "kills": 6,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 38.8,
+       "died": true,
+       "missed_tics": 0
+      },
+      {
+       "map": "MAP03",
+       "score": 4.9,
+       "kills": 13,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 55.1,
+       "died": true,
+       "missed_tics": 2
+      },
+      {
+       "map": "MAP04",
+       "score": 0.7,
+       "kills": 3,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 13.3,
+       "died": true,
+       "missed_tics": 0
+      }
+     ],
+     "relaymcp": "0.2.0.dev1",
+     "commit": "cdc0983",
+     "machine": "Darwin arm64",
+     "date": "2026-10-04"
+    },
+    {
+     "board": "reflex",
+     "name": "Decision model scores each move (Qwen3.5 2B)",
+     "agent": "scorer",
+     "model": null,
+     "scenario": "Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses",
+     "score": 2.2,
+     "metrics": {
+      "kills": 6.6,
+      "secrets": 0.0,
+      "exit": 0.0,
+      "exits": 0,
+      "deaths": 3,
+      "decision_ms_p50": 331.547,
+      "decision_ms_p95": 911.219,
+      "missed_tics": 973,
+      "on_intent": null,
+      "compile_s": null
+     },
+     "maps": [
+      {
+       "map": "MAP01",
+       "score": 2.4,
+       "kills": 2,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 90.0,
+       "died": false,
+       "missed_tics": 459
+      },
+      {
+       "map": "MAP02",
+       "score": 5.1,
+       "kills": 9,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 41.2,
+       "died": true,
+       "missed_tics": 156
+      },
+      {
+       "map": "MAP03",
+       "score": 1.1,
+       "kills": 3,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 96.5,
+       "died": true,
+       "missed_tics": 344
+      },
+      {
+       "map": "MAP04",
+       "score": 0.2,
+       "kills": 1,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 7.5,
+       "died": true,
+       "missed_tics": 14
+      }
+     ],
+     "relaymcp": "0.2.0.dev1",
+     "commit": "cdc0983",
+     "machine": "Darwin arm64",
+     "date": "2026-10-04"
+    },
+    {
+     "board": "reflex",
+     "name": "Roam, no tactics",
+     "agent": "explore",
+     "model": null,
+     "scenario": "Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses",
+     "score": 1.1,
+     "metrics": {
+      "kills": 3.2,
+      "secrets": 0.0,
+      "exit": 0.0,
+      "exits": 0,
+      "deaths": 4,
+      "decision_ms_p50": null,
+      "decision_ms_p95": null,
+      "missed_tics": 4,
+      "on_intent": null,
+      "compile_s": null
+     },
+     "maps": [
+      {
+       "map": "MAP01",
+       "score": 2.4,
+       "kills": 2,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 89.0,
+       "died": true,
+       "missed_tics": 0
+      },
+      {
+       "map": "MAP02",
+       "score": 1.1,
+       "kills": 2,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 56.4,
+       "died": true,
+       "missed_tics": 4
+      },
+      {
+       "map": "MAP03",
+       "score": 0.0,
+       "kills": 0,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 38.2,
+       "died": true,
+       "missed_tics": 0
+      },
+      {
+       "map": "MAP04",
+       "score": 0.7,
+       "kills": 3,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 19.5,
+       "died": true,
+       "missed_tics": 0
+      }
+     ],
+     "relaymcp": "0.2.0.dev1",
+     "commit": "cdc0983",
+     "machine": "Darwin arm64",
+     "date": "2026-10-04"
+    }
+   ]
   },
   "models": {
    "title": "Model league: Spinal with your model plugged in",
-   "rows": []
+   "rows": [
+    {
+     "board": "models",
+     "name": "qwen3.5:9b (Ollama)",
+     "agent": "compiled",
+     "model": "qwen3.5:9b",
+     "scenario": "Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses",
+     "score": 3.6,
+     "metrics": {
+      "kills": 10.8,
+      "secrets": 0.0,
+      "exit": 0.0,
+      "exits": 0,
+      "deaths": 2,
+      "decision_ms_p50": 0.017,
+      "decision_ms_p95": 0.041,
+      "missed_tics": 534,
+      "on_intent": 1.0,
+      "compile_s": 112.4
+     },
+     "maps": [
+      {
+       "map": "MAP01",
+       "score": 3.6,
+       "kills": 3,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 90.0,
+       "died": false,
+       "missed_tics": 70
+      },
+      {
+       "map": "MAP02",
+       "score": 5.6,
+       "kills": 10,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 270.0,
+       "died": false,
+       "missed_tics": 279
+      },
+      {
+       "map": "MAP03",
+       "score": 4.9,
+       "kills": 13,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 73.7,
+       "died": true,
+       "missed_tics": 185
+      },
+      {
+       "map": "MAP04",
+       "score": 0.2,
+       "kills": 1,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 8.5,
+       "died": true,
+       "missed_tics": 0
+      }
+     ],
+     "relaymcp": "0.2.0.dev1",
+     "commit": "cdc0983",
+     "machine": "Darwin arm64",
+     "date": "2026-10-04"
+    }
+   ]
   }
  }
 }

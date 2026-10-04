@@ -29,8 +29,9 @@ A benchmark that today's agents already ace measures their blind spots, not the 
 above about 80% at design time, the test was shaped around what they do well. So:
 
 - **Spinal does not get its home turf.** Spinal was developed on ViZDoom's deathmatch arena; that arena is practice
-  and is not scored. The season's levels were not used to build any agent here, and Spinal's planner scores about 5%:
-  a 20-line reactive agent ([examples/arena_agent.py](../examples/arena_agent.py)) beats it on MAP01.
+  and is not scored. The season's levels were not used to build any agent here. Spinal's planner scores 6.8%; a
+  20-line reactive agent ([examples/arena_agent.py](../examples/arena_agent.py)) scores 5.9% and finds a secret
+  Spinal never has.
 - **The scale is the game's, not ours.** Kills, secrets and par times come from the levels themselves (checked
   against the game data in `tests/test_arena.py`), so no number was tuned to make any entrant look good.
 - **No wallhacks.** Seeing monsters through walls would make kills and survival far easier than they are for a

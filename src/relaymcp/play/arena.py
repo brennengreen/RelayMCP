@@ -82,7 +82,7 @@ def run(board, agent, model, name, out="leaderboards", maps=MAPS, seed=1):
     for m in maps:
         game = doom.Doom(CAP * SEASON[m][2], seed, level=m, fair=True)
         r = doom.episode(game, tactics)
-        game.g.close()
+        game.close()
         k, s, e, sc = map_score(m, r["kills"], r["secrets"], r["exited"], r["game_s"])
         per.append({"map": m, "score": round(100 * sc, 1), "kills": r["kills"], "secrets": r["secrets"],
                     "exited": r["exited"], "seconds": r["game_s"], "died": r["died"], "missed_tics": r["missed_tics"]})
@@ -173,7 +173,7 @@ def render(folder="leaderboards", out="LEADERBOARD.md", readme="README.md", site
             lines.append(f"| {i} | {r['name']} | **{r['score']:.1f}%** | {m['kills']:.0f}% | {m['secrets']:.0f}% | "
                          f"{m['exits']}/{len(MAPS)} | {m['deaths']}/{len(MAPS)} | {latency(m)} | {m['missed_tics']} | {on} |")
         sections.append("\n".join(lines))
-        top.append("\n".join(lines[:9]))
+        top.append("\n".join([f"**{title}**", ""] + lines[4:9]))
     how = ("\n\n## Enter\n\nRun `relaymcp arena run --board reflex --agent plugin:my_agent.py:Agent --name \"...\"` "
            "(your architecture) or `--board models --agent compiled --model openai:<model>` (your model), then open a "
            "pull request with the JSON it writes under `leaderboards/`. Maintainers re-run the top entries. Agents may "
@@ -184,7 +184,7 @@ def render(folder="leaderboards", out="LEADERBOARD.md", readme="README.md", site
         text = r.read_text()
         a, b = "<!-- leaderboard:start -->", "<!-- leaderboard:end -->"
         if a in text and b in text:
-            block = "\n\n".join(t.replace("## ", "**", 1).replace("\n\n" + SCENARIO, "**\n\n" + SCENARIO, 1) for t in top)
+            block = f"{SCENARIO}. {SCALE}.\n\n" + "\n\n".join(top)
             text = text[:text.index(a) + len(a)] + "\n" + block + "\n\n[Full leaderboards](LEADERBOARD.md)\n" + text[text.index(b):]
             r.write_text(text)
     return out

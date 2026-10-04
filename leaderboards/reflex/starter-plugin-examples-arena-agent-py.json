@@ -1,0 +1,66 @@
+{
+ "board": "reflex",
+ "name": "Starter plugin (examples/arena_agent.py)",
+ "agent": "plugin:examples/arena_agent.py:Agent",
+ "model": null,
+ "scenario": "Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses",
+ "score": 5.9,
+ "metrics": {
+  "kills": 9.3,
+  "secrets": 8.3,
+  "exit": 0.0,
+  "exits": 0,
+  "deaths": 4,
+  "decision_ms_p50": 0.01,
+  "decision_ms_p95": 0.023,
+  "missed_tics": 4,
+  "on_intent": null,
+  "compile_s": null
+ },
+ "maps": [
+  {
+   "map": "MAP01",
+   "score": 17.1,
+   "kills": 5,
+   "secrets": 1,
+   "exited": false,
+   "seconds": 61.9,
+   "died": true,
+   "missed_tics": 2
+  },
+  {
+   "map": "MAP02",
+   "score": 4.0,
+   "kills": 7,
+   "secrets": 0,
+   "exited": false,
+   "seconds": 34.3,
+   "died": true,
+   "missed_tics": 0
+  },
+  {
+   "map": "MAP03",
+   "score": 2.2,
+   "kills": 6,
+   "secrets": 0,
+   "exited": false,
+   "seconds": 18.5,
+   "died": true,
+   "missed_tics": 2
+  },
+  {
+   "map": "MAP04",
+   "score": 0.2,
+   "kills": 1,
+   "secrets": 0,
+   "exited": false,
+   "seconds": 10.9,
+   "died": true,
+   "missed_tics": 0
+  }
+ ],
+ "relaymcp": "0.2.0.dev1",
+ "commit": "cdc0983",
+ "machine": "Darwin arm64",
+ "date": "2026-10-04"
+}

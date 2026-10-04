@@ -14,7 +14,9 @@ import json
 import math
 import os
 import random
+import signal
 import struct
+import subprocess
 import threading
 import time
 from functools import lru_cache
@@ -166,6 +168,22 @@ class Doom:
         self.turn_sign = 1.0
         self.dead_ids: set = set()
 
+    def close(self, timeout=15.0):
+        """DoomGame.close() sometimes hangs on macOS, joining a game process that never exits: close in the
+        background and, if it hasn't finished in time, kill the game's process."""
+        t = threading.Thread(target=self.g.close, daemon=True)
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            try:
+                ps = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True).stdout
+            except OSError:  # no ps (Windows): leave it to the daemon thread
+                ps = ""
+            for pid, ppid, cmd in (ln.split(None, 2) for ln in ps.splitlines() if len(ln.split(None, 2)) == 3):
+                if int(ppid) == os.getpid() and "vizdoom" in cmd:
+                    os.kill(int(pid), signal.SIGKILL)
+            t.join(5.0)
+
     def new_episode(self):
         self.g.new_episode()
         self.dead_ids.clear()
@@ -285,6 +303,10 @@ class Tactics:
                   f"{agree:.0%} of 300 sample states", flush=True)
         elif kind == "llm":  # the model picks every move, as an agent calling a tool per move would
             self.gen = decide.generator(compile_model)
+            try:
+                self.gen("Answer with one word: ready.")  # load the model first: a cold start is not a decision
+            except Exception:  # noqa: BLE001
+                pass
             self.latest_state, self.stop = None, threading.Event()
             threading.Thread(target=self._background_llm, daemon=True).start()
         elif kind.startswith("plugin:"):  # your own architecture: pick(state) -> skill, or act(state, tic) -> buttons
@@ -622,7 +644,7 @@ def main(argv=None):
         print(json.dumps({"policy": a.policy, "episode": ep, **r}), flush=True)
         if frames:
             save_gif(frames, a.gif)
-    doom.g.close()
+    doom.close()
     lat = sorted(tactics.lat)
     summary = {"policy": a.policy, "episodes": len(results),
                "kills_mean": round(sum(r["kills"] for r in results) / len(results), 2),
