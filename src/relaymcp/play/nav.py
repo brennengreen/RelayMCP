@@ -8,27 +8,35 @@ import numpy as np
 CELL = 16.0
 STEP = 24.0       # the highest step a player climbs
 HEIGHT = 56.0     # the player's height: lower openings block
+DOOR = 8.0        # a sector this shut (ceiling near its floor) is a closed door, not a wall
 
 
 class NavGrid:
     def __init__(self, sectors):
-        lines, owners = [], {}
+        xs = [p for sc in sectors for ln in sc.lines for p in (ln.x1, ln.x2)]
+        ys = [p for sc in sectors for ln in sc.lines for p in (ln.y1, ln.y2)]
+        self.x0, self.y0 = min(xs) - CELL, min(ys) - CELL
+        self.w = int((max(xs) - self.x0) / CELL) + 2
+        self.h = int((max(ys) - self.y0) / CELL) + 2
+        self.visits = np.zeros((self.h, self.w), np.float32)
+        self.update(sectors)
+
+    def update(self, sectors):
+        """(Re)build the walls from the sectors as they are now: doors open, lifts move."""
+        owners, hard = {}, set()
         for sc in sectors:
             for ln in sc.lines:
                 key = tuple(sorted(((round(ln.x1), round(ln.y1)), (round(ln.x2), round(ln.y2)))))
                 owners.setdefault(key, []).append(sc)
-                lines.append(ln)
-        xs = [p for ln in lines for p in (ln.x1, ln.x2)]
-        ys = [p for ln in lines for p in (ln.y1, ln.y2)]
-        self.x0, self.y0 = min(xs) - CELL, min(ys) - CELL
-        self.w = int((max(xs) - self.x0) / CELL) + 2
-        self.h = int((max(ys) - self.y0) / CELL) + 2
+                if getattr(ln, "is_blocking", False):
+                    hard.add(key)
         blocked = np.zeros((self.h, self.w), bool)
         for (a, b), secs in owners.items():
-            if len(secs) >= 2:  # a two-sided line blocks if its step or its opening is impassable
+            if len(secs) >= 2 and (a, b) not in hard:  # a two-sided line blocks if its step or opening is impassable
                 f = [s.floor_height for s in secs[:2]]
                 c = [s.ceiling_height for s in secs[:2]]
-                if abs(f[0] - f[1]) <= STEP and min(c) - max(f) >= HEIGHT:
+                closed = any(cc - ff <= DOOR for cc, ff in zip(c, f))  # a shut door between floors: worth a try
+                if abs(f[0] - f[1]) <= STEP and (min(c) - max(f) >= HEIGHT or closed):
                     continue
             self._raster(blocked, a, b)
         grown = blocked.copy()  # keep a player's radius (16) off the walls
@@ -37,7 +45,35 @@ class NavGrid:
         grown[:, 1:] |= blocked[:, :-1]
         grown[:, :-1] |= blocked[:, 1:]
         self.blocked = grown
-        self.visits = np.zeros((self.h, self.w), np.float32)
+        self.reach, self.reach_cells = None, None
+
+    def reachable(self, x, y):
+        """The cells the player can walk to from (x, y) (a flood fill; cached until the walls change)."""
+        s = self.nearest_free(self.cell(x, y))
+        if s is None:
+            return None
+        if self.reach is None or not self.reach[s]:
+            free, reach = ~self.blocked, np.zeros_like(self.blocked)
+            reach[s] = True
+            while True:
+                grow = reach.copy()
+                grow[1:, :] |= reach[:-1, :]
+                grow[:-1, :] |= reach[1:, :]
+                grow[:, 1:] |= reach[:, :-1]
+                grow[:, :-1] |= reach[:, 1:]
+                grow &= free
+                if np.array_equal(grow, reach):
+                    break
+                reach = grow
+            self.reach, self.reach_cells = reach, np.argwhere(reach)
+        return self.reach
+
+    def sample(self, x, y, rng):
+        """A random cell the player can reach from (x, y), or None."""
+        if self.reachable(x, y) is None or not len(self.reach_cells):
+            return None
+        r, c = self.reach_cells[rng.randrange(len(self.reach_cells))]
+        return int(r), int(c)
 
     def cell(self, x, y):
         return (min(self.h - 1, max(0, int((y - self.y0) / CELL))), min(self.w - 1, max(0, int((x - self.x0) / CELL))))
@@ -125,9 +161,10 @@ class NavGrid:
         """A reachable spot far from where the player has been lately."""
         best, best_score = None, -1e9
         for _ in range(tries):
-            r, c = rng.randrange(self.h), rng.randrange(self.w)
-            if not self.free((r, c)):
-                continue
+            rc = self.sample(x, y, rng)  # only somewhere it can actually get to
+            if rc is None:
+                return None
+            r, c = rc
             px, py = self.point((r, c))
             score = math.hypot(px - x, py - y) / 400.0 - float(self.visits[r, c])
             if score > best_score:

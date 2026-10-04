@@ -14,9 +14,12 @@ import json
 import math
 import os
 import random
+import struct
 import threading
 import time
+from functools import lru_cache
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import vizdoom as vzd
@@ -88,21 +91,68 @@ def wrap(a):
     return (a + 180.0) % 360.0 - 180.0
 
 
+@lru_cache(maxsize=1)
+def wad():
+    """Freedoom 2 (in ViZDoom's wheels): its bytes and its lumps (name, offset, size), in order."""
+    b = Path(os.path.dirname(vzd.__file__), "freedoom2.wad").read_bytes()
+    n, off = struct.unpack("<ii", b[4:12])
+    return b, [(x[2].rstrip(b"\0").decode("latin1"), x[0], x[1])
+               for x in (struct.unpack_from("<ii8s", b, off + 16 * i) for i in range(n))]
+
+
+def map_data(level):
+    """A map's lumps by name (THINGS, LINEDEFS, SIDEDEFS, VERTEXES, SECTORS ...)."""
+    b, lumps = wad()
+    i = [name for name, _, _ in lumps].index(level.upper())
+    return {name: b[p:p + s] for name, p, s in lumps[i + 1:i + 11]}
+
+
+def layout(level):
+    """The level's layout as ViZDoom's sectors (floor, ceiling, lines), read from the map: ViZDoom's own sectors
+    stream crashes on bigger maps. Heights are as the level starts (doors shut)."""
+    d = map_data(level)
+    verts = [struct.unpack_from("<hh", d["VERTEXES"], j) for j in range(0, len(d["VERTEXES"]), 4)]
+    side = [struct.unpack_from("<h", d["SIDEDEFS"], j + 28)[0] for j in range(0, len(d["SIDEDEFS"]), 30)]
+    secs = [SimpleNamespace(floor_height=f, ceiling_height=c, lines=[])
+            for f, c in (struct.unpack_from("<hh", d["SECTORS"], j) for j in range(0, len(d["SECTORS"]), 26))]
+    for j in range(0, len(d["LINEDEFS"]), 14):
+        v1, v2, flags, _, _, front, back = struct.unpack_from("<HHhhhHH", d["LINEDEFS"], j)
+        ln = SimpleNamespace(x1=verts[v1][0], y1=verts[v1][1], x2=verts[v2][0], y2=verts[v2][1],
+                             is_blocking=bool(flags & 1) or back == 0xFFFF)
+        for sd in {front, back} - {0xFFFF}:
+            secs[side[sd]].lines.append(ln)
+    return secs
+
+
 class Doom:
+    """An action is [attack, speed, forward, back, left, right, turn (degrees), use]."""
     BUTTONS = [vzd.Button.ATTACK, vzd.Button.SPEED, vzd.Button.MOVE_FORWARD, vzd.Button.MOVE_BACKWARD,
-               vzd.Button.MOVE_LEFT, vzd.Button.MOVE_RIGHT, vzd.Button.TURN_LEFT_RIGHT_DELTA]
+               vzd.Button.MOVE_LEFT, vzd.Button.MOVE_RIGHT, vzd.Button.TURN_LEFT_RIGHT_DELTA, vzd.Button.USE]
     VARS = [vzd.GameVariable.HEALTH, vzd.GameVariable.SELECTED_WEAPON_AMMO, vzd.GameVariable.KILLCOUNT,
             vzd.GameVariable.POSITION_X, vzd.GameVariable.POSITION_Y, vzd.GameVariable.ANGLE,
             vzd.GameVariable.DAMAGE_TAKEN, vzd.GameVariable.DEAD, vzd.GameVariable.DAMAGECOUNT,
-            vzd.GameVariable.HITCOUNT]
+            vzd.GameVariable.HITCOUNT, vzd.GameVariable.SECRETCOUNT]
 
-    def __init__(self, seconds, seed, show=False):
+    def __init__(self, seconds, seed, show=False, level=None, fair=False):
+        """level: a Freedoom 2 map ("MAP01") on Ultra-Violence from a pistol start, else the deathmatch arena.
+        fair: objects only while they are on screen (no seeing through walls); the level's layout stays known."""
         g = self.g = vzd.DoomGame()
-        g.load_config(os.path.join(vzd.scenarios_path, "deathmatch.cfg"))
+        self.fair = fair
+        if level:
+            g.load_config(os.path.join(vzd.scenarios_path, "freedoom2.cfg"))
+            g.set_doom_map(level.lower())
+            g.set_doom_skill(4)
+            g.set_automap_buffer_enabled(False)
+            g.set_audio_buffer_enabled(False)
+            g.set_render_messages(False)
+            g.set_render_hud(show)
+        else:
+            g.load_config(os.path.join(vzd.scenarios_path, "deathmatch.cfg"))
+        self.static_layout = layout(level) if level else None
         g.set_window_visible(show)  # a window (never fullscreen) to watch it play; hidden otherwise
         g.set_mode(vzd.Mode.ASYNC_PLAYER)
         g.set_objects_info_enabled(True)
-        g.set_sectors_info_enabled(True)  # the level's geometry, for navigation
+        g.set_sectors_info_enabled(not level)  # the level's geometry, for navigation (campaign maps: from the map)
         g.set_labels_buffer_enabled(True)
         g.set_screen_resolution(vzd.ScreenResolution.RES_640X480 if show else vzd.ScreenResolution.RES_320X240)
         if show:
@@ -124,15 +174,17 @@ class Doom:
 
     def calibrate(self):
         a0 = self.g.get_state().game_variables[5]
-        self.g.make_action([0, 0, 0, 0, 0, 0, 10.0])
+        self.g.make_action([0, 0, 0, 0, 0, 0, 10.0, 0])
         a1 = self.g.get_state().game_variables[5]
         self.turn_sign = 1.0 if wrap(a1 - a0) > 0 else -1.0  # +delta turns left (counterclockwise) when 1
 
     def read(self, s):
-        hp, ammo, kills, x, y, ang, dmg, dead, dealt, hits = s.game_variables
+        hp, ammo, kills, x, y, ang, dmg, dead, dealt, hits, secrets = s.game_variables
         visible = {lb.object_id for lb in s.labels}
         monsters, items = [], []
         for o in s.objects:
+            if self.fair and o.id not in visible:
+                continue
             dx, dy = o.position_x - x, o.position_y - y
             dist = math.hypot(dx, dy)
             if dist < 1 or dist > 2500:
@@ -147,14 +199,15 @@ class Doom:
         monsters.sort(key=lambda t: t["distance"])
         items.sort(key=lambda t: t["distance"])
         return {"health": int(hp), "ammo": int(ammo), "kills": int(kills), "x": x, "y": y, "angle": ang, "dead": bool(dead),
-                "damage": float(dmg), "monsters": monsters[:6], "items": items[:8]}
+                "damage": float(dmg), "dealt": float(dealt), "secrets": int(secrets), "monsters": monsters[:6], "items": items[:8],
+                "screen": s.screen_buffer, "layout": self.static_layout if self.static_layout is not None else s.sectors}
 
     def turn(self, bearing, gain=0.45, cap=12.0):
         return self.turn_sign * max(-cap, min(cap, bearing * gain))
 
     def act(self, skill, st, tic):
         """The reflex layer: one tic of a skill -> [attack, speed, fwd, back, left, right, turn]."""
-        a = [0, 0, 0, 0, 0, 0, 0.0]
+        a = [0, 0, 0, 0, 0, 0, 0.0, 0]
         pos = (st["x"], st["y"])
         moved = self.last_pos is None or math.hypot(pos[0] - self.last_pos[0], pos[1] - self.last_pos[1]) > 3
         self.last_pos = pos
@@ -163,6 +216,7 @@ class Doom:
             self.escape -= 1
             a[6] = self.turn_sign * 9.0
             a[2] = a[1] = 1
+            a[7] = int(self.escape % 6 == 0)  # a door, a switch: open it
             return a
         vis = [m for m in st["monsters"] if m["visible"]]
         strafe = 4 if (tic // 25) % 2 else 5
@@ -222,13 +276,24 @@ class Tactics:
                 src = Path(cache).read_text()
                 self.backend = decide.Policy(decide.load_policy(src), src)
             else:
-                self.backend = decide.compile_policy(QUESTION, samples, decide.ollama_generate(compile_model))
+                self.backend = decide.compile_policy(QUESTION, samples, decide.generator(compile_model))
                 if cache:
                     Path(cache).write_text(self.backend.source)
             self.compile_s = self.backend.compile_ms / 1000
             agree = sum(self.backend.fn(s) == oracle(s) for s in samples) / len(samples)
             print(f"compiled the intent with {compile_model} in {self.compile_s:.1f} s; agrees with the rules on "
                   f"{agree:.0%} of 300 sample states", flush=True)
+        elif kind == "llm":  # the model picks every move, as an agent calling a tool per move would
+            self.gen = decide.generator(compile_model)
+            self.latest_state, self.stop = None, threading.Event()
+            threading.Thread(target=self._background_llm, daemon=True).start()
+        elif kind.startswith("plugin:"):  # your own architecture: pick(state) -> skill, or act(state, tic) -> buttons
+            import importlib.util
+            path, _, cls = kind[len("plugin:"):].partition(":")
+            spec = importlib.util.spec_from_file_location("arena_plugin", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            self.plugin = getattr(mod, cls or "Agent")()
         elif kind == "scorer":
             self.backend = decide.MLXDecider("mlx-community/Qwen3.5-2B-MLX-4bit")
             self.backend.decide(QUESTION, facts(sample_state(random.Random(1))))  # prepare and warm
@@ -246,11 +311,33 @@ class Tactics:
             self.lat.append(d.ms)
             self.n += 1
 
+    def _background_llm(self):
+        names = QUESTION.names
+        while not self.stop.is_set():
+            st = self.latest_state
+            if st is None:
+                time.sleep(0.005)
+                continue
+            t = time.perf_counter()
+            try:
+                text = self.gen(f"{INTENT}\n\nState:\n{facts(st)}\n\nWhich skill now? Answer with one word: "
+                                f"{', '.join(names)}.").lower()
+                self.choice = next((n for n in names if n in text), self.choice)
+            except Exception:  # noqa: BLE001
+                pass
+            self.lat.append((time.perf_counter() - t) * 1000)
+            self.n += 1
+
     def pick(self, st):
         if self.kind in ("explore", "planner"):
             return "explore"
-        if self.kind == "scorer":
+        if self.kind in ("scorer", "llm"):
             self.latest_state = st
+        elif self.kind.startswith("plugin:") and hasattr(self.plugin, "pick"):
+            t = time.perf_counter()
+            self.choice = self.plugin.pick(st)
+            self.lat.append((time.perf_counter() - t) * 1000)
+            self.n += 1
         else:
             t = time.perf_counter()
             self.choice = self.backend.decide(QUESTION, st).choice
@@ -285,7 +372,7 @@ class Planner:
     def __init__(self, doom, seed=0):
         from .nav import NavGrid
         self.doom, self.rng = doom, random.Random(seed)
-        self.nav = NavGrid(doom.g.get_state().sectors)
+        self.nav = NavGrid(doom.static_layout or doom.g.get_state().sectors)
         self.goal, self.replans, self.stuck_events, self.got = None, 0, 0, 0
         self.taken: set = set()  # weapons already picked up
         self.banned: dict = {}  # target id -> tic it may be tried again (unreachable: stuck, or no progress)
@@ -346,10 +433,10 @@ class Planner:
         threats = [(m["x"], m["y"]) for m in st["monsters"] if m["distance"] < 1500]
         best, score = None, -1e9
         for _ in range(60):
-            r, c = self.rng.randrange(self.nav.h), self.rng.randrange(self.nav.w)
-            if not self.nav.free((r, c)):
-                continue
-            x, y = self.nav.point((r, c))
+            rc = self.nav.sample(st["x"], st["y"], self.rng)
+            if rc is None:
+                return None
+            x, y = self.nav.point(rc)
             d = min((math.hypot(x - a, y - b) for a, b in threats), default=2000)
             near_health = min((it["distance"] for it in st["items"] if it["kind"] == "health"), default=3000)
             sc = d / 300 - math.hypot(x - st["x"], y - st["y"]) / 900 - near_health / 1500
@@ -360,6 +447,10 @@ class Planner:
     def step(self, st, tic):
         d = self.doom
         st["tic"] = tic
+        if tic and tic % 175 == 0 and d.static_layout is None:  # doors it opened, lifts that moved
+            s = d.g.get_state()
+            if s is not None:
+                self.nav.update(s.sectors)
         self.nav.visit(st["x"], st["y"])
         vis = [m for m in st["monsters"] if m["visible"]]
         g = self.goal
@@ -375,7 +466,7 @@ class Planner:
         if done or urgent or tic % 35 == 0:
             self.plan(st, tic, urgent=bool(done or urgent))
         g = self.goal
-        a = [0, 0, 0, 0, 0, 0, 0.0]
+        a = [0, 0, 0, 0, 0, 0, 0.0, 0]
         pos = (st["x"], st["y"])
         moved = d.last_pos is None or math.hypot(pos[0] - d.last_pos[0], pos[1] - d.last_pos[1]) > 3
         d.last_pos = pos
@@ -396,6 +487,7 @@ class Planner:
                 bearing = wrap(math.degrees(math.atan2(wp[0][1] - pos[1], wp[0][0] - pos[0])) - st["angle"])
                 a[6] = d.turn(bearing, gain=0.7)
                 a[2] = a[1] = int(abs(bearing) < 50)
+                a[7] = int(d.stuck_t > 6 and d.stuck_t % 4 == 0)  # blocked: a door in the way? open it
                 shot = next((m for m in vis if abs(m["bearing"]) < 4), None)  # a clear shot on the way: take it
                 a[0] = int(shot is not None and st["ammo"] > 0)
             if d.stuck_t > 25 or (g["kind"] == "get" and tic - g["since"] > 210):  # stuck, or 6 s without getting it
@@ -409,11 +501,39 @@ class Planner:
 
 
 
+class Memory:
+    """With fair senses the game shows only what is on screen, so Spinal's own agents remember: items where they were
+    last seen (until the player has been there), monsters for 3 s after they leave the screen."""
+
+    def __init__(self):
+        self.items, self.monsters = {}, {}
+
+    def update(self, st, tic, dead):
+        x, y, ang = st["x"], st["y"], st["angle"]
+
+        def rel(e):
+            dx, dy = e["x"] - x, e["y"] - y
+            return {**e, "distance": round(math.hypot(dx, dy)), "visible": False,
+                    "bearing": round(wrap(math.degrees(math.atan2(dy, dx)) - ang), 1)}
+        seen_i, seen_m = {i["id"] for i in st["items"]}, {m["id"] for m in st["monsters"]}
+        self.items.update({i["id"]: i for i in st["items"]})
+        self.items = {k: i for k, i in self.items.items() if k in seen_i or math.hypot(i["x"] - x, i["y"] - y) > 48}
+        self.monsters.update({m["id"]: (tic, m) for m in st["monsters"]})
+        self.monsters = {k: v for k, v in self.monsters.items() if tic - v[0] < 105 and k not in dead}
+        st["items"] = sorted(st["items"] + [rel(i) for k, i in self.items.items() if k not in seen_i],
+                             key=lambda t: t["distance"])[:8]
+        st["monsters"] = sorted(st["monsters"] + [rel(m) for k, (_, m) in self.monsters.items() if k not in seen_m],
+                                key=lambda t: t["distance"])[:6]
+        return st
+
+
 def episode(doom, tactics, gif_frames=None):
     doom.new_episode()
     doom.calibrate()
     planner = Planner(doom, seed=doom.g.get_seed() if hasattr(doom.g, "get_seed") else 0) if tactics.kind == "planner" else None
+    memory = Memory() if doom.fair else None
     tic, kills, late, skills, last_tic = 0, 0, 0, {}, None
+    dealt, dry = 0.0, 0
     t0 = time.perf_counter()
     while not doom.g.is_episode_finished():
         s = doom.g.get_state()
@@ -426,8 +546,22 @@ def episode(doom, tactics, gif_frames=None):
         if st["kills"] > kills:
             doom.credit_kill(st)
             kills = st["kills"]
-        if planner:
+        plugin_act = getattr(getattr(tactics, "plugin", None), "act", None)
+        if memory and not plugin_act:
+            st = memory.update(st, tic, doom.dead_ids)
+        if plugin_act:
+            t = time.perf_counter()
+            action, skill = list(plugin_act(st, tic)), "plugin"
+            if len(action) > 6:
+                action[6] = doom.turn(float(action[6]), gain=1.0, cap=30.0)  # a plugin turns in degrees, left +
+            tactics.lat.append((time.perf_counter() - t) * 1000)
+            tactics.n += 1
+            skills[skill] = skills.get(skill, 0) + 1
+        elif planner:
+            t = time.perf_counter()
             action, skill = planner.step(st, tic)
+            tactics.lat.append((time.perf_counter() - t) * 1000)  # the whole per-tic decision, path finding included
+            tactics.n += 1
             kind = skill.split(" ")[0].lower()
             skills[kind] = skills.get(kind, 0) + 1
         else:
@@ -436,13 +570,22 @@ def episode(doom, tactics, gif_frames=None):
             action = doom.act(skill, st, tic)
         if gif_frames is not None and tic % 3 == 0:
             gif_frames.append((s.screen_buffer.copy(), skill, st["health"], kills))
+        action = list(action) + [0] * (len(Doom.BUTTONS) - len(action))
+        dry = dry + 1 if action[0] and st["dealt"] == dealt else 0
+        if dry > 60 and doom.target is not None:  # 2 s of fire without damage: a corpse (or out of reach)
+            doom.dead_ids.add(doom.target)
+            dry = 0
+        dealt = st["dealt"]
         doom.g.make_action(action)
         tic += 1
     gv = doom.g.get_game_variable
+    game_tics = last_tic or 0  # the episode clock resets when the level is exited
     return {"seconds": round(time.perf_counter() - t0, 1), "kills": int(gv(vzd.GameVariable.KILLCOUNT)),
             "died": bool(doom.g.is_player_dead()), "damage": int(gv(vzd.GameVariable.DAMAGE_TAKEN)),
             "dealt": int(gv(vzd.GameVariable.DAMAGECOUNT)), "hits": int(gv(vzd.GameVariable.HITCOUNT)),
-            "tics": tic, "missed_tics": late, "skills": {k: round(v / max(1, tic), 2) for k, v in skills.items()},
+            "tics": tic, "missed_tics": late, "secrets": int(gv(vzd.GameVariable.SECRETCOUNT)),
+            "game_s": round(game_tics / 35, 1),
+            "exited": not doom.g.is_player_dead() and doom.g.get_episode_time() < doom.g.get_episode_timeout() - 2, "skills": {k: round(v / max(1, tic), 2) for k, v in skills.items()},
             **({"got": planner.got, "replans": planner.replans, "stuck": planner.stuck_events} if planner else {})}
 
 

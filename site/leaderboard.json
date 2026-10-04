@@ -1,0 +1,15 @@
+{
+ "scenario": "Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses",
+ "scale": "100% = every monster, every secret and the exit under par on every map (elite human play)",
+ "generated": "2026-10-04",
+ "boards": {
+  "reflex": {
+   "title": "Beat Spinal: any architecture",
+   "rows": []
+  },
+  "models": {
+   "title": "Model league: Spinal with your model plugged in",
+   "rows": []
+  }
+ }
+}

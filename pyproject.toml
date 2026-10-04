@@ -1,7 +1,7 @@
 [project]
 name = "relaymcp"
 dynamic = ["version"]
-description = "Remote agentic control for handheld PCs: MCP tooling for remote control, computer use, voice and automation from macOS, Linux or Windows."
+description = "Spinal: give your AI agent a spinal cord. Real-time AI agents that play games (a model sets goals, reflexes act every frame), the Spinal Score benchmark, and MCP tooling for Windows handhelds."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -48,19 +48,20 @@ device = [
 ]
 # Faster voice prompts: a warm Copilot runtime instead of starting `copilot -p` for every prompt (Python 3.11+).
 voice = ["github-copilot-sdk>=1.0.14,<2; python_version >= '3.11'"]
-# Games on this computer for real-time agents, no handheld needed: `relaymcp play doom`.
+# Games on this computer for real-time agents, no handheld needed: `spinal play doom`, `spinal arena run`.
 play = ["vizdoom>=1.3; python_version >= '3.10'", "numpy>=1.26", "pillow>=10.3"]
 dev = ["pytest>=7", "pytest-rerunfailures>=14", "ruff>=0.6", "pillow>=10.3", "numpy>=1.26"]
 
 [project.scripts]
 relaymcp = "relaymcp.host.cli:main"
+spinal = "relaymcp.host.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/brennengreen/RelayMCP"
-Documentation = "https://github.com/brennengreen/RelayMCP/tree/main/docs"
-Issues = "https://github.com/brennengreen/RelayMCP/issues"
-Discussions = "https://github.com/brennengreen/RelayMCP/discussions"
-Changelog = "https://github.com/brennengreen/RelayMCP/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/brennengreen/spinal"
+Documentation = "https://github.com/brennengreen/spinal/tree/main/docs"
+Issues = "https://github.com/brennengreen/spinal/issues"
+Discussions = "https://github.com/brennengreen/spinal/discussions"
+Changelog = "https://github.com/brennengreen/spinal/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["hatchling>=1.26"]

@@ -1,31 +1,88 @@
 <p align="center">
-  <img src="assets/demo-doom.gif" alt="An agent playing Doom in real time, its current goal and reason on every frame" width="640">
+  <img src="assets/spinal-banner.jpg" alt="Spinal: give your AI agent a spinal cord. Models set goals in seconds; reflexes act every frame." width="900">
 </p>
 
 <p align="center">
-  <a href="https://github.com/brennengreen/RelayMCP/actions/workflows/ci.yml"><img src="https://github.com/brennengreen/RelayMCP/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://brennengreen.github.io/spinal/"><img src="https://img.shields.io/badge/Spinal%20Score-leaderboard-19E3FF" alt="Spinal Score leaderboard"></a>
+  <a href="https://github.com/brennengreen/spinal/actions/workflows/ci.yml"><img src="https://github.com/brennengreen/spinal/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/MCP-native-8A2BE2" alt="MCP-native">
-  <img src="https://img.shields.io/badge/runs%20on-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="macOS, Linux, Windows">
 </p>
 
-# RelayMCP: AI agents that play games in real time
+# Spinal: give your AI agent a spinal cord
 
-**Language models think in seconds. Games move in milliseconds.** RelayMCP splits the work the way a person does:
-a model sets the goals, and fast loops next to the game act on them every frame. Watch one play in a minute, on your
-own computer, with no account and no API key:
+**Language models think in seconds. Games move in milliseconds.** Spinal splits the work the way a body does: a
+model sets the goals, and reflexes next to the game act on them every frame. Watch one play in a minute, on your own
+computer, with no account and no API key:
 
 ```sh
-uv tool install "relaymcp[play] @ git+https://github.com/brennengreen/RelayMCP"   # or pipx install "..."
-relaymcp play doom
+uv tool install "relaymcp[play] @ git+https://github.com/brennengreen/spinal"   # or pipx install "..."
+spinal play doom
 ```
 
-A window opens and an agent plays Doom (the free Freedoom assets) in real time. It keeps a map of the level, picks
+<p align="center">
+  <img src="assets/demo-doom.gif" alt="Spinal playing Doom in real time, its current goal and reason on every frame" width="640">
+</p>
+
+A window opens and Spinal plays Doom (the free Freedoom assets) in real time. It keeps a map of the level, picks
 what's worth doing now (the weapon it lacks, the health it needs, the monster in its way), commits to it, walks real
 paths and fights, with its goal and the reason on every frame. Nothing is scripted per level, and nothing touches
-your keyboard or mouse.
+your keyboard or mouse. (Spinal grew out of RelayMCP; the `relaymcp` command still works.)
+
+## The Spinal Score: a benchmark nobody is close to beating
+
+**[Live leaderboard](https://brennengreen.github.io/spinal/)**. Season 1 is four Freedoom levels (MAP01-MAP04) on
+Ultra-Violence from a pistol start, in real time: the game runs at 35 tics a second whatever the agent does. Each map
+is scored with Doom's own tally: kills %, secrets %, and the exit against par. **100% is every monster, every secret
+and the exit under par on every map: elite human play.** An expert who maxes every map at twice par scores 83%.
+
+It is built to stay hard and honest:
+
+- **Not our home turf.** Spinal was developed on the deathmatch arena, which isn't scored. These levels are new to
+  every entrant, Spinal included.
+- **No wallhacks.** Agents see objects only while they're on screen (as a perfect detector would) and must remember
+  the rest. The layout is known, like a player with the automap. Reading the game's files isn't allowed.
+- **Real time.** Decision latency and the tics an agent missed are on the board.
+- **If any entry passes 80%, the next season gets harder**: new levels, fewer senses. A benchmark that today's agents
+  ace measures their blind spots, not the game.
+
+Two boards: bring any architecture to beat Spinal's, or plug your model into Spinal.
+
+```sh
+spinal arena run --agent plugin:my_agent.py:Agent --maps MAP01                        # a quick try (unranked)
+spinal arena run --board reflex --agent plugin:my_agent.py:Agent --name "My agent"   # your architecture
+spinal arena run --board models --agent compiled --model openai:<model>               # your model, in Spinal
+```
+
+A plugin is a class with `act(state, tic)` returning buttons (`[attack, speed, forward, back, left, right,
+turn (degrees, left +), use]`) or `pick(state)` returning one of Spinal's skills. `state` has the player's health, ammo, position
+and angle, the monsters and items on screen (distance, bearing), the screen's pixels and the level's layout; see
+[examples/arena_agent.py](examples/arena_agent.py). Open a pull request with the JSON the run writes under
+`leaderboards/`: CI recomputes every score from its tally.
+
+<!-- leaderboard:start -->
+**Beat Spinal: any architecture**
+
+Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses. 100% = every monster, every secret and the exit under par on every map (elite human play).
+
+| # | Entrant | Spinal Score | Kills | Secrets | Exits | Deaths | Decision p95 | Missed tics | On intent |
+|---|---|---|---|---|---|---|---|---|---|
+
+**Model league: Spinal with your model plugged in**
+
+Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses. 100% = every monster, every secret and the exit under par on every map (elite human play).
+
+| # | Entrant | Spinal Score | Kills | Secrets | Exits | Deaths | Decision p95 | Missed tics | On intent |
+|---|---|---|---|---|---|---|---|---|---|
+
+[Full leaderboards](LEADERBOARD.md)
+<!-- leaderboard:end -->
 
 ## Three speeds
+
+<p align="center">
+  <img src="assets/spinal-how-it-works.jpg" alt="Strategy: a language model sets goals, in seconds. Tactics: the intent compiled to code, in microseconds. Reflexes: skills next to the game, every frame." width="820">
+</p>
 
 | Layer | How fast | What it does |
 |---|---|---|
@@ -37,6 +94,10 @@ Why compile the intent instead of asking a model every move? Measured ([docs/dec
 small local models picking each move followed a five-rule intent 25-60% of the time at 45-245 ms a decision; the
 same intent compiled to code by a local 9B model followed it on **100% of 8,193 live decisions, at 6 microseconds
 each**. Change the intent in plain English and it compiles again while the old one keeps playing.
+
+<p align="center">
+  <img src="assets/spinal-compile-the-intent.jpg" alt="Ask a small LLM every move: 25-60% of moves follow the plan, 45-245 ms per decision. Compile the intent once: 100% of 8,193 live moves, 6 microseconds per decision." width="720">
+</p>
 
 ## Play more
 
@@ -98,7 +159,7 @@ You need a Windows 11 handheld and a Mac, Linux or Windows computer on the same 
 **1. Install RelayMCP on your computer**
 
 ```sh
-uv tool install "relaymcp[voice] @ git+https://github.com/brennengreen/RelayMCP"
+uv tool install "relaymcp[voice] @ git+https://github.com/brennengreen/spinal"
 ```
 
 (`[voice]` adds a warm Copilot runtime that makes voice prompts about twice as fast; leave it out for a
@@ -134,7 +195,7 @@ relaymcp say "Hello from RelayMCP"
 ```
 
 > **Trying RelayMCP on your handheld?** Add your model, host OS, MCP client and result to the
-> [early tester roll call](https://github.com/brennengreen/RelayMCP/discussions/5). Reports that work without changes
+> [early tester roll call](https://github.com/brennengreen/spinal/discussions/5). Reports that work without changes
 > are just as valuable as bug reports. If RelayMCP is useful, star the repository to help other handheld owners find it.
 
 To use other MCP clients, run `relaymcp mcp --print` for ready-made config (Claude Code, VS Code, generic JSON). The
@@ -220,8 +281,8 @@ RelayMCP is young (pre-1.0). It is developed on macOS with a Windows 11 handheld
 end to end. Linux and Windows hosts use the same code paths (OpenSSH, systemd user services, scheduled tasks) and are
 covered by CI, but have seen less real-world use. Other Windows handhelds should work; some device-management
 niceties are hardware-specific. Successful compatibility reports, questions, issues and PRs are welcome in
-[Discussions](https://github.com/brennengreen/RelayMCP/discussions) and the
-[issue tracker](https://github.com/brennengreen/RelayMCP/issues).
+[Discussions](https://github.com/brennengreen/spinal/discussions) and the
+[issue tracker](https://github.com/brennengreen/spinal/issues).
 
 ## Use responsibly
 

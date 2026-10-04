@@ -322,6 +322,31 @@ def ollama_generate(model: str, url: str = "http://127.0.0.1:11434") -> Callable
     return generate
 
 
+def openai_generate(model: str, base_url: str | None = None, key: str | None = None) -> Callable[[str], str]:
+    """Any OpenAI-compatible chat endpoint (OpenAI, OpenRouter, Together, vLLM, LM Studio...): OPENAI_BASE_URL and
+    OPENAI_API_KEY by default."""
+    import os
+    import urllib.request
+    url = (base_url or os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/") + "/chat/completions"
+    key = key or os.environ.get("OPENAI_API_KEY", "")
+
+    def generate(prompt: str) -> str:
+        body = json.dumps({"model": model, "temperature": 0,
+                           "messages": [{"role": "user", "content": prompt}]}).encode()
+        req = urllib.request.Request(url, body, {"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
+        with urllib.request.urlopen(req, timeout=300) as r:
+            return json.loads(r.read())["choices"][0]["message"]["content"]
+    return generate
+
+
+def generator(spec: str) -> Callable[[str], str]:
+    """A model by name: "ollama:qwen3.5:9b", "openai:gpt-5.4-mini" (any OpenAI-compatible API), or a bare Ollama name."""
+    kind, _, name = spec.partition(":")
+    if kind == "openai":
+        return openai_generate(name)
+    return ollama_generate(name if kind == "ollama" else spec)
+
+
 class Deadline:
     """A decider with a time limit: it answers `default` (marked fallback) when the backend is late or fails, so a
     caller in a control loop never waits on it. Decisions run on one worker thread that owns the backend."""

@@ -14,3 +14,4 @@ kit/
 
 # Minecraft bench results (machine-specific)
 scripts/mcbench/results/
+_vizdoom.ini

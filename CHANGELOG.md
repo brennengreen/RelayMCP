@@ -5,6 +5,18 @@
 Faster, leaner and real-time capable: most of the work moves from model round trips to the
 handheld itself.
 
+- **Spinal, and the Spinal Score.** The project's public face is now Spinal ("give your AI agent a spinal cord"):
+  new banner, logo and diagrams, a `spinal` command (alias of `relaymcp`), and the repository at
+  `github.com/brennengreen/spinal`. `spinal arena run` scores any agent on Freedoom 2 MAP01-MAP04 on Ultra-Violence
+  from a pistol start, in real time, seeing only what is on screen, with Doom's own tally (kills %, secrets %, exit
+  against par). 100% is elite human play; Spinal's own planner scores about 5%. Two leaderboards (beat Spinal with
+  any architecture; plug your model into Spinal) render to LEADERBOARD.md, the README and a GitHub Pages site, and CI
+  recomputes every entry from its tally. Plugins get the screen and the level's layout, act with a `use` button, and
+  `examples/arena_agent.py` is a 20-line starting point. See [docs/spinal-score.md](docs/spinal-score.md).
+- **Doom agents on real levels:** fair senses (objects only while on screen, with memory in Spinal's own agents),
+  the layout read from the map (ViZDoom's sectors stream crashes on bigger maps), doors (passable in the navigation
+  grid, opened with `use`), exploration only toward reachable places, and a guard against firing at corpses.
+
 - **`relaymcp play doom`: watch an agent play on your own computer, no handheld needed.** With the `play` extra
   (ViZDoom and the free Freedoom assets), a window opens and an agent plays Doom in real time: a map of the level,
   goals it commits to (the weapon it lacks, the health it needs, the monster in its way), real paths, its goal and

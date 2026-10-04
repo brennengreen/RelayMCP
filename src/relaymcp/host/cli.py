@@ -595,12 +595,29 @@ def cmd_play(args: argparse.Namespace) -> None:
     doom.main(argv)
 
 
+def cmd_arena(args: argparse.Namespace) -> None:
+    """The leaderboards: the Spinal Score (Doom levels new to every entrant, in real time) for architectures (beat
+    Spinal) and models (Spinal + yours)."""
+    try:
+        from relaymcp.play import arena
+    except ImportError as e:
+        raise SystemExit(f'relaymcp arena needs the game: pip install "relaymcp[play]" (missing: {e.name or e})') from None
+    if args.action == "render":
+        print("wrote", arena.render())
+        return
+    try:
+        arena.run(args.board, args.agent, args.model, args.name, maps=tuple(args.maps.upper().split(",")) if args.maps else arena.MAPS)
+    except ImportError as e:
+        raise SystemExit(f'relaymcp arena needs the game: pip install "relaymcp[play]" (missing: {e.name or e})') from None
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="relaymcp", description="RelayMCP: real-time AI agents that play games, on this "
-                                "computer or on a Windows handheld.",
+    prog = "spinal" if os.path.basename(sys.argv[0]).startswith("spinal") else "relaymcp"
+    p = argparse.ArgumentParser(prog=prog, description="Spinal (RelayMCP): real-time AI agents that play games, on "
+                                "this computer or on a Windows handheld.",
                                 formatter_class=argparse.RawDescriptionHelpFormatter,
-                                epilog="Docs: https://github.com/brennengreen/RelayMCP")
-    p.add_argument("--version", action="version", version=f"relaymcp {relaymcp.__version__}")
+                                epilog="Docs: https://github.com/brennengreen/spinal")
+    p.add_argument("--version", action="version", version=f"{prog} {relaymcp.__version__}")
     sub = p.add_subparsers(dest="command", metavar="COMMAND")
 
     s = sub.add_parser("play", help="watch an agent play a game on this computer (no handheld needed): doom")
@@ -614,6 +631,17 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--headless", action="store_true", help="no window (for scoring runs)")
     s.add_argument("--gif", help="record the first episode, with the agent's goal on every frame")
     s.set_defaults(func=cmd_play)
+
+    s = sub.add_parser("arena", help="the leaderboards: beat Spinal with your architecture, or plug in your model")
+    s.add_argument("action", choices=["run", "render"])
+    s.add_argument("--board", choices=["reflex", "models"], default="reflex")
+    s.add_argument("--agent", default="planner",
+                   help="planner (Spinal) | compiled | llm (a model picks every move) | scorer | rules | fight | explore "
+                        "| plugin:path.py:Class (your own: pick(state) -> skill, or act(state, tic) -> buttons)")
+    s.add_argument("--model", help="ollama:<name> or openai:<name> (OPENAI_BASE_URL/OPENAI_API_KEY: any compatible API)")
+    s.add_argument("--name", help="the entrant's name on the board")
+    s.add_argument("--maps", help="a quick try on some maps, e.g. MAP01 (unranked; a ranked run plays MAP01-MAP04)")
+    s.set_defaults(func=cmd_arena)
 
     s = sub.add_parser("setup", help="set up this computer and build the handheld's setup kit")
     s.add_argument("--name", help="device name (default: ally)")
