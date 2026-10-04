@@ -97,14 +97,17 @@ class Doom:
             vzd.GameVariable.DAMAGE_TAKEN, vzd.GameVariable.DEAD, vzd.GameVariable.DAMAGECOUNT,
             vzd.GameVariable.HITCOUNT]
 
-    def __init__(self, seconds, seed):
+    def __init__(self, seconds, seed, show=False):
         g = self.g = vzd.DoomGame()
         g.load_config(os.path.join(vzd.scenarios_path, "deathmatch.cfg"))
-        g.set_window_visible(False)
+        g.set_window_visible(show)  # a window (never fullscreen) to watch it play; hidden otherwise
         g.set_mode(vzd.Mode.ASYNC_PLAYER)
         g.set_objects_info_enabled(True)
         g.set_labels_buffer_enabled(True)
-        g.set_screen_resolution(vzd.ScreenResolution.RES_320X240)
+        g.set_screen_resolution(vzd.ScreenResolution.RES_640X480 if show else vzd.ScreenResolution.RES_320X240)
+        if show:
+            g.set_render_hud(True)
+            g.set_render_crosshair(True)
         g.set_available_buttons(self.BUTTONS)
         g.set_available_game_variables(self.VARS)
         g.set_episode_timeout(int(seconds * 35))
@@ -204,7 +207,7 @@ class Tactics:
     """The policy picks the skill. Rules and compiled policies answer inline (microseconds); a model scoring the
     answers runs in the background on the latest state, and the loop uses its latest choice."""
 
-    def __init__(self, kind, compile_model):
+    def __init__(self, kind, compile_model, cache=None):
         self.kind, self.choice, self.lat, self.n = kind, "explore", [], 0
         self.agree, self.checked = 0, 0  # the choice in use vs the rules, on every tic's real state
         self.pending = None
@@ -215,7 +218,13 @@ class Tactics:
         elif kind == "compiled":
             rng = random.Random(5)
             samples = [sample_state(rng) for _ in range(300)]
-            self.backend = decide.compile_policy(QUESTION, samples, decide.ollama_generate(compile_model))
+            if cache and Path(cache).exists():  # compiled before: load it (checked again, like any policy)
+                src = Path(cache).read_text()
+                self.backend = decide.Policy(decide.load_policy(src), src)
+            else:
+                self.backend = decide.compile_policy(QUESTION, samples, decide.ollama_generate(compile_model))
+                if cache:
+                    Path(cache).write_text(self.backend.source)
             self.compile_s = self.backend.compile_ms / 1000
             agree = sum(self.backend.fn(s) == oracle(s) for s in samples) / len(samples)
             print(f"compiled the intent with {compile_model} in {self.compile_s:.1f} s; agrees with the rules on "
@@ -296,9 +305,9 @@ def save_gif(frames, path):
     from PIL import Image, ImageDraw
     imgs = []
     for buf, skill, hp, kills in frames:
-        im = Image.fromarray(np.transpose(buf, (1, 2, 0))).resize((240, 180))
+        im = Image.fromarray(np.transpose(buf, (1, 2, 0))).resize((320, 240))
         d = ImageDraw.Draw(im)
-        d.rectangle([0, 0, 240, 13], fill=(0, 0, 0))
+        d.rectangle([0, 0, 320, 13], fill=(0, 0, 0))
         d.text((3, 1), f"{skill:8s} hp {hp:3d} kills {kills}", fill=(255, 255, 0))
         imgs.append(im)
     imgs[0].save(path, save_all=True, append_images=imgs[1:], duration=86, loop=0)
@@ -312,9 +321,11 @@ if __name__ == "__main__":
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--gif")
     ap.add_argument("--compile-model", default="qwen3.5:9b")
+    ap.add_argument("--policy-cache", help="compiled policy file: loaded if it exists, else written after compiling")
+    ap.add_argument("--show", action="store_true", help="watch it play in a window (with the HUD)")
     a = ap.parse_args()
-    tactics = Tactics(a.policy, a.compile_model)
-    doom = Doom(a.seconds, a.seed)
+    tactics = Tactics(a.policy, a.compile_model, a.policy_cache)
+    doom = Doom(a.seconds, a.seed, a.show)
     results = []
     for ep in range(a.episodes):
         frames = [] if (a.gif and ep == 0) else None
