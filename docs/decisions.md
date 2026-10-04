@@ -43,7 +43,7 @@ alone or a handful of labeled frames.
 
 ## In a real game, live (Doom on this Mac)
 
-The numbers above are offline: states and frames in, answers out. To see decisions play, `scripts/decide/doom.py` runs
+The numbers above are offline: states and frames in, answers out. To see decisions play, `relaymcp play doom` (`relaymcp.play.doom`) runs
 Doom (ViZDoom with the free Freedoom assets, the deathmatch arena) in real time on the Mac: the game runs at 35
 tics/s whatever the agent does, with no window and no OS input. Every tic a skill steers the player (fight, retreat,
 collect, explore: the reflex layer) and a tactics policy picks the skill from the game's state (health, ammo,
@@ -88,5 +88,5 @@ in 90 s. Like the first Doom agent it reacts rather than plans; the planner and 
 ```sh
 python scripts/decide/tactics.py --models mlx-community/Qwen3-0.6B-4bit --formats json,facts,features   # needs mlx-lm
 python scripts/decide/compile_policies.py qwen3.5:9b                                                      # needs Ollama
-python scripts/decide/doom.py --policy compiled --episodes 6 --seed 2 --gif doom.gif                      # needs vizdoom
+relaymcp play doom --policy compiled --episodes 6 --seed 2 --headless --gif doom.gif   # the play extra
 ```

@@ -583,12 +583,37 @@ def cmd_daemon(args: argparse.Namespace) -> None:
 
 # ---------------------------------------------------------------------------------------------------- parser
 
+def cmd_play(args: argparse.Namespace) -> None:
+    """A game on this computer and an agent playing it in real time: no handheld, no account, no API key."""
+    try:
+        from relaymcp.play import doom
+    except ImportError as e:
+        raise SystemExit('relaymcp play needs the game: pip install "relaymcp[play]" (Python 3.10+; '
+                         f"missing: {e.name or e})") from None
+    argv = ["--policy", args.policy, "--episodes", str(args.episodes), "--seconds", str(args.seconds),
+            "--seed", str(args.seed)] + ([] if args.headless else ["--show"]) + (["--gif", args.gif] if args.gif else [])
+    doom.main(argv)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="relaymcp", description="RelayMCP: remote agentic control for handheld PCs.",
+    p = argparse.ArgumentParser(prog="relaymcp", description="RelayMCP: real-time AI agents that play games, on this "
+                                "computer or on a Windows handheld.",
                                 formatter_class=argparse.RawDescriptionHelpFormatter,
                                 epilog="Docs: https://github.com/brennengreen/RelayMCP")
     p.add_argument("--version", action="version", version=f"relaymcp {relaymcp.__version__}")
     sub = p.add_subparsers(dest="command", metavar="COMMAND")
+
+    s = sub.add_parser("play", help="watch an agent play a game on this computer (no handheld needed): doom")
+    s.add_argument("game", choices=["doom"])
+    s.add_argument("--policy", default="planner", choices=["planner", "compiled", "rules", "fight", "explore", "scorer"],
+                   help="planner: goals, a map and real paths (default); compiled: a plain-English intent compiled to "
+                        "code by a local model (Ollama); scorer: a local model picking each move (mlx-lm)")
+    s.add_argument("--seconds", type=float, default=60)
+    s.add_argument("--episodes", type=int, default=1)
+    s.add_argument("--seed", type=int, default=3)
+    s.add_argument("--headless", action="store_true", help="no window (for scoring runs)")
+    s.add_argument("--gif", help="record the first episode, with the agent's goal on every frame")
+    s.set_defaults(func=cmd_play)
 
     s = sub.add_parser("setup", help="set up this computer and build the handheld's setup kit")
     s.add_argument("--name", help="device name (default: ally)")

@@ -87,9 +87,11 @@ def build_device_zip() -> bytes:
     buf = io.BytesIO()
     deps = ",\n".join(f'    "{d}"' for d in device_requirements())
     host = PACKAGE_DIR / "host"  # the handheld never imports it; a host-only change mustn't look like a device update
+    play = PACKAGE_DIR / "play"  # games on this computer: never on the handheld
     files = sorted(p for p in PACKAGE_DIR.rglob("*")
                    if p.is_file() and "__pycache__" not in p.parts and p.suffix not in (".pyc", ".pyo")
-                   and not p.name.startswith(".") and not p.name.startswith("._") and host not in p.parents)
+                   and not p.name.startswith(".") and not p.name.startswith("._") and host not in p.parents
+                   and play not in p.parents)
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         def add(name: str, data: bytes) -> None:
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))

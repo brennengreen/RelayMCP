@@ -5,6 +5,12 @@
 Faster, leaner and real-time capable: most of the work moves from model round trips to the
 handheld itself.
 
+- **`relaymcp play doom`: watch an agent play on your own computer, no handheld needed.** With the `play` extra
+  (ViZDoom and the free Freedoom assets), a window opens and an agent plays Doom in real time: a map of the level,
+  goals it commits to (the weapon it lacks, the health it needs, the monster in its way), real paths, its goal and
+  reason on every frame. `--policy compiled` uses a plain-English intent compiled to code by a local model. The README
+  now leads with it; the handheld is the most complete backend, no longer the only way in.
+
 - **Generic public naming:** repository copy describes supported hardware as Windows handhelds and gamepads while
   keeping accurate protocol names, compatibility aliases and speech-recognition vocabulary in code.
 - **An early-tester feedback loop:** a successful `relaymcp setup` links directly to the public handheld compatibility

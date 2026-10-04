@@ -1,21 +1,54 @@
 <p align="center">
-  <img src="assets/relay-hero.png" alt="Relay: remote agentic control for handheld PCs" width="100%">
+  <img src="assets/demo-doom.gif" alt="An agent playing Doom in real time, its current goal and reason on every frame" width="640">
 </p>
 
 <p align="center">
   <a href="https://github.com/brennengreen/RelayMCP/actions/workflows/ci.yml"><img src="https://github.com/brennengreen/RelayMCP/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/MCP-native-8A2BE2" alt="MCP-native">
-  <img src="https://img.shields.io/badge/host-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="macOS, Linux, Windows">
+  <img src="https://img.shields.io/badge/runs%20on-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="macOS, Linux, Windows">
 </p>
 
-<p align="center">
-  <a href="#quick-start"><strong>Quick start</strong></a>
-  &middot;
-  <a href="https://github.com/brennengreen/RelayMCP/discussions/5"><strong>Join early testers</strong></a>
-  &middot;
-  <a href="docs/security.md"><strong>Security model</strong></a>
-</p>
+# RelayMCP: AI agents that play games in real time
+
+**Language models think in seconds. Games move in milliseconds.** RelayMCP splits the work the way a person does:
+a model sets the goals, and fast loops next to the game act on them every frame. Watch one play in a minute, on your
+own computer, with no account and no API key:
+
+```sh
+uv tool install "relaymcp[play] @ git+https://github.com/brennengreen/RelayMCP"   # or pipx install "..."
+relaymcp play doom
+```
+
+A window opens and an agent plays Doom (the free Freedoom assets) in real time. It keeps a map of the level, picks
+what's worth doing now (the weapon it lacks, the health it needs, the monster in its way), commits to it, walks real
+paths and fights, with its goal and the reason on every frame. Nothing is scripted per level, and nothing touches
+your keyboard or mouse.
+
+## Three speeds
+
+| Layer | How fast | What it does |
+|---|---|---|
+| Reflexes | every frame, 1-35 ms | aim, move, dodge, dig: code next to the game |
+| Tactics | microseconds | which skill now: a plain-English intent, compiled to checked code by a model |
+| Strategy | seconds | a language model setting goals and intents, as fast as it can think |
+
+Why compile the intent instead of asking a model every move? Measured ([docs/decisions.md](docs/decisions.md)):
+small local models picking each move followed a five-rule intent 25-60% of the time at 45-245 ms a decision; the
+same intent compiled to code by a local 9B model followed it on **100% of 8,193 live decisions, at 6 microseconds
+each**. Change the intent in plain English and it compiles again while the old one keeps playing.
+
+## Play more
+
+- `relaymcp play doom --policy compiled`: tactics from a plain-English intent, compiled by a local model (Ollama).
+  `--policy scorer` lets a small model pick every move instead, to see why that doesn't keep up.
+- **A Minecraft clone** (Luanti + Mineclonia, macOS today): `scripts/luanti/setup.sh`, then
+  `python3 scripts/luanti/play.py`. A local model chooses what to do next and says why in the game chat: it gathers
+  wood by day, digs in at dusk and waits out the night.
+- **Minecraft Bedrock on a real handheld**: a camera servo and closed-loop building on game telemetry; it builds a
+  5x5 house in under a minute, 73 of 73 blocks right ([scripts/mcbench](scripts/mcbench/README.md)).
+
+## On a Windows handheld
 
 **RelayMCP lets your AI agent operate your Windows handheld.** The handheld becomes a set of
 [MCP](https://modelcontextprotocol.io) tools on your laptop. GitHub Copilot CLI, Claude Code, VS Code, or any MCP
@@ -56,7 +89,7 @@ you ▸ copilot -p "Open Minecraft on my handheld, and once it's on the title sc
 - ☕ **Keep-awake that respects your battery.** The handheld stays awake only while an agent is using it (or for as
   long as you ask), then sleeps normally.
 
-## Quick start
+## Quick start on a handheld
 
 You need a Windows 11 handheld and a Mac, Linux or Windows computer on the same home network, with
 [uv](https://docs.astral.sh/uv/) and OpenSSH. Voice prompts use
@@ -154,6 +187,7 @@ things on your computer. Change the voice with `relaymcp voice --voice am_michae
 
 | Command | What it does |
 |---|---|
+| `relaymcp play doom [--policy ..] [--headless] [--gif out.gif]` | Watch an agent play Doom on this computer (`relaymcp[play]`) |
 | `relaymcp setup` | One-time setup; re-run any time to update both sides |
 | `relaymcp status` / `doctor` | Health check (`doctor` also inspects the handheld) with fixes |
 | `relaymcp say "text"` | Speak on the handheld |
