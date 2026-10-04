@@ -22,6 +22,7 @@ import numpy as np
 import vizdoom as vzd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from relaymcp.host import decide  # noqa: E402
 
 MONSTERS = {"Zombieman", "ShotgunGuy", "ChaingunGuy", "DoomImp", "Demon", "Spectre", "LostSoul", "Cacodemon",
@@ -103,6 +104,7 @@ class Doom:
         g.set_window_visible(show)  # a window (never fullscreen) to watch it play; hidden otherwise
         g.set_mode(vzd.Mode.ASYNC_PLAYER)
         g.set_objects_info_enabled(True)
+        g.set_sectors_info_enabled(True)  # the level's geometry, for navigation
         g.set_labels_buffer_enabled(True)
         g.set_screen_resolution(vzd.ScreenResolution.RES_640X480 if show else vzd.ScreenResolution.RES_320X240)
         if show:
@@ -139,14 +141,14 @@ class Doom:
                 continue
             bearing = wrap(math.degrees(math.atan2(dy, dx)) - ang)  # left +
             entry = {"name": o.name, "distance": round(dist), "bearing": round(bearing, 1), "visible": o.id in visible,
-                     "id": o.id}
+                     "id": o.id, "x": o.position_x, "y": o.position_y}
             if is_monster(o.name) and o.id not in self.dead_ids:
                 monsters.append(entry)
             elif o.name in KIND:
                 items.append({**entry, "kind": KIND[o.name]})
         monsters.sort(key=lambda t: t["distance"])
         items.sort(key=lambda t: t["distance"])
-        return {"health": int(hp), "ammo": int(ammo), "kills": int(kills), "x": x, "y": y, "dead": bool(dead),
+        return {"health": int(hp), "ammo": int(ammo), "kills": int(kills), "x": x, "y": y, "angle": ang, "dead": bool(dead),
                 "damage": float(dmg), "monsters": monsters[:6], "items": items[:8]}
 
     def turn(self, bearing, gain=0.45, cap=12.0):
@@ -247,7 +249,7 @@ class Tactics:
             self.n += 1
 
     def pick(self, st):
-        if self.kind == "explore":
+        if self.kind in ("explore", "planner"):
             return "explore"
         if self.kind == "scorer":
             self.latest_state = st
@@ -272,9 +274,147 @@ def sample_state(rng):
             "items": sorted(items, key=lambda t: t["distance"])}
 
 
+VALUE = {"SuperShotgun": 1.3, "RocketLauncher": 1.1, "PlasmaRifle": 1.1, "Chaingun": 0.9, "Shotgun": 0.7,
+         "Chainsaw": 0.2, "BlueArmor": 0.9, "GreenArmor": 0.6, "ArmorBonus": 0.1, "Medikit": 1.0, "Stimpack": 0.5,
+         "HealthBonus": 0.1}
+
+
+class Planner:
+    """Goals, not reflexes: it keeps a map of the level (navigation grid), scores what is worth doing now (an item it
+    needs, by value over the real path length; a visible monster worth fighting; a safe spot when hurt; somewhere it
+    hasn't been), commits to the best until it is done, fails or something urgent happens, and walks real paths."""
+
+    def __init__(self, doom, seed=0):
+        from doom_nav import NavGrid
+        self.doom, self.rng = doom, random.Random(seed)
+        self.nav = NavGrid(doom.g.get_state().sectors)
+        self.goal, self.replans, self.stuck_events, self.got = None, 0, 0, 0
+        self.taken: set = set()  # weapons already picked up
+        self.banned: dict = {}  # target id -> tic it may be tried again (unreachable: stuck, or no progress)
+
+    def candidates(self, st):
+        out = []
+        vis = [m for m in st["monsters"] if m["visible"] and m["distance"] < 1000]
+        hurt = st["health"] < 40
+        if vis and hurt:
+            out.append((2.5, {"kind": "retreat", "why": f"hurt ({st['health']}) with {vis[0]['name']} in sight"}))
+        if vis and st["ammo"] > 0:
+            m = vis[0]
+            u = 1.6 * (1 - m["distance"] / 1000) + (0.6 if st["health"] >= 50 else -0.8)
+            out.append((u, {"kind": "fight", "id": m["id"], "why": f"{m['name']} at {m['distance']}"}))
+        for it in st["items"]:
+            if self.banned.get(it["id"], -1) > st.get("tic", 0):
+                continue
+            v = VALUE.get(it["name"], 0.0)
+            if it["kind"] == "health":
+                v *= (100 - st["health"]) / 60.0
+            elif it["kind"] == "ammo":
+                v = 0.8 if st["ammo"] < 20 else 0.1
+            elif it["kind"] == "weapon" and it["name"] in self.taken:
+                v = 0.05
+            if v <= 0.05:
+                continue
+            out.append((v / (1 + it["distance"] / 500.0),
+                        {"kind": "get", "id": it["id"], "name": it["name"], "xy": (it["x"], it["y"]),
+                         "why": f"{it['name']} ({it['kind']}), {it['distance']} away"}))
+        out.append((0.12, {"kind": "explore", "why": "somewhere not seen lately"}))
+        return sorted(out, key=lambda t: -t[0])
+
+    def plan(self, st, tic, urgent=False):
+        cands = self.candidates(st)
+        if self.goal and not urgent and tic - self.goal["since"] < 70:
+            cur = next((u for u, g in cands if g["kind"] == self.goal["kind"] and g.get("id") == self.goal.get("id")), None)
+            if cur is not None and cands[0][0] < cur * 1.25:  # commitment: switch only for something clearly better
+                return
+        for u, g in cands[:4]:
+            if g["kind"] in ("get", "explore", "retreat"):
+                target = g.get("xy")
+                if g["kind"] == "explore":
+                    target = self.nav.frontier(st["x"], st["y"], self.rng)
+                elif g["kind"] == "retreat":
+                    target = self.safe_spot(st)
+                found = target and self.nav.path((st["x"], st["y"]), target)
+                if not found:
+                    continue
+                g["path"], g["xy"] = found[0], target
+                if g["kind"] == "get":  # value over the real path, not the straight line
+                    u = u * (1 + math.hypot(target[0] - st["x"], target[1] - st["y"]) / 500.0) / (1 + found[1] / 500.0)
+            g["since"], g["utility"] = tic, round(u, 2)
+            self.goal = g
+            self.replans += 1
+            return
+
+    def safe_spot(self, st):
+        threats = [(m["x"], m["y"]) for m in st["monsters"] if m["distance"] < 1500]
+        best, score = None, -1e9
+        for _ in range(60):
+            r, c = self.rng.randrange(self.nav.h), self.rng.randrange(self.nav.w)
+            if not self.nav.free((r, c)):
+                continue
+            x, y = self.nav.point((r, c))
+            d = min((math.hypot(x - a, y - b) for a, b in threats), default=2000)
+            near_health = min((it["distance"] for it in st["items"] if it["kind"] == "health"), default=3000)
+            sc = d / 300 - math.hypot(x - st["x"], y - st["y"]) / 900 - near_health / 1500
+            if sc > score:
+                best, score = (x, y), sc
+        return best
+
+    def step(self, st, tic):
+        d = self.doom
+        st["tic"] = tic
+        self.nav.visit(st["x"], st["y"])
+        vis = [m for m in st["monsters"] if m["visible"]]
+        g = self.goal
+        urgent = (st["health"] < 40 and vis and (not g or g["kind"] != "retreat")) or \
+                 (vis and vis[0]["distance"] < 600 and (not g or g["kind"] in ("explore", "get")) and st["health"] >= 40)
+        done = g is None or (g["kind"] in ("get", "explore", "retreat") and (not g.get("path"))) or \
+            (g["kind"] == "fight" and not any(m["id"] == g["id"] and m["visible"] for m in st["monsters"])) or \
+            (g["kind"] == "get" and not any(i["id"] == g["id"] for i in st["items"]))
+        if g and g["kind"] == "get" and not any(i["id"] == g["id"] for i in st["items"]):
+            self.got += 1
+            if KIND.get(g["name"]) == "weapon":
+                self.taken.add(g["name"])
+        if done or urgent or tic % 35 == 0:
+            self.plan(st, tic, urgent=bool(done or urgent))
+        g = self.goal
+        a = [0, 0, 0, 0, 0, 0, 0.0]
+        pos = (st["x"], st["y"])
+        moved = d.last_pos is None or math.hypot(pos[0] - d.last_pos[0], pos[1] - d.last_pos[1]) > 3
+        d.last_pos = pos
+        d.stuck_t = 0 if moved else d.stuck_t + 1
+        if g and g["kind"] == "fight":
+            m = next((m for m in vis if m["id"] == g["id"]), vis[0] if vis else None)
+            if m:
+                d.target = m["id"]
+                a[6] = d.turn(m["bearing"])
+                a[0] = int(abs(m["bearing"]) < 4)
+                a[4 if (tic // 25) % 2 else 5] = a[1] = 1
+                a[3 if m["distance"] < 250 else 2] = int(m["distance"] < 250 or m["distance"] > 600)
+        elif g and g.get("path"):
+            wp = g["path"]
+            while wp and math.hypot(wp[0][0] - pos[0], wp[0][1] - pos[1]) < 28:
+                wp.pop(0)
+            if wp:
+                bearing = wrap(math.degrees(math.atan2(wp[0][1] - pos[1], wp[0][0] - pos[0])) - st["angle"])
+                a[6] = d.turn(bearing, gain=0.7)
+                a[2] = a[1] = int(abs(bearing) < 50)
+                shot = next((m for m in vis if abs(m["bearing"]) < 4), None)  # a clear shot on the way: take it
+                a[0] = int(shot is not None and st["ammo"] > 0)
+            if d.stuck_t > 25 or (g["kind"] == "get" and tic - g["since"] > 210):  # stuck, or 6 s without getting it
+                self.stuck_events += d.stuck_t > 25
+                d.stuck_t = 0
+                if g.get("id") is not None:
+                    self.banned[g["id"]] = tic + 700  # unreachable for now: don't fixate on it
+                self.goal = None
+        label = f"{g['kind'].upper()} {g.get('name', '')} - {g['why']}" if g else "thinking"
+        return a, label
+
+
+
 def episode(doom, tactics, gif_frames=None):
     doom.new_episode()
     doom.calibrate()
+    planner = Planner(doom, seed=doom.g.get_seed() if hasattr(doom.g, "get_seed") else 0) if tactics.kind == "planner" else None
     tic, kills, late, skills, last_tic = 0, 0, 0, {}, None
     t0 = time.perf_counter()
     while not doom.g.is_episode_finished():
@@ -288,17 +428,24 @@ def episode(doom, tactics, gif_frames=None):
         if st["kills"] > kills:
             doom.credit_kill(st)
             kills = st["kills"]
-        skill = tactics.pick(st)
-        skills[skill] = skills.get(skill, 0) + 1
+        if planner:
+            action, skill = planner.step(st, tic)
+            kind = skill.split(" ")[0].lower()
+            skills[kind] = skills.get(kind, 0) + 1
+        else:
+            skill = tactics.pick(st)
+            skills[skill] = skills.get(skill, 0) + 1
+            action = doom.act(skill, st, tic)
         if gif_frames is not None and tic % 3 == 0:
             gif_frames.append((s.screen_buffer.copy(), skill, st["health"], kills))
-        doom.g.make_action(doom.act(skill, st, tic))
+        doom.g.make_action(action)
         tic += 1
     gv = doom.g.get_game_variable
     return {"seconds": round(time.perf_counter() - t0, 1), "kills": int(gv(vzd.GameVariable.KILLCOUNT)),
             "died": bool(doom.g.is_player_dead()), "damage": int(gv(vzd.GameVariable.DAMAGE_TAKEN)),
             "dealt": int(gv(vzd.GameVariable.DAMAGECOUNT)), "hits": int(gv(vzd.GameVariable.HITCOUNT)),
-            "tics": tic, "missed_tics": late, "skills": {k: round(v / max(1, tic), 2) for k, v in skills.items()}}
+            "tics": tic, "missed_tics": late, "skills": {k: round(v / max(1, tic), 2) for k, v in skills.items()},
+            **({"got": planner.got, "replans": planner.replans, "stuck": planner.stuck_events} if planner else {})}
 
 
 def save_gif(frames, path):
@@ -308,14 +455,14 @@ def save_gif(frames, path):
         im = Image.fromarray(np.transpose(buf, (1, 2, 0))).resize((320, 240))
         d = ImageDraw.Draw(im)
         d.rectangle([0, 0, 320, 13], fill=(0, 0, 0))
-        d.text((3, 1), f"{skill:8s} hp {hp:3d} kills {kills}", fill=(255, 255, 0))
+        d.text((3, 1), f"hp {hp:3d} k {kills} | {skill}"[:58], fill=(255, 255, 0))
         imgs.append(im)
     imgs[0].save(path, save_all=True, append_images=imgs[1:], duration=86, loop=0)
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--policy", choices=["explore", "fight", "rules", "compiled", "scorer"], required=True)
+    ap.add_argument("--policy", choices=["explore", "fight", "rules", "compiled", "scorer", "planner"], required=True)
     ap.add_argument("--episodes", type=int, default=3)
     ap.add_argument("--seconds", type=float, default=60)
     ap.add_argument("--seed", type=int, default=1)
