@@ -75,13 +75,18 @@ def git_sha():
         return None
 
 
-def run(board, agent, model, name, out="leaderboards", maps=MAPS, seed=1):
+def run(board, agent, model, name, out="leaderboards", maps=MAPS, seed=1, show=False):
+    """Play the season (or some maps) and score it; a full run that wasn't watched is written to the board.
+    show: watch it in a window, with the agent's goals as game messages (unranked: a window renders differently)."""
     from . import doom
     tactics = doom.Tactics(agent, model or "qwen3.5:9b")
     per = []
     for m in maps:
-        game = doom.Doom(CAP * SEASON[m][2], seed, level=m, fair=True)
+        game = doom.Doom(CAP * SEASON[m][2], seed, level=m, fair=True, show=show)
+        game.title = f"{m}: {SEASON[m][0]} monsters, {SEASON[m][1]} secrets, par {SEASON[m][2]} s"
         r = doom.episode(game, tactics)
+        if show:
+            time.sleep(2.5)  # the last frame (an exit, or a death) stays up a moment
         game.close()
         k, s, e, sc = map_score(m, r["kills"], r["secrets"], r["exited"], r["game_s"])
         per.append({"map": m, "score": round(100 * sc, 1), "kills": r["kills"], "secrets": r["secrets"],
@@ -95,10 +100,11 @@ def run(board, agent, model, name, out="leaderboards", maps=MAPS, seed=1):
         on_intent = round(sum(tactics.backend.fn(s) == doom.oracle(s) for s in states) / len(states), 3)
     parts = [map_score(p["map"], p["kills"], p["secrets"], p["exited"], p["seconds"]) for p in per]
     mean = lambda i: round(100 * sum(x[i] for x in parts) / len(parts), 1)  # noqa: E731
-    ranked = tuple(maps) == MAPS
+    ranked = tuple(maps) == MAPS and not show
     result = {
         "board": board, "name": name or f"{agent}" + (f" + {model}" if model else ""), "agent": agent, "model": model,
-        "scenario": SCENARIO if ranked else "unranked: " + ", ".join(maps), "score": mean(3),
+        "scenario": SCENARIO if ranked else ("watched" if show else "unranked") + ": " + ", ".join(maps),
+        "score": mean(3),
         "metrics": {"kills": mean(0), "secrets": mean(1), "exit": mean(2), "exits": sum(p["exited"] for p in per),
                     "deaths": sum(p["died"] for p in per),
                     "decision_ms_p50": round(lat[len(lat) // 2], 3) if lat else None,

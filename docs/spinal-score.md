@@ -17,6 +17,9 @@ A benchmark for real-time game agents that is meant to stay hard. Season 1 numbe
   0 without an exit). An attempt ends at the exit, at death or at 3 x par. The Spinal Score is the mean of the three
   parts over the four maps.
 
+Watch any agent play it in a window, with its goals as game messages: `spinal arena run --show` (add
+`--agent plugin:my_agent.py:Agent` for yours). Watched runs are not ranked: a window renders differently.
+
 ## What 100% means
 
 Every monster, every secret and the exit under par, on every map, in real time, from what is on screen: "UV-Max

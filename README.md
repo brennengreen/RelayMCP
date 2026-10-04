@@ -49,6 +49,7 @@ It is built to stay hard and honest:
 Two boards: bring any architecture to beat Spinal's, or plug your model into Spinal.
 
 ```sh
+spinal arena run --show                                                               # watch Spinal play it
 spinal arena run --agent plugin:my_agent.py:Agent --maps MAP01                        # a quick try (unranked)
 spinal arena run --board reflex --agent plugin:my_agent.py:Agent --name "My agent"   # your architecture
 spinal arena run --board models --agent compiled --model openai:<model>               # your model, in Spinal

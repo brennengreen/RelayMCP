@@ -139,14 +139,14 @@ class Doom:
         """level: a Freedoom 2 map ("MAP01") on Ultra-Violence from a pistol start, else the deathmatch arena.
         fair: objects only while they are on screen (no seeing through walls); the level's layout stays known."""
         g = self.g = vzd.DoomGame()
-        self.fair = fair
+        self.fair, self.show, self.title = fair, show, None
         if level:
             g.load_config(os.path.join(vzd.scenarios_path, "freedoom2.cfg"))
             g.set_doom_map(level.lower())
             g.set_doom_skill(4)
             g.set_automap_buffer_enabled(False)
             g.set_audio_buffer_enabled(False)
-            g.set_render_messages(False)
+            g.set_render_messages(show)  # pickups, and the agent's goals when watched
             g.set_render_hud(show)
         else:
             g.load_config(os.path.join(vzd.scenarios_path, "deathmatch.cfg"))
@@ -160,6 +160,8 @@ class Doom:
         if show:
             g.set_render_hud(True)
             g.set_render_crosshair(True)
+            g.set_render_messages(True)
+            g.add_game_args("+con_scaletext 2")  # messages big enough to read
         g.set_available_buttons(self.BUTTONS)
         g.set_available_game_variables(self.VARS)
         g.set_episode_timeout(int(seconds * 35))
@@ -183,6 +185,11 @@ class Doom:
                 if int(ppid) == os.getpid() and "vizdoom" in cmd:
                     os.kill(int(pid), signal.SIGKILL)
             t.join(5.0)
+
+    def say(self, text):
+        """A line in the game's message area, for whoever is watching."""
+        text = "".join(ch for ch in " ".join(text.split()) if ch.isprintable() and ch not in '";\\')
+        self.g.send_game_command(f'echo "{text[:46]}"')
 
     def new_episode(self):
         self.g.new_episode()
@@ -555,7 +562,7 @@ def episode(doom, tactics, gif_frames=None):
     planner = Planner(doom, seed=doom.g.get_seed() if hasattr(doom.g, "get_seed") else 0) if tactics.kind == "planner" else None
     memory = Memory() if doom.fair else None
     tic, kills, late, skills, last_tic = 0, 0, 0, {}, None
-    dealt, dry = 0.0, 0
+    dealt, dry, said = 0.0, 0, (None, -99)
     t0 = time.perf_counter()
     while not doom.g.is_episode_finished():
         s = doom.g.get_state()
@@ -590,6 +597,13 @@ def episode(doom, tactics, gif_frames=None):
             skill = tactics.pick(st)
             skills[skill] = skills.get(skill, 0) + 1
             action = doom.act(skill, st, tic)
+        if doom.show:  # say what it is doing, each time its goal changes
+            if tic == 0 and doom.title:
+                doom.say(doom.title)
+            key = (planner.goal.get("kind"), planner.goal.get("id")) if planner and planner.goal else skill
+            if key != said[0] and tic - said[1] >= 12:
+                doom.say(" ".join(skill.split()).replace(" - ", ": "))
+                said = (key, tic)
         if gif_frames is not None and tic % 3 == 0:
             gif_frames.append((s.screen_buffer.copy(), skill, st["health"], kills))
         action = list(action) + [0] * (len(Doom.BUTTONS) - len(action))

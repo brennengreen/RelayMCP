@@ -606,7 +606,7 @@ def cmd_arena(args: argparse.Namespace) -> None:
         print("wrote", arena.render())
         return
     try:
-        arena.run(args.board, args.agent, args.model, args.name, maps=tuple(args.maps.upper().split(",")) if args.maps else arena.MAPS)
+        arena.run(args.board, args.agent, args.model, args.name, maps=tuple(args.maps.upper().split(",")) if args.maps else arena.MAPS, show=args.show)
     except ImportError as e:
         raise SystemExit(f'relaymcp arena needs the game: pip install "relaymcp[play]" (missing: {e.name or e})') from None
 
@@ -641,6 +641,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--model", help="ollama:<name> or openai:<name> (OPENAI_BASE_URL/OPENAI_API_KEY: any compatible API)")
     s.add_argument("--name", help="the entrant's name on the board")
     s.add_argument("--maps", help="a quick try on some maps, e.g. MAP01 (unranked; a ranked run plays MAP01-MAP04)")
+    s.add_argument("--show", action="store_true", help="watch it play in a window, its goals on screen (unranked)")
     s.set_defaults(func=cmd_arena)
 
     s = sub.add_parser("setup", help="set up this computer and build the handheld's setup kit")
