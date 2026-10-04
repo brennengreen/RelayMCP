@@ -66,6 +66,16 @@ What this shows, and what it doesn't:
   walk into walls chasing items behind them (no path finding). Each fix was a sentence in the intent, recompiled in
   ~40 s, or a few lines in a skill.
 
+## A Minecraft-like game on the Mac (Luanti + Mineclonia)
+
+`scripts/luanti/setup.sh` installs Luanti (Homebrew) and Mineclonia (a Minecraft clone, from ContentDB) into a
+test-bed folder with its own config (windowed, muted, keeps running unfocused) and a world with the relay mod:
+telemetry out at ~12-20 Hz (pose, look, health, the block in the crosshair, inventory, mobs, drops, nearby trunks)
+and the agent's controls in (look, walk, jump, dig with the game's real dig times, attack, place, hotbar), through
+files in the world folder: no OS input. `scripts/luanti/agent.py` starts a fresh world from a fixed seed and plays:
+fend off hostile mobs, otherwise walk to the nearest trunk, chop it and pick up the logs. First runs: 6 and 17 logs
+in 90 s. Like the first Doom agent it reacts rather than plans; the planner and a thinking model come next here too.
+
 ## Next
 
 - A tactics loop on the Mac: telemetry (or frame embeddings) in, `decide` with a compiled policy, start or replace
