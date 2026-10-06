@@ -10,7 +10,7 @@ How it plays, from what the game hands it (state, on-screen objects, the layout)
   through doors (and walls that are really doors: that is where secrets hide), pressing use when blocked.
 - A path search (Dijkstra, away from walls) that runs a slice per tic so a decision never costs a tic.
 - Fights: it turns onto the target and fires on the same tic, taps the trigger for accurate pistol and chaingun
-  shots, strafes, keeps away from melee monsters, turns round when hit from behind and tells corpses from monsters.
+  shots, strafes, keeps away from melee monsters, turns round when hit from behind and gives up on monsters it can't hurt.
 - Items: it remembers what it saw and fetches what it needs (health when hurt, weapons, ammo when low, armor).
 """
 import math
@@ -214,7 +214,7 @@ class Field:
 class Agent:
     def __init__(self):
         self.layout = None
-        self.stats = {"bans": 0, "uses": 0, "dead": 0, "corpses": 0, "turnarounds": 0, "revived": 0}
+        self.stats = {"bans": 0, "uses": 0, "dead": 0, "unreachable": 0, "turnarounds": 0, "revived": 0}
 
     def debug(self):
         lvl = self.lvl
@@ -229,7 +229,7 @@ class Agent:
         self.path, self.pi = None, 0
         self.items = {}  # id -> item
         self.monsters = {}  # id -> (tic last seen, entry)
-        self.dead, self.ignore = {}, {}  # dead: id -> where it fell
+        self.dead, self.ignore = {}, {}  # dead: id -> tic it died (to forget it), ignore: id -> tic
         self.kills = self.damage = self.dealt = 0
         self.health = 100
         self.target, self.fired_at, self.dry, self.dry_pos = None, -99, 0, None
@@ -247,7 +247,7 @@ class Agent:
         self.rng = random.Random(7)
         self.trace = []
         self.hurtlog = []
-        self.prev_mon, self.ghosts = {}, {}
+        self.prev_mon = {}
         self.blind_t = -99
         self.avoided = set()
 
@@ -275,33 +275,26 @@ class Agent:
                 if d < 30 and it["kind"] == "weapon":
                     self.weapons.add(it["name"])
         for m in st["monsters"]:
-            p = self.dead.get(m["id"])
-            if p is not None and math.hypot(m["x"] - p[0], m["y"] - p[1]) > 48:
-                del self.dead[m["id"]]  # corpses do not walk: that kill was miscredited
+            if self.dead.pop(m["id"], None) is not None:  # corpses are never listed: on screen means alive
                 self.stats["revived"] += 1
-            if m["id"] not in self.dead:
-                self.monsters[m["id"]] = (tic, m)
+            self.monsters[m["id"]] = (tic, m)
         for k in [k for k, (t, _) in self.monsters.items() if k in self.dead or tic - t > 35 * 40]:
             del self.monsters[k]
 
-    def credit(self, st, tic):
-        """Corpses stay on the list of things in view: a kill goes to what it was shooting."""
+    def credit(self, st, tic, now_ids):
+        """A dying monster drops off the list of things in view, so a kill goes to the one that just vanished: the one
+        being shot, else the nearest to the crosshair. Only to forget it (a remembered monster is not hunted)."""
+        gone = [m for k, m in self.prev_mon.items() if k not in now_ids]
         for _ in range(st["kills"] - self.kills):
-            cand = None
-            if self.target is not None and tic - self.fired_at < 30:
-                cand = self.target
-            else:
-                near = [m for m in st["monsters"] if m["id"] not in self.dead and abs(m["bearing"]) < 15]
-                cand = near[0]["id"] if near else None
-            if cand is not None:
-                pos = next(((m["x"], m["y"]) for m in st["monsters"] if m["id"] == cand), None)
-                if pos is None and cand in self.monsters:
-                    pos = (self.monsters[cand][1]["x"], self.monsters[cand][1]["y"])
-                self.dead[cand] = pos
-                self.stats["dead"] += 1
-                if cand == self.target:
-                    self.target = None
-        self.kills = st["kills"]
+            cand = self.target if any(m["id"] == self.target for m in gone) else \
+                min(gone, key=lambda m: abs(m["bearing"]), default={"id": None})["id"]
+            if cand is None:
+                break
+            self.dead[cand] = tic
+            gone = [m for m in gone if m["id"] != cand]
+            self.stats["dead"] += 1
+            if cand == self.target:
+                self.target = None
 
     # -- planning ------------------------------------------------------------------------------------------------
 
@@ -443,7 +436,7 @@ class Agent:
             self.plan(st, self.tic)
 
     def pick_target(self, st, tic):
-        vis = [m for m in st["monsters"] if m["id"] not in self.dead and self.ignore.get(m["id"], -1) <= tic]
+        vis = [m for m in st["monsters"] if self.ignore.get(m["id"], -1) <= tic]
         if not vis:
             return None
         armed = st["ammo"] > 0
@@ -474,13 +467,8 @@ class Agent:
         x, y, ang = st["x"], st["y"], st["angle"]
         now_ids = {mm["id"] for mm in st["monsters"]}
         if st["kills"] > self.kills:
-            # the harness hides the monster nearest the crosshair when a kill is counted: if that was not the one
-            # being shot, a live monster just went invisible (a ghost): remember where it was
-            for k, mm in self.prev_mon.items():
-                if k not in now_ids and abs(mm["bearing"]) < 14 and k != self.target and k not in self.dead:
-                    self.ghosts[k] = (tic, mm)
-                    self.stats["ghosts"] = self.stats.get("ghosts", 0) + 1
-            self.credit(st, tic)
+            self.credit(st, tic, now_ids)
+        self.kills = st["kills"]
         self.prev_mon = {mm["id"]: mm for mm in st["monsters"]}
         self.remember(st, tic)
         if tic % 3 == 0:
@@ -488,7 +476,7 @@ class Agent:
         hit = st["damage"] > self.damage
         if hit:
             self.hurt.append((tic, st["damage"] - self.damage))
-            vis = [mm["name"] for mm in st["monsters"] if mm["id"] not in self.dead]
+            vis = [mm["name"] for mm in st["monsters"]]
             mode = "cover" if self.cover else (self.goal[0] if self.goal else "-")
             self.hurtlog.append((tic, st["damage"] - self.damage, ",".join(sorted(set(vis))) or "UNSEEN:" + mode))
         self.damage = st["damage"]
@@ -502,7 +490,6 @@ class Agent:
 
         m = self.pick_target(st, tic)
         self.trace.append((tic, x, y, st["health"], self.goal[0] if self.goal else "-", m["name"] if m else ""))
-        self.ghosts = {k: v for k, v in self.ghosts.items() if tic - v[0] < 35 * 30}
         if hit and m is None:
             # hurt by something it can't see: the harness hides monsters near the crosshair, so shoot ahead
             # first; hurt again while doing that: it's behind, turn round
@@ -601,7 +588,7 @@ class Agent:
         self.next_field = None
 
     def threats(self, st, tic):
-        out = {m["id"]: (m["x"], m["y"]) for m in st["monsters"] if m["id"] not in self.dead}
+        out = {m["id"]: (m["x"], m["y"]) for m in st["monsters"]}
         for k, (t, m) in self.monsters.items():
             if tic - t < 70 and k not in self.dead and k not in out and self.ignore.get(k, -1) <= tic:
                 out[k] = (m["x"], m["y"])
@@ -695,12 +682,9 @@ class Agent:
                 self.dry, self.dry_pos = 0, (m["x"], m["y"])
             else:
                 self.dry += 1
-            if self.dry > 45:  # firing and not hurting it: a corpse, or out of reach
-                if (m["x"], m["y"]) == self.dry_pos:
-                    self.dead[m["id"]] = (m["x"], m["y"])
-                    self.stats["corpses"] += 1
-                else:
-                    self.ignore[m["id"]] = tic + 35 * 8
+            if self.dry > 45:  # firing and not hurting it: out of reach, for now
+                self.ignore[m["id"]] = tic + 35 * 8
+                self.stats["unreachable"] += 1
                 self.dry, self.target = 0, None
         self.dealt = st["dealt"]
         # movement: strafe, keep a distance, back off from melee monsters

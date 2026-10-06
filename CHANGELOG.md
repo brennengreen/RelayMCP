@@ -15,7 +15,14 @@ handheld itself.
   `examples/arena_agent.py` is a 20-line starting point. See [docs/spinal-score.md](docs/spinal-score.md).
 - **Doom agents on real levels:** fair senses (objects only while on screen, with memory in Spinal's own agents),
   the layout read from the map (ViZDoom's sectors stream crashes on bigger maps), doors (passable in the navigation
-  grid, opened with `use`), exploration only toward reachable places, and a guard against firing at corpses.
+  grid, opened with `use`), exploration only toward reachable places, and a guard against firing at what it can't hurt.
+- **Fix: Spinal's agents no longer lose sight of live monsters.** The harness credited each kill to a monster in view
+  and hid it from then on, to stop agents firing at corpses. But ViZDoom drops a monster from the state as it dies, so
+  corpses are never in view and the credited monster was often a live one: Spinal's planner had a live monster hidden
+  on 75% of tics and took most of its damage from monsters it could no longer see. Kills are no longer guessed;
+  firing two seconds without hurting a target sets it aside for five, and memory forgets monsters gone from the
+  state. Baselines were re-run. Boards now also show a background model's (the strategist's) latency next to the
+  reflex loop's.
 
 - **`relaymcp play doom`: watch an agent play on your own computer, no handheld needed.** With the `play` extra
   (ViZDoom and the free Freedoom assets), a window opens and an agent plays Doom in real time: a map of the level,
