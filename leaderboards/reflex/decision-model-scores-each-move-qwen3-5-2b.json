@@ -4,63 +4,66 @@
  "agent": "scorer",
  "model": null,
  "scenario": "Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses",
- "score": 2.2,
+ "score": 6.9,
  "metrics": {
-  "kills": 6.6,
+  "kills": 20.6,
   "secrets": 0.0,
   "exit": 0.0,
   "exits": 0,
-  "deaths": 3,
-  "decision_ms_p50": 331.547,
-  "decision_ms_p95": 911.219,
-  "missed_tics": 973,
+  "deaths": 0,
+  "decision_ms_p50": 220.672,
+  "decision_ms_p95": 246.893,
+  "missed_tics": 17,
   "on_intent": null,
-  "compile_s": null
+  "compile_s": null,
+  "strategy_ms_p95": null,
+  "strategy_calls": null,
+  "strategy_errors": null
  },
  "maps": [
   {
    "map": "MAP01",
-   "score": 2.4,
-   "kills": 2,
+   "score": 3.6,
+   "kills": 3,
    "secrets": 0,
    "exited": false,
    "seconds": 90.0,
    "died": false,
-   "missed_tics": 459
+   "missed_tics": 0
   },
   {
    "map": "MAP02",
-   "score": 5.1,
-   "kills": 9,
+   "score": 13.6,
+   "kills": 24,
    "secrets": 0,
    "exited": false,
-   "seconds": 41.2,
-   "died": true,
-   "missed_tics": 156
+   "seconds": 270.0,
+   "died": false,
+   "missed_tics": 7
   },
   {
    "map": "MAP03",
-   "score": 1.1,
-   "kills": 3,
+   "score": 7.1,
+   "kills": 19,
    "secrets": 0,
    "exited": false,
-   "seconds": 96.5,
-   "died": true,
-   "missed_tics": 344
+   "seconds": 360.0,
+   "died": false,
+   "missed_tics": 6
   },
   {
    "map": "MAP04",
-   "score": 0.2,
-   "kills": 1,
+   "score": 3.2,
+   "kills": 13,
    "secrets": 0,
    "exited": false,
-   "seconds": 7.5,
-   "died": true,
-   "missed_tics": 14
+   "seconds": 360.0,
+   "died": false,
+   "missed_tics": 4
   }
  ],
  "relaymcp": "0.2.0.dev1",
- "commit": "cdc0983",
+ "commit": "814bf80",
  "machine": "Darwin arm64",
- "date": "2026-10-04"
+ "date": "2026-10-05"
 }

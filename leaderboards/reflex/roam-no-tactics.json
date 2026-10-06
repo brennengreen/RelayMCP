@@ -15,7 +15,10 @@
   "decision_ms_p95": null,
   "missed_tics": 4,
   "on_intent": null,
-  "compile_s": null
+  "compile_s": null,
+  "strategy_ms_p95": null,
+  "strategy_calls": null,
+  "strategy_errors": null
  },
  "maps": [
   {
@@ -24,9 +27,9 @@
    "kills": 2,
    "secrets": 0,
    "exited": false,
-   "seconds": 89.0,
+   "seconds": 85.4,
    "died": true,
-   "missed_tics": 0
+   "missed_tics": 4
   },
   {
    "map": "MAP02",
@@ -34,9 +37,9 @@
    "kills": 2,
    "secrets": 0,
    "exited": false,
-   "seconds": 56.4,
+   "seconds": 57.2,
    "died": true,
-   "missed_tics": 4
+   "missed_tics": 0
   },
   {
    "map": "MAP03",
@@ -60,7 +63,7 @@
   }
  ],
  "relaymcp": "0.2.0.dev1",
- "commit": "cdc0983",
+ "commit": "814bf80",
  "machine": "Darwin arm64",
- "date": "2026-10-04"
+ "date": "2026-10-05"
 }

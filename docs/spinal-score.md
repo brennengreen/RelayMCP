@@ -32,8 +32,8 @@ A benchmark that today's agents already ace measures their blind spots, not the 
 above about 80% at design time, the test was shaped around what they do well. So:
 
 - **Spinal does not get its home turf.** Spinal was developed on ViZDoom's deathmatch arena; that arena is practice
-  and is not scored. The season's levels were not used to build any agent here. Spinal's planner scores 6.8%; a
-  20-line reactive agent ([examples/arena_agent.py](../examples/arena_agent.py)) scores 5.9% and finds a secret
+  and is not scored. The season's levels were not used to build any agent here. Spinal's planner scores 8.3%; a
+  20-line reactive agent ([examples/arena_agent.py](../examples/arena_agent.py)) scores 6.8% and finds a secret
   Spinal never has.
 - **The scale is the game's, not ours.** Kills, secrets and par times come from the levels themselves (checked
   against the game data in `tests/test_arena.py`), so no number was tuned to make any entrant look good.
@@ -46,6 +46,7 @@ above about 80% at design time, the test was shaped around what they do well. So
 
 - The layout is given, as for a player who studied the automap; it can hint at secret areas.
 - Four maps and one attempt per map: scores are noisy by a few points. Maintainers re-run the top entries. Measured
-  (October 2026, three real-time runs each): Spinal's planner 6.8%, 6.1%, 4.3%; the planner with Claude Opus 5.5 setting
-  its goals 4.9%, 4.6%, 5.8%; a hand-written plugin 3.8%, 7.7%, 7.7%. Differences under about 2 points are noise.
+  (October 2026, three real-time runs each): Spinal's planner 8.3%, 11.0%, 17.8% (the last found a secret on MAP02);
+  the planner with Claude Opus 5.5 setting its goals 6.8%, 6.4%, 10.4%; a hand-written plugin 6.1%, 7.2%, 6.2%. One
+  secret can move a run by 5 points or more, so compare entrants on several runs.
 - Single player against Doom's monsters, not other players. Head-to-head play is a later season.
