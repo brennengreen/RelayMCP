@@ -290,6 +290,8 @@ class Tactics:
         self.kind, self.choice, self.lat, self.n = kind, "explore", [], 0
         self.agree, self.checked = 0, 0  # the choice in use vs the rules, on every tic's real state
         self.pending = None
+        if kind == "planner" and compile_model:  # Spinal + a model: the model sets goals, the planner acts
+            self.strategist = Strategist(decide.generator(compile_model))
         if kind == "rules":
             self.backend = decide.Rules(oracle)
         elif kind == "fight":
@@ -388,6 +390,102 @@ def sample_state(rng):
             "items": sorted(items, key=lambda t: t["distance"])}
 
 
+STRATEGIST = """You are the strategist for a Doom player (Freedoom 2, Ultra-Violence, pistol start). An autopilot plays \
+at 35 frames a second: it walks real paths on its map of the level, aims and shoots, and keeps doing the goal you pick \
+until it is done or something urgent happens. You see a summary every couple of seconds and pick its goal from a \
+numbered menu. Your answer arrives 1-2 s late, so pick goals that stay good for several seconds. Use what you know about \
+Doom: which monsters are dangerous at which range (hitscanners like shotgun guys and chaingunners hurt from afar; imps' \
+fireballs can be dodged; demons only bite up close), when to fight and when to break line of sight or go for health, \
+armor, a better weapon or ammo, and when to push on into the level to find more monsters, secrets and the exit. \
+Distances are in map units (the player is 56 tall); a bearing is degrees to the left (negative: to the right). \
+Reply with JSON only: {"pick": <menu number>, "fight": "engage" or "avoid", "why": "<a few words>"}. "avoid" makes \
+the autopilot ignore monsters farther than 250 units unless you pick a fight."""
+
+
+class Strategist:
+    """A model sets the goals, the planner's reflexes act every tic (Spinal's design, with a model at the top): on its own
+    thread it sees the latest state and the planner's menu of goals, and picks one (plus engage or avoid); the planner
+    boosts that goal while the advice is fresh. The game never waits for it."""
+
+    FRESH = 35 * 5  # advice older than 5 s is ignored
+
+    def __init__(self, generate, every_s=1.5):
+        self.generate, self.every_s = generate, every_s
+        self.lat, self.calls, self.errors = [], 0, 0
+        self.reset(None)
+        threading.Thread(target=self._loop, name="strategist", daemon=True).start()
+
+    def reset(self, planner):
+        self.planner, self.latest, self.advice, self.history = planner, None, None, []
+
+    def see(self, st, tic):
+        self.latest, self.tic = (st, tic), tic
+
+    @staticmethod
+    def key(g):
+        return g["kind"], g.get("id")
+
+    def adjust(self, out, st):
+        a = self.advice
+        if not a or self.tic - a["tic"] > self.FRESH:
+            return out
+        if a["goal"] == ("retreat", None) and not any(g["kind"] == "retreat" for _, g in out) and st["monsters"]:
+            out.append((2.0, {"kind": "retreat", "why": "the strategist's call"}))
+        adj = []
+        for u, g in out:
+            if self.key(g) == a["goal"]:
+                u, g = u * 2.5 + 0.6, {**g, "why": g["why"] + " (strategist: " + a["why"] + ")"}
+            elif g["kind"] == "fight" and a["fight"] == "avoid":
+                u *= 0.3
+            adj.append((u, g))
+        return sorted(adj, key=lambda t: -t[0])
+
+    def avoiding(self):
+        a = self.advice
+        return bool(a and self.tic - a["tic"] <= self.FRESH and a["fight"] == "avoid")
+
+    def prompt(self, st, tic, menu):
+        seen = lambda t: "" if t["visible"] else ", remembered"  # noqa: E731
+        lines = [STRATEGIST, "", f"Time {tic / 35:.0f} s. Health {st['health']}, ammo {st['ammo']} (current weapon), kills {st['kills']}, "
+                 f"weapons picked up: {', '.join(sorted(self.planner.taken)) or 'none (pistol, fists)'}."]
+        lines.append("Monsters: " + ("; ".join(f"{m['name']} {m['distance']} away at bearing {m['bearing']:.0f}{seen(m)}"
+                                               for m in st["monsters"]) or "none in sight"))
+        lines.append("Items: " + ("; ".join(f"{i['name']} ({i['kind']}) {i['distance']} away{seen(i)}"
+                                            for i in st["items"]) or "none known"))
+        if self.history:
+            lines.append("Your last calls: " + "; ".join(self.history[-3:]))
+        lines.append("Menu:")
+        lines += [f"{n}. {g['kind'].upper()} {g.get('name', '')} - {g['why']}" for n, g in enumerate(menu, 1)]
+        return "\n".join(lines)
+
+    def _loop(self):
+        while True:
+            snap, planner = self.latest, self.planner
+            if snap is None or planner is None:
+                time.sleep(0.01)
+                continue
+            st, tic = snap
+            menu = [g for _, g in planner.raw_candidates(st)[:7]]
+            if st["monsters"] and not any(g["kind"] == "retreat" for g in menu):
+                menu.append({"kind": "retreat", "why": "break line of sight, somewhere safer"})
+            t0 = time.perf_counter()
+            try:
+                text = self.generate(self.prompt(st, tic, menu))
+                j = json.loads(text[text.index("{"):text.rindex("}") + 1])
+                g = menu[int(j["pick"]) - 1]
+                why = str(j.get("why", ""))[:60]
+                if self.planner is planner:  # still the same level
+                    self.advice = {"tic": tic, "goal": self.key(g), "fight": "avoid" if j.get("fight") == "avoid"
+                                   else "engage", "why": why}
+                    self.history.append(f"{tic / 35:.0f}s {g['kind']} {g.get('name', '')} ({why}), health "
+                                        f"{st['health']}")
+            except Exception:  # noqa: BLE001
+                self.errors += 1
+            self.calls += 1
+            self.lat.append((time.perf_counter() - t0) * 1000)
+            time.sleep(max(0.0, self.every_s - (time.perf_counter() - t0)))
+
+
 VALUE = {"SuperShotgun": 1.3, "RocketLauncher": 1.1, "PlasmaRifle": 1.1, "Chaingun": 0.9, "Shotgun": 0.7,
          "Chainsaw": 0.2, "BlueArmor": 0.9, "GreenArmor": 0.6, "ArmorBonus": 0.1, "Medikit": 1.0, "Stimpack": 0.5,
          "HealthBonus": 0.1}
@@ -398,15 +496,21 @@ class Planner:
     needs, by value over the real path length; a visible monster worth fighting; a safe spot when hurt; somewhere it
     hasn't been), commits to the best until it is done, fails or something urgent happens, and walks real paths."""
 
-    def __init__(self, doom, seed=0):
+    def __init__(self, doom, seed=0, strategist=None):
         from .nav import NavGrid
-        self.doom, self.rng = doom, random.Random(seed)
+        self.doom, self.rng, self.strategist = doom, random.Random(seed), strategist
+        if strategist:
+            strategist.reset(self)
         self.nav = NavGrid(doom.static_layout or doom.g.get_state().sectors)
         self.goal, self.replans, self.stuck_events, self.got = None, 0, 0, 0
         self.taken: set = set()  # weapons already picked up
         self.banned: dict = {}  # target id -> tic it may be tried again (unreachable: stuck, or no progress)
 
     def candidates(self, st):
+        out = self.raw_candidates(st)
+        return self.strategist.adjust(out, st) if self.strategist else out
+
+    def raw_candidates(self, st):
         out = []
         vis = [m for m in st["monsters"] if m["visible"] and m["distance"] < 1000]
         hurt = st["health"] < 40
@@ -483,8 +587,12 @@ class Planner:
         self.nav.visit(st["x"], st["y"])
         vis = [m for m in st["monsters"] if m["visible"]]
         g = self.goal
+        near = 600
+        if self.strategist:
+            self.strategist.see(st, tic)
+            near = 250 if self.strategist.avoiding() else 600
         urgent = (st["health"] < 40 and vis and (not g or g["kind"] != "retreat")) or \
-                 (vis and vis[0]["distance"] < 600 and (not g or g["kind"] in ("explore", "get")) and st["health"] >= 40)
+                 (vis and vis[0]["distance"] < near and (not g or g["kind"] in ("explore", "get")) and st["health"] >= 40)
         done = g is None or (g["kind"] in ("get", "explore", "retreat") and (not g.get("path"))) or \
             (g["kind"] == "fight" and not any(m["id"] == g["id"] and m["visible"] for m in st["monsters"])) or \
             (g["kind"] == "get" and not any(i["id"] == g["id"] for i in st["items"]))
@@ -559,7 +667,8 @@ class Memory:
 def episode(doom, tactics, gif_frames=None):
     doom.new_episode()
     doom.calibrate()
-    planner = Planner(doom, seed=doom.g.get_seed() if hasattr(doom.g, "get_seed") else 0) if tactics.kind == "planner" else None
+    planner = Planner(doom, seed=doom.g.get_seed() if hasattr(doom.g, "get_seed") else 0,
+                      strategist=getattr(tactics, "strategist", None)) if tactics.kind == "planner" else None
     memory = Memory() if doom.fair else None
     tic, kills, late, skills, last_tic = 0, 0, 0, {}, None
     dealt, dry, said = 0.0, 0, (None, -99)

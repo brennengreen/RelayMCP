@@ -1,7 +1,7 @@
 {
  "scenario": "Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses",
  "scale": "100% = every monster, every secret and the exit under par on every map (elite human play)",
- "generated": "2026-10-04",
+ "generated": "2026-10-05",
  "boards": {
   "reflex": {
    "title": "Beat Spinal: any architecture",
@@ -407,6 +407,72 @@
   "models": {
    "title": "Model league: Spinal with your model plugged in",
    "rows": [
+    {
+     "board": "models",
+     "name": "Claude Opus 5.5 (Spinal planner + Opus strategist)",
+     "agent": "planner",
+     "model": "copilot:claude-opus-5.5",
+     "scenario": "Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses",
+     "score": 4.9,
+     "metrics": {
+      "kills": 14.8,
+      "secrets": 0.0,
+      "exit": 0.0,
+      "exits": 0,
+      "deaths": 4,
+      "decision_ms_p50": 0.027,
+      "decision_ms_p95": 0.074,
+      "missed_tics": 12,
+      "on_intent": null,
+      "compile_s": null
+     },
+     "maps": [
+      {
+       "map": "MAP01",
+       "score": 14.3,
+       "kills": 12,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 70.0,
+       "died": true,
+       "missed_tics": 11
+      },
+      {
+       "map": "MAP02",
+       "score": 2.3,
+       "kills": 4,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 18.0,
+       "died": true,
+       "missed_tics": 0
+      },
+      {
+       "map": "MAP03",
+       "score": 3.0,
+       "kills": 8,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 12.2,
+       "died": true,
+       "missed_tics": 1
+      },
+      {
+       "map": "MAP04",
+       "score": 0.2,
+       "kills": 1,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 11.8,
+       "died": true,
+       "missed_tics": 0
+      }
+     ],
+     "relaymcp": "0.2.0.dev1",
+     "commit": "a4e797f",
+     "machine": "Darwin arm64",
+     "date": "2026-10-05"
+    },
     {
      "board": "models",
      "name": "qwen3.5:9b (Ollama)",

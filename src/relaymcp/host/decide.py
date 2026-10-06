@@ -339,11 +339,69 @@ def openai_generate(model: str, base_url: str | None = None, key: str | None = N
     return generate
 
 
+def copilot_generate(model: str, system: str = "Answer briefly, exactly in the format asked.") -> Callable[[str], str]:
+    """A model through GitHub Copilot (any model your plan has, e.g. claude-opus-5.5): one warm runtime
+    (github-copilot-sdk, Python 3.11+) on its own thread, a fresh tool-free session per prompt. After the first prompt
+    a short answer takes ~1-2 s (a `copilot -p` run spends ~5 s just starting)."""
+    import asyncio
+    import shutil
+    import tempfile
+
+    from copilot import CopilotClient, RuntimeConnection
+    from copilot.session import PermissionHandler
+    from copilot.session_events import AssistantMessageData, SessionErrorData, SessionIdleData
+
+    exe = shutil.which("copilot")
+    if not exe:
+        raise RuntimeError("copilot: the GitHub Copilot CLI isn't on PATH")
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, name="copilot-generate", daemon=True).start()
+    workdir = tempfile.mkdtemp(prefix="spinal-copilot-")  # no repository, no custom instructions
+    client = CopilotClient(connection=RuntimeConnection.for_stdio(path=exe), log_level="error")
+    asyncio.run_coroutine_threadsafe(client.start(), loop).result(60)
+
+    async def ask(prompt: str) -> str:
+        session = await client.create_session(
+            on_permission_request=PermissionHandler.approve_all, model=model, available_tools=[],
+            tool_search={"enabled": False}, skip_custom_instructions=True, working_directory=workdir,
+            system_message={"mode": "replace", "content": system})
+        reply, error, done = "", None, asyncio.Event()
+
+        def on_event(ev):
+            nonlocal reply, error
+            if isinstance(ev.data, AssistantMessageData):
+                reply = (ev.data.content or "").strip() or reply
+            elif isinstance(ev.data, SessionErrorData):
+                error = getattr(ev.data, "message", None) or str(ev.data)
+                done.set()
+            elif isinstance(ev.data, SessionIdleData):
+                done.set()
+        session.on(on_event)
+        try:
+            await session.send(prompt)
+            await asyncio.wait_for(done.wait(), 120)
+        finally:
+            try:
+                await session.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+        if error and not reply:
+            raise RuntimeError(error)
+        return reply
+
+    def generate(prompt: str) -> str:
+        return asyncio.run_coroutine_threadsafe(ask(prompt), loop).result(150)
+    return generate
+
+
 def generator(spec: str) -> Callable[[str], str]:
-    """A model by name: "ollama:qwen3.5:9b", "openai:gpt-5.4-mini" (any OpenAI-compatible API), or a bare Ollama name."""
+    """A model by name: "ollama:qwen3.5:9b", "openai:gpt-5.4-mini" (any OpenAI-compatible API), "copilot:claude-opus-5.5"
+    (GitHub Copilot), or a bare Ollama name."""
     kind, _, name = spec.partition(":")
     if kind == "openai":
         return openai_generate(name)
+    if kind == "copilot":
+        return copilot_generate(name)
     return ollama_generate(name if kind == "ollama" else spec)
 
 

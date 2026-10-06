@@ -53,6 +53,7 @@ spinal arena run --show                                                         
 spinal arena run --agent plugin:my_agent.py:Agent --maps MAP01                        # a quick try (unranked)
 spinal arena run --board reflex --agent plugin:my_agent.py:Agent --name "My agent"   # your architecture
 spinal arena run --board models --agent compiled --model openai:<model>               # your model, in Spinal
+spinal arena run --board models --agent planner --model copilot:claude-opus-5.5       # your model sets Spinal's goals
 ```
 
 A plugin is a class with `act(state, tic)` returning buttons (`[attack, speed, forward, back, left, right,
@@ -76,7 +77,8 @@ Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time
 
 | # | Entrant | Spinal Score | Kills | Secrets | Exits | Deaths | Decision p95 | Missed tics | On intent |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | qwen3.5:9b (Ollama) | **3.6%** | 11% | 0% | 0/4 | 2/4 | 41 us | 534 | 100% |
+| 1 | Claude Opus 5.5 (Spinal planner + Opus strategist) | **4.9%** | 15% | 0% | 0/4 | 4/4 | 74 us | 12 | - |
+| 2 | qwen3.5:9b (Ollama) | **3.6%** | 11% | 0% | 0/4 | 2/4 | 41 us | 534 | 100% |
 
 [Full leaderboards](LEADERBOARD.md)
 <!-- leaderboard:end -->
