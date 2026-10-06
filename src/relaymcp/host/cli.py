@@ -636,9 +636,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("action", choices=["run", "render"])
     s.add_argument("--board", choices=["reflex", "models"], default="reflex")
     s.add_argument("--agent", default="planner",
-                   help="planner (Spinal) | compiled | llm (a model picks every move) | scorer | rules | fight | explore "
+                   help="planner (Spinal; with --model, the model sets its goals) | compiled | llm (a model picks every move) | scorer | rules | fight | explore "
                         "| plugin:path.py:Class (your own: pick(state) -> skill, or act(state, tic) -> buttons)")
-    s.add_argument("--model", help="ollama:<name> or openai:<name> (OPENAI_BASE_URL/OPENAI_API_KEY: any compatible API)")
+    s.add_argument("--model", help="ollama:<name>, openai:<name> (OPENAI_BASE_URL/OPENAI_API_KEY: any compatible API) or "
+                        "copilot:<name> (GitHub Copilot, e.g. copilot:claude-opus-5.5)")
     s.add_argument("--name", help="the entrant's name on the board")
     s.add_argument("--maps", help="a quick try on some maps, e.g. MAP01 (unranked; a ranked run plays MAP01-MAP04)")
     s.add_argument("--show", action="store_true", help="watch it play in a window, its goals on screen (unranked)")

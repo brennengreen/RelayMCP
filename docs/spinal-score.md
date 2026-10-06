@@ -45,5 +45,7 @@ above about 80% at design time, the test was shaped around what they do well. So
 ## Known limits (season 1)
 
 - The layout is given, as for a player who studied the automap; it can hint at secret areas.
-- Four maps and one attempt per map: scores are noisy by a few points. Maintainers re-run the top entries.
+- Four maps and one attempt per map: scores are noisy by a few points. Maintainers re-run the top entries. Measured
+  (October 2026, three real-time runs each): Spinal's planner 6.8%, 6.1%, 4.3%; the planner with Claude Opus 5.5 setting
+  its goals 4.9%, 4.6%, 5.8%; a hand-written plugin 3.8%, 7.7%, 7.7%. Differences under about 2 points are noise.
 - Single player against Doom's monsters, not other players. Head-to-head play is a later season.

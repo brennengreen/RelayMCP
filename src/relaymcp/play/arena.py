@@ -79,7 +79,7 @@ def run(board, agent, model, name, out="leaderboards", maps=MAPS, seed=1, show=F
     """Play the season (or some maps) and score it; a full run that wasn't watched is written to the board.
     show: watch it in a window, with the agent's goals as game messages (unranked: a window renders differently)."""
     from . import doom
-    tactics = doom.Tactics(agent, model or "qwen3.5:9b")
+    tactics = doom.Tactics(agent, model if agent == "planner" else model or "qwen3.5:9b")
     per = []
     for m in maps:
         game = doom.Doom(CAP * SEASON[m][2], seed, level=m, fair=True, show=show)

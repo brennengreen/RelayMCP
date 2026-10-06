@@ -19,7 +19,8 @@ Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time
 
 | # | Entrant | Spinal Score | Kills | Secrets | Exits | Deaths | Decision p95 | Missed tics | On intent |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | qwen3.5:9b (Ollama) | **3.6%** | 11% | 0% | 0/4 | 2/4 | 41 us | 534 | 100% |
+| 1 | Claude Opus 5.5 (Spinal planner + Opus strategist) | **4.9%** | 15% | 0% | 0/4 | 4/4 | 74 us | 12 | - |
+| 2 | qwen3.5:9b (Ollama) | **3.6%** | 11% | 0% | 0/4 | 2/4 | 41 us | 534 | 100% |
 
 ## Enter
 
