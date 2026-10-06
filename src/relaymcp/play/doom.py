@@ -168,7 +168,10 @@ class Doom:
         g.set_seed(seed)
         g.init()
         self.turn_sign = 1.0
-        self.dead_ids: set = set()
+        # ViZDoom drops a monster from its objects as it dies, so the state never lists corpses. Monsters the player
+        # fired at for 2 s without hurting them (out of reach) are left out for 5 s: id -> tic they show again.
+        self.ignored: dict = {}
+        self.present: set = set()  # monster ids still in the game (for Memory: forget the ones that died)
 
     def close(self, timeout=15.0):
         """DoomGame.close() sometimes hangs on macOS, joining a game process that never exits: close in the
@@ -193,7 +196,8 @@ class Doom:
 
     def new_episode(self):
         self.g.new_episode()
-        self.dead_ids.clear()
+        self.ignored.clear()
+        self.present = set()
         self.target = None
         self.stuck_t, self.last_pos, self.escape = 0, None, 0
 
@@ -207,6 +211,7 @@ class Doom:
         hp, ammo, kills, x, y, ang, dmg, dead, dealt, hits, secrets = s.game_variables
         visible = {lb.object_id for lb in s.labels}
         monsters, items = [], []
+        self.present = {o.id for o in s.objects if is_monster(o.name)}
         for o in s.objects:
             if self.fair and o.id not in visible:
                 continue
@@ -217,8 +222,9 @@ class Doom:
             bearing = wrap(math.degrees(math.atan2(dy, dx)) - ang)  # left +
             entry = {"name": o.name, "distance": round(dist), "bearing": round(bearing, 1), "visible": o.id in visible,
                      "id": o.id, "x": o.position_x, "y": o.position_y}
-            if is_monster(o.name) and o.id not in self.dead_ids:
-                monsters.append(entry)
+            if is_monster(o.name):
+                if self.ignored.get(o.id, -1) <= s.tic:
+                    monsters.append(entry)
             elif o.name in KIND:
                 items.append({**entry, "kind": KIND[o.name]})
         monsters.sort(key=lambda t: t["distance"])
@@ -273,13 +279,6 @@ class Doom:
         if self.stuck_t > 20 and (a[2] or a[3]):
             self.escape, self.stuck_t = 18, 0
         return a
-
-    def credit_kill(self, st):
-        """Corpses stay as objects: when the kill count rises, the monster in the crosshair (or the target) died."""
-        near = [m for m in st["monsters"] if m["visible"] and abs(m["bearing"]) < 12]
-        dead = near[0]["id"] if near else self.target
-        if dead is not None:
-            self.dead_ids.add(dead)
 
 
 class Tactics:
@@ -640,12 +639,12 @@ class Planner:
 
 class Memory:
     """With fair senses the game shows only what is on screen, so Spinal's own agents remember: items where they were
-    last seen (until the player has been there), monsters for 3 s after they leave the screen."""
+    last seen (until the player has been there), monsters for 3 s after they leave the screen (not once they die)."""
 
     def __init__(self):
         self.items, self.monsters = {}, {}
 
-    def update(self, st, tic, dead):
+    def update(self, st, tic, present):
         x, y, ang = st["x"], st["y"], st["angle"]
 
         def rel(e):
@@ -656,7 +655,7 @@ class Memory:
         self.items.update({i["id"]: i for i in st["items"]})
         self.items = {k: i for k, i in self.items.items() if k in seen_i or math.hypot(i["x"] - x, i["y"] - y) > 48}
         self.monsters.update({m["id"]: (tic, m) for m in st["monsters"]})
-        self.monsters = {k: v for k, v in self.monsters.items() if tic - v[0] < 105 and k not in dead}
+        self.monsters = {k: v for k, v in self.monsters.items() if tic - v[0] < 105 and k in present}
         st["items"] = sorted(st["items"] + [rel(i) for k, i in self.items.items() if k not in seen_i],
                              key=lambda t: t["distance"])[:8]
         st["monsters"] = sorted(st["monsters"] + [rel(m) for k, (_, m) in self.monsters.items() if k not in seen_m],
@@ -681,12 +680,10 @@ def episode(doom, tactics, gif_frames=None):
             late += s.tic - last_tic - 1  # tics the loop missed (it fell behind the game)
         last_tic = s.tic
         st = doom.read(s)
-        if st["kills"] > kills:
-            doom.credit_kill(st)
-            kills = st["kills"]
+        kills = st["kills"]
         plugin_act = getattr(getattr(tactics, "plugin", None), "act", None)
         if memory and not plugin_act:
-            st = memory.update(st, tic, doom.dead_ids)
+            st = memory.update(st, tic, doom.present)
         if plugin_act:
             t = time.perf_counter()
             action, skill = list(plugin_act(st, tic)), "plugin"
@@ -717,9 +714,9 @@ def episode(doom, tactics, gif_frames=None):
             gif_frames.append((s.screen_buffer.copy(), skill, st["health"], kills))
         action = list(action) + [0] * (len(Doom.BUTTONS) - len(action))
         dry = dry + 1 if action[0] and st["dealt"] == dealt else 0
-        if dry > 60 and doom.target is not None:  # 2 s of fire without damage: a corpse (or out of reach)
-            doom.dead_ids.add(doom.target)
-            dry = 0
+        if dry > 60 and doom.target is not None:  # 2 s of fire without damage: out of reach, for now
+            doom.ignored[doom.target] = s.tic + 175
+            doom.target, dry = None, 0
         dealt = st["dealt"]
         doom.g.make_action(action)
         tic += 1

@@ -93,6 +93,8 @@ def run(board, agent, model, name, out="leaderboards", maps=MAPS, seed=1, show=F
                     "exited": r["exited"], "seconds": r["game_s"], "died": r["died"], "missed_tics": r["missed_tics"]})
         print(json.dumps(per[-1]), flush=True)
     lat = sorted(tactics.lat)
+    strat = getattr(tactics, "strategist", None)
+    slat = sorted(strat.lat) if strat else []
     on_intent = None
     if agent == "compiled":  # how closely the compiled policy follows the intent, on 1,000 random states
         import random
@@ -110,7 +112,10 @@ def run(board, agent, model, name, out="leaderboards", maps=MAPS, seed=1, show=F
                     "decision_ms_p50": round(lat[len(lat) // 2], 3) if lat else None,
                     "decision_ms_p95": round(lat[int(len(lat) * 0.95)], 3) if lat else None,
                     "missed_tics": sum(p["missed_tics"] for p in per), "on_intent": on_intent,
-                    "compile_s": round(getattr(tactics, "compile_s", 0), 1) or None},
+                    "compile_s": round(getattr(tactics, "compile_s", 0), 1) or None,
+                    "strategy_ms_p95": round(slat[int(len(slat) * 0.95)]) if slat else None,
+                    "strategy_calls": strat.calls if strat else None,
+                    "strategy_errors": strat.errors if strat else None},
         "maps": per, "relaymcp": relaymcp.__version__, "commit": git_sha(),
         "machine": f"{platform.system()} {platform.machine()}", "date": time.strftime("%Y-%m-%d"),
     }
@@ -156,8 +161,11 @@ def load(folder="leaderboards"):
 
 
 def latency(m):
+    """The reflex loop's p95; a model advising it in the background (the strategist) is shown alongside."""
     p95 = m.get("decision_ms_p95")
-    return "-" if p95 is None else (f"{p95 * 1000:.0f} us" if p95 < 1 else f"{p95:.0f} ms")
+    out = "-" if p95 is None else (f"{p95 * 1000:.0f} us" if p95 < 1 else f"{p95:.0f} ms")
+    s95 = m.get("strategy_ms_p95")
+    return out if s95 is None else f"{out} (model {s95 / 1000:.1f} s)"
 
 
 def render(folder="leaderboards", out="LEADERBOARD.md", readme="README.md", site="site"):
