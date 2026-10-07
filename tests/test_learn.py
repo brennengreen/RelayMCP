@@ -201,5 +201,6 @@ def test_a_round_merges_candidates_that_each_gained_too_little_alone(tmp_path):
             return next(replies)
     st = learn.learn(Parts(), model, tmp_path, rounds=1, width=3, isolate=False, say=quiet)
     merged = st["tries"][-1]
-    assert merged["merged"] in ([1, 2], [2, 1]) and st["best"] == merged["try"]
+    edits = [t["try"] for t in st["tries"] if t["note"] == "edit"]  # the threads take the replies in any order
+    assert sorted(merged["merged"]) == sorted(edits) and len(edits) == 2 and st["best"] == merged["try"]
     assert learn.load_agent(tmp_path / "agent.py").act(0, 0) == 2
