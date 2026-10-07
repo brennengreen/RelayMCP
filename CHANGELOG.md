@@ -5,6 +5,16 @@
 Faster, leaner and real-time capable: most of the work moves from model round trips to the
 handheld itself.
 
+- **`spinal learn`: Opus learns a game by practising it.** Each round it plays fresh games, studies the failures,
+  edits its agent, and keeps only edits that win a paired statistical test on unseen games. Breakout reached 88% on
+  held-out seeds (v1: 61%); Doom stayed at about 3% on unseen maps, the gap this release's research
+  targets.
+- **Research: learning any game from practice.** A literature review and four experiments
+  ([docs/research/learning-games.md](docs/research/learning-games.md)): Opus writes a world model in code by running
+  experiments (11 of 12 Atari games under half the baseline error on unseen play), plans through it, shares a library
+  across games, and distils a policy into a 25-microsecond network whose score keeps rising as its data doubles
+  (461% of human on Breakout at 160k labels). Install with the `research` extra.
+
 - **Spinal, and the Spinal Score.** The project's public face is now Spinal ("give your AI agent a spinal cord"):
   new banner, logo and diagrams, a `spinal` command (alias of `relaymcp`), and the repository at
   `github.com/brennengreen/spinal`. `spinal arena run` scores any agent on Freedoom 2 MAP01-MAP04 on Ultra-Violence
