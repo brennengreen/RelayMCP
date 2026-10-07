@@ -49,9 +49,19 @@ def predict(history, action):
 
 # -- objects and error ------------------------------------------------------------------------------------------------
 
+def set_cap(cap):
+    """The error cap of the world being learned (pixels on Atari, map units in Doom)."""
+    global CAP
+    CAP = float(cap)
+
+
 def show(objs, limit=40):
     """A compact one-line view of an object list."""
-    parts = [f"{o['cat']}({o['x']},{o['y']} {o['w']}x{o['h']})" for o in objs[:limit]]
+    def one(o):
+        size = f" {o['w']}x{o['h']}" if o.get("w") or o.get("h") else ""
+        more = "".join(f" {k}={v}" for k, v in o.items() if k not in ("cat", "x", "y", "w", "h"))
+        return f"{o['cat']}({o['x']},{o['y']}{size}{more})"
+    parts = [one(o) for o in objs[:limit]]
     return " ".join(parts) + (f" +{len(objs) - limit} more" if len(objs) > limit else "") or "(nothing)"
 
 
@@ -153,6 +163,9 @@ class Atari:
         return [{"cat": o.category, "x": int(o.x), "y": int(o.y), "w": int(o.w), "h": int(o.h)}
                 for o in e.objects if o.category != "NoObject" and getattr(o, "visible", True)]
 
+    def describe(self, st, segs):
+        return atari_description(st, segs)
+
     def actions(self):
         e = self.env()
         names = e.unwrapped.get_action_meanings()
@@ -202,7 +215,20 @@ class Atari:
         return out
 
 
+def atari_description(st, segs):
+    return f"""GAME: {st['game']} (Atari 2600). One step = {FRAMESKIP} frames. Buttons: {', '.join(st['actions'])}.
+Objects are read from the console's memory each step: category, x, y (top left, pixels; the screen is 160 wide, 210 \
+high), w, h. Recorded play: a random player holding each button 1-8 steps; segments (one per game over): {segs}."""
+
+
 # -- scoring the model's code in a child process ---------------------------------------------------------------------
+
+def provide(mod, segs):
+    """What a world gives its model besides the objects: Doom's level geometry, as walls(level)."""
+    if segs and "level" in segs[0]:
+        from relaymcp.play.doomworld import walls
+        mod.walls = walls
+
 
 def score_file(code_path, data_path):
     """Run predict over every recorded transition. -> {"errors": [...], "by": {cat: total}, "failures": n,
@@ -214,6 +240,7 @@ def score_file(code_path, data_path):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     segs = json.loads(Path(data_path).read_text())
+    provide(mod, segs)
     errs, by, fails, first = [], {}, 0, None
     for _, _, hist, a, nxt in transitions(segs):
         try:
@@ -238,7 +265,9 @@ def rollout_file(code_path, data_path, k=8, every=10):
     spec = importlib.util.spec_from_file_location("world_model", code_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return rollout_errors(mod.predict, json.loads(Path(data_path).read_text()), k, every, copy.deepcopy)
+    segs = json.loads(Path(data_path).read_text())
+    provide(mod, segs)
+    return rollout_errors(mod.predict, segs, k, every, copy.deepcopy)
 
 
 def rollout_errors(fn, segs, k=8, every=10, copy=lambda x: [[dict(o) for o in h] for h in x]):
@@ -257,7 +286,7 @@ def rollout_errors(fn, segs, k=8, every=10, copy=lambda x: [[dict(o) for o in h]
 
 
 def score(code_path, data_path, timeout=300, mode="_score"):
-    cmd = [sys.executable, "-m", "relaymcp.play.scientist", mode, str(code_path), str(data_path)]
+    cmd = [sys.executable, "-m", "relaymcp.play.scientist", mode, str(code_path), str(data_path), str(CAP)]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         line = next((ln for ln in reversed(p.stdout.splitlines()) if ln.startswith("{")), None)
@@ -386,6 +415,7 @@ class Scientist:
         mod = importlib.util.module_from_spec(spec)
         try:
             spec.loader.exec_module(mod)
+            provide(mod, self.train)
         except Exception:
             mod = None
         lines = []
@@ -420,9 +450,8 @@ class Scientist:
         sample_seg = self.train[0]
         sample = "".join(f"  step {t}: {show(sample_seg['objs'][t], 12)}  then {sample_seg['actions'][t]}\n"
                          for t in range(0, min(12, len(sample_seg["actions"]))))
-        return f"""GAME: {st['game']} (Atari 2600). One step = {FRAMESKIP} frames. Buttons: {', '.join(st['actions'])}.
-Objects are read from the console's memory each step: category, x, y (top left, pixels; the screen is 160 wide, 210 \
-high), w, h. Recorded play: a random player holding each button 1-8 steps; segments (one per game over): {segs}.
+        describe = getattr(self.world, "describe", atari_description)
+        return f"""{describe(st, segs)}
 
 YOUR TASK: improve world_model.py. predict(history, action) gets the last up to {HISTORY} object lists (oldest first; \
 history[-1] is now) as lists of dicts {{"cat","x","y","w","h"}} and the button pressed now, and returns the object \
@@ -637,6 +666,8 @@ def report(out, rollout=False):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in ("_score", "_rollout") and len(argv) > 3:
+        set_cap(float(argv[3]))
     if argv and argv[0] == "_score":
         print(json.dumps(score_file(argv[1], argv[2])), flush=True)
         return
@@ -653,6 +684,8 @@ def main(argv=None):
     r.add_argument("--parallel", type=int, default=4, help="games learned at once")
     r.add_argument("--no-experiments", action="store_true")
     r.add_argument("--library", help="library.py offered to the world models (see distill)")
+    r.add_argument("--world", default="atari", choices=("atari", "doom"),
+                   help="doom: one world, learned on MAP05-MAP12 and tested on MAP13-MAP16")
     r.add_argument("--model", default="copilot:claude-opus-5.5")
     d = sub.add_parser("distill")
     d.add_argument("--models", required=True)
@@ -670,6 +703,15 @@ def main(argv=None):
     if a.cmd == "distill":
         Path(a.out).write_text(distill(a.models, a.games.split(","), gen))
         print(f"wrote {a.out}")
+        return
+
+    if a.world == "doom":
+        from relaymcp.play.doomworld import DoomWorld
+        w = DoomWorld(Path(a.out) / "Doom" / "saves")
+        set_cap(w.cap)
+        Scientist(w, gen, Path(a.out) / "Doom", a.width, not a.no_experiments,
+                  say=lambda m: print(time.strftime("%H:%M ") + m, flush=True), library=a.library).run(a.rounds)
+        print(report(a.out), flush=True)
         return
 
     def one(game):
