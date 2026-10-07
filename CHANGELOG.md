@@ -14,6 +14,11 @@ handheld itself.
   experiments (11 of 12 Atari games under half the baseline error on unseen play), plans through it, shares a library
   across games, and distils a policy into a 25-microsecond network whose score keeps rising as its data doubles
   (461% of human on Breakout at 160k labels). Install with the `research` extra.
+- **Research: Doom.** The world-model scientist on Doom reaches 54% of the baseline's error on unseen maps (Opus
+  found Doom's friction, wall sliding and monster speeds by experiment). `relaymcp.play.compiler` searches with saves
+  in practice: the search teacher scores 10.2% against its base's 7.0% on practice maps, but a student can't yet
+  learn its choices from fair senses (a negative result, written up). The `spinal learn` v2 Doom agent is ranked
+  (2.1%) and ships as `examples/learned_doom_agent.py`.
 
 - **Spinal, and the Spinal Score.** The project's public face is now Spinal ("give your AI agent a spinal cord"):
   new banner, logo and diagrams, a `spinal` command (alias of `relaymcp`), and the repository at

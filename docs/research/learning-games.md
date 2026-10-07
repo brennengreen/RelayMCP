@@ -138,3 +138,33 @@ teacher. Training in the learned world model instead of the real game reached 28
 data doubles. Planning through the rules only beats a written policy where the strategy is hard to write directly;
 Doom, with partial observation, is the next test. Next: perception from pixels (Opus writes it, checked against the
 console's memory), a Doom version of H1, the student on more games with more seeds, and a retrieved library.
+
+## Results: Doom (October 2026)
+
+Code: `src/relaymcp/play/doomworld.py` (H1 on Doom) and `compiler.py` (search in practice, distilled into a student).
+Practice on Freedoom 2 MAP05-MAP12, the unseen check on MAP13-MAP16; the Spinal Score's MAP01-MAP04 are only played
+for a ranked run. The base agent is the one `spinal learn` v2 wrote (`examples/learned_doom_agent.py`): about 7% of
+the tally on the practice maps and 3% on the unseen ones, and 2.1% on the Spinal Score.
+
+**H1 on Doom: near miss.** The same scientist, given the game's true objects (player, monsters, projectiles, items
+within 1024 units) and the level's walls, 8 rounds of 2 candidates: one-step error on unseen maps is **54%** of the
+nothing-moves baseline (gate: 50%), 63% of keep-velocity. Opus found Doom's movement rules by itself (friction
+0.90625 a tic, sliding along walls, monster speeds, projectiles flying straight and stopping at walls). It stopped
+improving after round 5; what is left is mostly monsters' choices.
+
+**The compiler: the teacher wins, the student doesn't learn it.** At contested moments the teacher saves the game,
+tries 8 tactical options (the base's own moves, or a movement override held 12 tics while the base keeps aiming and
+firing) followed by 48 tics of the base, and plays the best by the tally's parts (kills, damage, area, exit, death).
+Over 16 practice games it scores **10.2% against the base's 7.0%**, with twice the kills (602 against 294) and 4 deaths
+against 11. (Two bugs had hidden this: ViZDoom keeps the last action across a load, and a load doesn't bring back a
+game that ended; both fixed and tested.) But the student trained on its 2,400 choices does worse than the base: 4.5%
+on practice maps, 1.9% unseen. On 9,000 labels, a held-out regression of each option's advantage from what the
+student sees has R² below 0 for all 7 options. The labels are not pure luck (nudging the game by 1-3 tics, the
+advantages still correlate 0.63, and half of the teacher's gain survives), but the deciding facts aren't in the
+student's senses: projectiles aren't shown to fair agents, and the monsters' next moves aren't on screen. Search
+with saves exploits a deterministic replay that a real-time player doesn't have.
+
+**Reading.** On Doom the bottleneck is not the agent's rules or the search; it's predicting what the hidden parts of
+the world will do, from a partial view. Next: labels that average several nudged replays (expected value, not
+hindsight), options that last longer (take cover, back off to a doorway) so their effect depends less on chance,
+and a student that sees the screen.

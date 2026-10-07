@@ -11,7 +11,8 @@ Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time
 | 3 | Starter plugin (examples/arena_agent.py) | **6.8%** | 12% | 8% | 0/4 | 4/4 | 16 us | 3 | - |
 | 4 | Claude Opus 5.5 (hand-written agent) | **6.1%** | 10% | 8% | 0/4 | 4/4 | 2 ms | 11 | - |
 | 5 | Fight anything in sight | **5.6%** | 17% | 0% | 0/4 | 1/4 | 9 us | 22 | - |
-| 6 | Roam, no tactics | **1.1%** | 3% | 0% | 0/4 | 4/4 | - | 4 | - |
+| 6 | Claude Opus 5.5 (learned by practice: spinal learn v2) | **2.1%** | 6% | 0% | 0/4 | 3/4 | 71 us | 10 | - |
+| 7 | Roam, no tactics | **1.1%** | 3% | 0% | 0/4 | 4/4 | - | 4 | - |
 
 ## Model league: Spinal with your model plugged in
 

@@ -1,7 +1,7 @@
 {
  "scenario": "Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses",
  "scale": "100% = every monster, every secret and the exit under par on every map (elite human play)",
- "generated": "2026-10-05",
+ "generated": "2026-10-06",
  "boards": {
   "reflex": {
    "title": "Beat Spinal: any architecture",
@@ -350,6 +350,75 @@
      "commit": "814bf80",
      "machine": "Darwin arm64",
      "date": "2026-10-05"
+    },
+    {
+     "board": "reflex",
+     "name": "Claude Opus 5.5 (learned by practice: spinal learn v2)",
+     "agent": "plugin:examples/learned_doom_agent.py:Agent",
+     "model": null,
+     "scenario": "Spinal Score S1: Freedoom 2 MAP01-MAP04, Ultra-Violence, pistol start, real time, on-screen senses",
+     "score": 2.1,
+     "metrics": {
+      "kills": 6.2,
+      "secrets": 0.0,
+      "exit": 0.0,
+      "exits": 0,
+      "deaths": 3,
+      "decision_ms_p50": 0.036,
+      "decision_ms_p95": 0.071,
+      "missed_tics": 10,
+      "on_intent": null,
+      "compile_s": null,
+      "strategy_ms_p95": null,
+      "strategy_calls": null,
+      "strategy_errors": null
+     },
+     "maps": [
+      {
+       "map": "MAP01",
+       "score": 3.6,
+       "kills": 3,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 90.0,
+       "died": false,
+       "missed_tics": 8
+      },
+      {
+       "map": "MAP02",
+       "score": 3.4,
+       "kills": 6,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 110.5,
+       "died": true,
+       "missed_tics": 1
+      },
+      {
+       "map": "MAP03",
+       "score": 1.1,
+       "kills": 3,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 30.1,
+       "died": true,
+       "missed_tics": 1
+      },
+      {
+       "map": "MAP04",
+       "score": 0.2,
+       "kills": 1,
+       "secrets": 0,
+       "exited": false,
+       "seconds": 11.0,
+       "died": true,
+       "missed_tics": 0
+      }
+     ],
+     "relaymcp": "0.2.0.dev1",
+     "commit": "5e853be",
+     "machine": "Darwin arm64",
+     "date": "2026-10-06"
     },
     {
      "board": "reflex",

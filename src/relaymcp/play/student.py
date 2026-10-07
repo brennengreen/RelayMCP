@@ -70,7 +70,8 @@ class MLP:
         return int(np.argmax(self.forward(x[None])[2][0]))
 
     def fit(self, X, y, epochs=30, lr=1e-3, batch=256, seed=0):
-        """Cross-entropy with Adam, from scratch each time (the data is the teacher's, kept in full)."""
+        """Cross-entropy with Adam, from scratch each time (the data is the teacher's, kept in full). y: class
+        indices, or rows of target probabilities (soft labels)."""
         rng = np.random.default_rng(seed)
         params = self.W + self.b
         m = [np.zeros_like(p) for p in params]
@@ -86,7 +87,10 @@ class MLP:
                 p = np.exp(z)
                 p /= p.sum(1, keepdims=True)
                 g = p
-                g[np.arange(len(j)), yy] -= 1
+                if yy.ndim == 2:
+                    g -= yy
+                else:
+                    g[np.arange(len(j)), yy] -= 1
                 g /= len(j)
                 gW2, gb2 = h2.T @ g, g.sum(0)
                 d2 = (g @ self.W[2].T) * (h2 > 0)
