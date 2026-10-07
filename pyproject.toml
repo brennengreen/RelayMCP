@@ -48,8 +48,10 @@ device = [
 ]
 # Faster voice prompts: a warm Copilot runtime instead of starting `copilot -p` for every prompt (Python 3.11+).
 voice = ["github-copilot-sdk>=1.0.14,<2; python_version >= '3.11'"]
-# Games on this computer for real-time agents, no handheld needed: `spinal play doom`, `spinal arena run`.
-play = ["vizdoom>=1.3; python_version >= '3.10'", "numpy>=1.26", "pillow>=10.3"]
+# Games on this computer for real-time agents, no handheld needed: `spinal play doom`, `spinal arena run`,
+# `spinal learn doom|breakout`. `research` adds OCAtari for the experiments in docs/research/learning-games.md.
+play = ["vizdoom>=1.3; python_version >= '3.10'", "ale-py>=0.9; python_version >= '3.10'", "numpy>=1.26", "pillow>=10.3"]
+research = ["relaymcp[play]", "ocatari>=2; python_version >= '3.10'", "github-copilot-sdk>=1.0.14,<2; python_version >= '3.11'"]
 dev = ["pytest>=7", "pytest-rerunfailures>=14", "ruff>=0.6", "pillow>=10.3", "numpy>=1.26"]
 
 [project.scripts]

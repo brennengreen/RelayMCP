@@ -135,7 +135,7 @@ class Doom:
             vzd.GameVariable.DAMAGE_TAKEN, vzd.GameVariable.DEAD, vzd.GameVariable.DAMAGECOUNT,
             vzd.GameVariable.HITCOUNT, vzd.GameVariable.SECRETCOUNT]
 
-    def __init__(self, seconds, seed, show=False, level=None, fair=False):
+    def __init__(self, seconds, seed, show=False, level=None, fair=False, realtime=True):
         """level: a Freedoom 2 map ("MAP01") on Ultra-Violence from a pistol start, else the deathmatch arena.
         fair: objects only while they are on screen (no seeing through walls); the level's layout stays known."""
         g = self.g = vzd.DoomGame()
@@ -152,7 +152,7 @@ class Doom:
             g.load_config(os.path.join(vzd.scenarios_path, "deathmatch.cfg"))
         self.static_layout = layout(level) if level else None
         g.set_window_visible(show)  # a window (never fullscreen) to watch it play; hidden otherwise
-        g.set_mode(vzd.Mode.ASYNC_PLAYER)
+        g.set_mode(vzd.Mode.ASYNC_PLAYER if realtime else vzd.Mode.PLAYER)  # practice: the game waits for the agent
         g.set_objects_info_enabled(True)
         g.set_sectors_info_enabled(not level)  # the level's geometry, for navigation (campaign maps: from the map)
         g.set_labels_buffer_enabled(True)
@@ -322,6 +322,7 @@ class Tactics:
             path, _, cls = kind[len("plugin:"):].partition(":")
             spec = importlib.util.spec_from_file_location("arena_plugin", path)
             mod = importlib.util.module_from_spec(spec)
+            mod.log = lambda *a, **k: None  # `spinal learn` shows these lines to the model; here they go nowhere
             spec.loader.exec_module(mod)
             self.plugin = getattr(mod, cls or "Agent")()
         elif kind == "scorer":
@@ -663,16 +664,19 @@ class Memory:
         return st
 
 
-def episode(doom, tactics, gif_frames=None):
+def episode(doom, tactics, gif_frames=None, load=None, tics=None):
+    """One level. load: start from a saved game (a drill, for `spinal learn`); tics: stop after that many."""
     doom.new_episode()
     doom.calibrate()
+    if load:
+        doom.g.load(load)
     planner = Planner(doom, seed=doom.g.get_seed() if hasattr(doom.g, "get_seed") else 0,
                       strategist=getattr(tactics, "strategist", None)) if tactics.kind == "planner" else None
     memory = Memory() if doom.fair else None
     tic, kills, late, skills, last_tic = 0, 0, 0, {}, None
     dealt, dry, said = 0.0, 0, (None, -99)
     t0 = time.perf_counter()
-    while not doom.g.is_episode_finished():
+    while not doom.g.is_episode_finished() and (tics is None or tic < tics):
         s = doom.g.get_state()
         if s is None:
             break

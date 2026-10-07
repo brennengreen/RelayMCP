@@ -339,7 +339,8 @@ def openai_generate(model: str, base_url: str | None = None, key: str | None = N
     return generate
 
 
-def copilot_generate(model: str, system: str = "Answer briefly, exactly in the format asked.") -> Callable[[str], str]:
+def copilot_generate(model: str, system: str = "Answer briefly, exactly in the format asked.",
+                     timeout: float = 120) -> Callable[[str], str]:
     """A model through GitHub Copilot (any model your plan has, e.g. claude-opus-5.5): one warm runtime
     (github-copilot-sdk, Python 3.11+) on its own thread, a fresh tool-free session per prompt. After the first prompt
     a short answer takes ~1-2 s (a `copilot -p` run spends ~5 s just starting)."""
@@ -379,7 +380,7 @@ def copilot_generate(model: str, system: str = "Answer briefly, exactly in the f
         session.on(on_event)
         try:
             await session.send(prompt)
-            await asyncio.wait_for(done.wait(), 120)
+            await asyncio.wait_for(done.wait(), timeout)
         finally:
             try:
                 await session.disconnect()
@@ -390,7 +391,7 @@ def copilot_generate(model: str, system: str = "Answer briefly, exactly in the f
         return reply
 
     def generate(prompt: str) -> str:
-        return asyncio.run_coroutine_threadsafe(ask(prompt), loop).result(150)
+        return asyncio.run_coroutine_threadsafe(ask(prompt), loop).result(timeout + 30)
     return generate
 
 

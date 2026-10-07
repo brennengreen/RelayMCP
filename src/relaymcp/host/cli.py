@@ -611,6 +611,18 @@ def cmd_arena(args: argparse.Namespace) -> None:
         raise SystemExit(f'relaymcp arena needs the game: pip install "relaymcp[play]" (missing: {e.name or e})') from None
 
 
+def cmd_learn(args: argparse.Namespace) -> None:
+    """A model learns a game from practice: it writes an agent, watches it practise, and improves it round by round."""
+    from relaymcp.play import learn
+    argv = [args.game, "--model", args.model, "--rounds", str(args.rounds), "--width", str(args.width),
+            "--workers", str(args.workers)]
+    argv += (["--out", args.out] if args.out else []) + (["--test", args.test] if args.test else [])
+    try:
+        learn.main(argv)
+    except ImportError as e:
+        raise SystemExit(f'spinal learn needs the game: pip install "relaymcp[play]" (missing: {e.name or e})') from None
+
+
 def build_parser() -> argparse.ArgumentParser:
     prog = "spinal" if os.path.basename(sys.argv[0]).startswith("spinal") else "relaymcp"
     p = argparse.ArgumentParser(prog=prog, description="Spinal (RelayMCP): real-time AI agents that play games, on "
@@ -644,6 +656,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--maps", help="a quick try on some maps, e.g. MAP01 (unranked; a ranked run plays MAP01-MAP04)")
     s.add_argument("--show", action="store_true", help="watch it play in a window, its goals on screen (unranked)")
     s.set_defaults(func=cmd_arena)
+
+    s = sub.add_parser("learn", help="a model learns a game from practice and writes its own real-time agent")
+    s.add_argument("game", choices=["doom", "breakout"])
+    s.add_argument("--model", default="copilot:claude-opus-5.5",
+                   help="copilot:<name> (default copilot:claude-opus-5.5), ollama:<name> or openai:<name>")
+    s.add_argument("--rounds", type=int, default=10, help="rounds of practice (default 10); run again to go on")
+    s.add_argument("--width", type=int, default=3, help="candidate changes per round, made and played in parallel "
+                   "(default 3)")
+    s.add_argument("--workers", type=int, default=4, help="practice levels played at once (default 4)")
+    s.add_argument("--out", help="folder for the tries, the drills, the best agent (agent.py) and learn.json; run "
+                   "again to resume")
+    s.add_argument("--test", metavar="AGENT", help="only score an agent on the held-out levels (breakout)")
+    s.set_defaults(func=cmd_learn)
 
     s = sub.add_parser("setup", help="set up this computer and build the handheld's setup kit")
     s.add_argument("--name", help="device name (default: ally)")
